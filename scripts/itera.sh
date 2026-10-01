@@ -22,9 +22,10 @@ function itera-usage() {
 usage: itera [flags] [REQUEST...]
 
 Run committe, then the tests, then committe again, until the tests pass.
-The first round passes REQUEST and every other argument on to committe;
-each later round passes only -c and the previous round's failing test
-output, so the loop continues the conversation the first round began.
+The first round passes REQUEST, every other argument, and itera's own
+stdin on to committe; each later round passes only -c and the previous
+round's failing test output, so the loop continues the conversation the
+first round began.
 
 The repository must already be green: itera checks this before it starts.
 The sandbox mounts the repository read-only and has no network.
@@ -84,7 +85,7 @@ function itera() {
     # local returns its own status and not the command substitution's.  So
     # the assignment is a statement of its own and the if reads the test's.
     local pre
-    if ! pre=$(set -o pipefail; $test_cmd 2>&1 | tee /dev/fd/3); then
+    if ! pre=$(set -o pipefail; $test_cmd 2>&1 </dev/null | tee /dev/fd/3); then
         echo 'itera-error: tests do not pass before starting' >&2
         return 1
     fi
@@ -105,18 +106,30 @@ function itera() {
             args=(-c)
         fi
 
-        # Only the previous round's test output is passed back.  A large
-        # project's tree is not: the failing line is what the model needs.
-        { [[ -n "$out" ]] && printf 'The tests fail with:\n\n%s\n' "$out"; } \
-            | committe "${args[@]}" >&2
-        if (( ${PIPESTATUS[1]} != 0 )); then
+        # Round one has no failure to feed back, and running it under a
+        # pipe of its own would replace itera's stdin with an empty one:
+        # a heredoc, a `files-to-prompt`, or any pipe into itera is the
+        # request, and committe -- and so dic -- must read it.  Every
+        # later round does feed the previous round's failure back, which
+        # is the only thing the model needs; a project's whole tree is
+        # not.
+        local status=
+        if (( i == 1 )); then
+            committe "${args[@]}" >&2
+            status=$?
+        else
+            { [[ -n "$out" ]] && printf 'The tests fail with:\n\n%s\n' "$out"; } \
+                | committe "${args[@]}" >&2
+            status=${PIPESTATUS[1]}
+        fi
+        if (( status != 0 )); then
             echo 'itera-error: committe failed' >&2
             return 1
         fi
 
         # The tests run after committe, so a round that changes nothing and
         # a round that fixes the failure are told apart by the run after it.
-        if out=$(set -o pipefail; $test_cmd 2>&1 | tee /dev/fd/3); then
+        if out=$(set -o pipefail; $test_cmd 2>&1 </dev/null | tee /dev/fd/3); then
             printf 'itera: green after %d round(s)\n' "$i" >&2
             return 0
         fi

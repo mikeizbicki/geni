@@ -53,7 +53,7 @@ function committe() {
     fi
 
     # generate and apply the patch
-    committe-mkpatch "$retries" "${llm_args[@]}" || return $?
+    committe-mkpatch "${llm_args[@]}" || return $?
     committe-apply "$retries"
 }
 
@@ -72,9 +72,6 @@ function committe-message() {
 }
 
 function committe-mkpatch() {
-    # The first argument is the retry budget; the rest go to the model.
-    local retries=$1; shift
-
     # `dic` is a more efficient version of simonw's `llm` command;
     # if available, we use `dic`; otherwise we use `llm`.
     if command -v dic >/dev/null 2>&1; then
@@ -91,13 +88,15 @@ function committe-mkpatch() {
     # instructions belong in the user turn and not in the system prompt:
     # the system prompt is the head of every request dic makes, so
     # rewriting it throws away the cached prefix that -c exists to hit.
-    local i
-    for (( i = 0; i <= retries; i++ )); do
-        if $llm_command "$(committe-prompt)" "$@" > "$(committe-patchfile)"; then
-            return 0
-        fi
-        (( i < retries )) && echo "committe-warning: $llm_command failed, retrying" >&2
-    done
+    #
+    # The model is asked once and never retried.  stdin is part of the
+    # request when it is not a terminal, and a pipe reads once: a retry
+    # that inherited it would find EOF and ask the model without the
+    # request it was sent.  The caller's fd 0 is inherited here and goes
+    # to $llm_command unchanged.
+    if $llm_command "$(committe-prompt)" "$@" > "$(committe-patchfile)"; then
+        return 0
+    fi
     echo "committe-error: $llm_command failed" >&2
     return 1
 }

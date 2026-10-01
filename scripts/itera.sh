@@ -45,7 +45,7 @@ itera-detect-test() {
 
     # sandbox autodetected test commands
     [[ -f pyproject.toml || -f pytest.ini || -f setup.cfg || -d tests ]] \
-                                              && { echo 'sandbox pytest'; return; }
+                                              && { echo 'sandbox pytest -q'; return; }
     echo 'itera-error: cannot detect tests; set ITERA_TEST or --test' >&2
     return 1
 }

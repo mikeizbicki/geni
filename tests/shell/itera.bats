@@ -13,6 +13,13 @@ setup() {
     # is what it looks for; no round here reaches it
     source "$BATS_TEST_DIRNAME/../../scripts/sandbox.sh"
 
+    # itera hands its own stdin to round 1, because a heredoc into itera is
+    # a request, and the stubbed committe below reads it -- so on a terminal
+    # that read waits for an EOF no test will ever type.  Closing it here is
+    # the test saying the request is a word and not a pipe; round 2 replaces
+    # this with the pipe itera builds, which is where its failure arrives.
+    exec </dev/null
+
     repo="$BATS_TEST_TMPDIR/repo"
     mkdir -p "$repo"
     cd "$repo"

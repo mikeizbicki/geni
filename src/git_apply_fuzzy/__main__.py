@@ -585,8 +585,8 @@ def main():
     for path, mode in chmods:
         try:
             os.chmod(path, permissions(mode))
-        except OSError as error:
-            note(f"{path}: {error}")
+        except OSError as err:
+            note(f"{path}: {err}")
             failed = True
             continue
         applied.append(path)

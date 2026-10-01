@@ -1,5 +1,14 @@
 # This file configures dic.  It should be sourced from .bashrc.
 
+# One source defines everything: this file defines the dic helpers and
+# sources every sibling script, so a caller may assume dic-run,
+# dic-git-clean, dic-llm, committe, itera, geni and sandbox are all
+# available.  The guard keeps a second source (a .bashrc that names the
+# file twice, say) from re-registering the completion and re-binding
+# the keys below.
+[[ -n ${_DIC_LOADED:-} ]] && return
+_DIC_LOADED=1
+
 export DIC_MODEL=groq+qwen
 export DIC_SYSTEM="Keep your response short, between 1-20 lines. Focus on a high signal to noise ratio (audience has strong math/cs background). If the question is about a computer, respond for: $(uname -a)."
 [[ $- == *i* ]] && export DIC_SESSION="$$"
@@ -15,6 +24,78 @@ alias sonnet='dic -m anthropic+sonnet'
 alias haiku='dic -m anthropic+haiku'
 alias deepseek='dic -m openrouter+deepseek'
 alias gemini='dic -m openrouter+gemini'
+
+# --- shared helpers -----------------------------------------------------
+
+# Echo a command to stderr and then run it.  This is the audit trail
+# these scripts do not get from `set -x`: xtrace is a shell-wide flag
+# that would print the wrappers' own internals, and several call sites
+# here -- git apply in committe's retry, itera's pre-check test -- are
+# calls that are allowed to fail, so a shell option that aborts on a
+# nonzero status would abort them too.  dic-run prints only the calls a
+# caller names.
+#
+# fd 2 and not fd 1: fd 1 is the payload's channel and it varies per
+# call site (dic's reply, itera's tee of the tests), so a trace written
+# there would be read back by the pipe's next stage.  The color is
+# dropped when fd 2 is not a terminal and when NO_COLOR is set, so the
+# same function fills an interactive terminal and, one `2>log` away,
+# the file a background geni will log to.
+dic-run() {
+    local red= reset=
+    if [[ -t 2 && -z ${NO_COLOR:-} ]]; then red=$'\e[31m'; reset=$'\e[0m'; fi
+    { printf '%s+' "$red"; printf ' %q' "$@"; printf '%s\n' "$reset"; } >&2
+    "$@"
+}
+
+# Refuse to run unless the repository is clean.  `$1` names the caller,
+# so the message keeps the <cmd>-error: convention: committe checks
+# this behind -f and geni checks it before making a worktree, and only
+# the message differs.  The toplevel and detached-HEAD checks geni also
+# needs are its own and stay in geni.
+dic-git-clean() {
+    local who=$1
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        echo "$who-error: not inside a git repository" >&2
+        return 1
+    fi
+    if ! git diff --quiet --cached; then
+        echo "$who-error: staging area is non-empty" >&2
+        return 1
+    fi
+    if ! git diff --quiet; then
+        echo "$who-error: working tree has uncommitted changes" >&2
+        return 1
+    fi
+}
+
+# Print the model command a latin script invokes: `dic` when it is on
+# PATH and simonw's `llm` when it is not.  This is not a check that one
+# of our scripts is present -- sourcing dic.sh guarantees that -- it is
+# the one soft dependency that cannot be removed, because a user may
+# have neither backend installed.
+dic-llm() {
+    if command -v dic >/dev/null 2>&1; then
+        echo dic
+    elif command -v llm >/dev/null 2>&1; then
+        echo llm
+    else
+        echo "dic-error: neither dic nor llm installed" >&2
+        return 1
+    fi
+}
+
+# Source the sibling scripts, so that dic.sh is the one file a .bashrc
+# names and every command in this directory comes with it.
+# BASH_SOURCE[0] names this file, whoever sourced it and from wherever.
+_dic_src=${BASH_SOURCE[0]}
+_dic_dir=${_dic_src%/*}
+[[ $_dic_dir == "$_dic_src" ]] && _dic_dir=.
+_dic_dir=$(cd -- "$_dic_dir" && pwd) || _dic_dir=.
+for _dic_s in committe.sh itera.sh geni.sh sandbox.sh; do
+    source "$_dic_dir/$_dic_s"
+done
+unset _dic_src _dic_dir _dic_s
 
 # --- tab completion -----------------------------------------------------
 

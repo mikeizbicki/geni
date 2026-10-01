@@ -65,15 +65,7 @@ function itera() {
         esac
     done
 
-    if ! command -v committe >/dev/null 2>&1; then
-        echo 'itera-error: committe not found' >&2
-        return 1
-    fi
-    if ! command -v sandbox >/dev/null 2>&1; then
-        echo 'itera-error: sandbox not found' >&2
-        return 1
-    fi
-
+    # committe and sandbox are defined, because dic.sh sources them.
     # Save the caller's stdout on fd 3, so the tests below can stream to
     # it live while `$(...)` captures the same bytes for the next round.
     exec 3>&1
@@ -85,7 +77,7 @@ function itera() {
     # local returns its own status and not the command substitution's.  So
     # the assignment is a statement of its own and the if reads the test's.
     local pre
-    if ! pre=$(set -o pipefail; $test_cmd 2>&1 </dev/null | tee /dev/fd/3); then
+    if ! pre=$(set -o pipefail; dic-run $test_cmd 2>&1 </dev/null | tee /dev/fd/3); then
         echo 'itera-error: tests do not pass before starting' >&2
         return 1
     fi
@@ -129,7 +121,7 @@ function itera() {
 
         # The tests run after committe, so a round that changes nothing and
         # a round that fixes the failure are told apart by the run after it.
-        if out=$(set -o pipefail; $test_cmd 2>&1 </dev/null | tee /dev/fd/3); then
+        if out=$(set -o pipefail; dic-run $test_cmd 2>&1 </dev/null | tee /dev/fd/3); then
             printf 'itera: green after %d round(s)\n' "$i" >&2
             return 0
         fi

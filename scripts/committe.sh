@@ -38,18 +38,7 @@ function committe() {
 
     # only allow committe to run if the repo is clean, unless -f was given
     if (( ! force )); then
-        if ! git rev-parse --git-dir >/dev/null 2>&1; then
-            echo "committe-error: not inside a git repository" >&2
-            return 1
-        fi
-        if ! git diff --quiet --cached; then
-            echo "committe-error: staging area is non-empty" >&2
-            return 1
-        fi
-        if ! git diff --quiet; then
-            echo "committe-error: working tree has uncommitted changes" >&2
-            return 1
-        fi
+        dic-git-clean committe || return 1
     fi
 
     # generate and apply the patch
@@ -72,16 +61,11 @@ function committe-message() {
 }
 
 function committe-mkpatch() {
-    # `dic` is a more efficient version of simonw's `llm` command;
-    # if available, we use `dic`; otherwise we use `llm`.
-    if command -v dic >/dev/null 2>&1; then
-        llm_command=dic
-    elif command -v llm >/dev/null 2>&1; then
-        llm_command=llm
-    else
-        echo "committe-error: neither dic nor llm installed" >&2
-        return 1
-    fi
+    # `dic` is a more efficient version of simonw's `llm` command, but
+    # either satisfies the caller; dic.sh resolves which, so the choice
+    # is made in one place.
+    local llm_command
+    llm_command=$(dic-llm) || return 1
 
     # We pass the user's request as positional args to llm_command,
     # preceded by the instructions that say what to do with it.  Those
@@ -94,7 +78,7 @@ function committe-mkpatch() {
     # that inherited it would find EOF and ask the model without the
     # request it was sent.  The caller's fd 0 is inherited here and goes
     # to $llm_command unchanged.
-    if $llm_command "$(committe-prompt)" "$@" > "$(committe-patchfile)"; then
+    if dic-run "$llm_command" "$(committe-prompt)" "$@" > "$(committe-patchfile)"; then
         return 0
     fi
     echo "committe-error: $llm_command failed" >&2
@@ -120,14 +104,14 @@ function committe-apply() {
     # So on error, the repo remains exactly as if nothing had happened.
     local i
     for (( i = 0; i <= retries; i++ )); do
-        git apply --quiet --index --recount --ignore-whitespace "$patch_file" 2>/dev/null \
+        dic-run git apply --quiet --index --recount --ignore-whitespace "$patch_file" \
             && break
 
         # `git apply` needs every context line to match exactly, which the
         # model does not always manage; `git-apply-fuzzy` retries the patch
         # and tolerates small mismatches in the context lines.
         echo "committe-warning: git apply failed, retrying with git-apply-fuzzy" >&2
-        git-apply-fuzzy -q "$patch_file" && break
+        dic-run git-apply-fuzzy -q "$patch_file" && break
 
         if (( i >= retries )); then
             echo "committe-error: git apply and git-apply-fuzzy both failed" >&2
@@ -143,7 +127,8 @@ function committe-apply() {
     # and setting the committer fields.
     local commit_message
     commit_message="[geni] $(committe-message)"
-    if ! GIT_COMMITTER_NAME='committe' GIT_COMMITTER_EMAIL='committe@agent' git commit --quiet -m "$commit_message"; then
+    if ! GIT_COMMITTER_NAME='committe' GIT_COMMITTER_EMAIL='committe@agent' \
+         dic-run git commit --quiet -m "$commit_message"; then
         echo "committe-error: git commit failed" >&2
         return 1
     fi

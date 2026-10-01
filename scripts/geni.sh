@@ -104,14 +104,7 @@ function geni() {
     # caller's tree would not be part of it.  `committe` would refuse
     # the same tree a moment later, so the check is repeated here to
     # keep a geni that cannot run from leaving a worktree behind.
-    if ! git diff --quiet; then
-        echo "geni-error: working tree has uncommitted changes" >&2
-        return 1
-    fi
-    if ! git diff --quiet --cached; then
-        echo "geni-error: staging area is non-empty" >&2
-        return 1
-    fi
+    dic-git-clean geni || return 1
 
     # One token names both the branch and the directory, so the two
     # cannot drift apart, and .git/ puts the checkout on the same
@@ -127,7 +120,7 @@ function geni() {
     # commits above it to name a failed run after what it was doing.
     base_sha=$(git rev-parse HEAD) || return 1
 
-    if ! git worktree add --quiet -b "$wt_branch" "$wt_dir" HEAD; then
+    if ! dic-run git worktree add --quiet -b "$wt_branch" "$wt_dir" HEAD; then
         echo "geni-error: could not create worktree" >&2
         return 1
     fi
@@ -167,7 +160,7 @@ function geni() {
     # true merge from opening an editor; a lone geni fast-forwards and
     # never consults it.
     cd "$toplevel" || return 1
-    if ! git merge --no-edit "$wt_branch"; then
+    if ! dic-run git merge --no-edit "$wt_branch"; then
         local renamed
         renamed=$(geni-rename "$wt_branch" "$wt_dir" "$common_dir" "$base_sha")
         if [[ -n $renamed ]]; then

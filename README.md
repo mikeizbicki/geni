@@ -10,15 +10,20 @@ It is designed to:
 
 **About the Name:**
 
-In ancient Rome, a [genius](https://en.wiktionary.org/wiki/genius#Latin) was a protective spirit like the Greek [daemon](https://en.wiktionary.org/wiki/daemon#English).
-A Latin speaker would address the genius as "geni" using the [Latin vocative case](https://en.wikipedia.org/wiki/Vocative_case).
-The command `geni` is supposed to imply that you are commanding a protective spirit to do your bidding.
+In ancient Rome, a [genius](https://en.wiktionary.org/wiki/genius#Latin) was the spirit allotted to a man at birth.
+Servius records the belief that each of us gets two, one urging toward the good and one corrupting toward evil, indistinguishable in voice.
+Augustine recognized that these pagan spirits could produce true prophecy,
+but claimed that they are often wrong and merely announce their own intentions.
+The medieval exorcists wrote spells for controlling and binding these spirits.
+
+"Geni" is the [vocative form](https://en.wikipedia.org/wiki/Vocative_case) that a conjuror would use to command a genius.
+The command `geni` is supposed to remind you that you are commanding one of these potentially dangerous spirits to do your bidding.
 It should be pronounced with a hard-G using classical Latin pronunciation rules.
 
 ## Security Model
 
-The latin names are intended to remind us about the potentially dangerous nature of working with LLMs.
-The threat model is that the LLM responses are maximally malicious (a nation state level actor, or worse: a literal devil) and so they must never be trusted.
+The latin names are intended to remind us about the dangerous nature of working with LLMs---we are wizards casting spells to control evil demons.
+The threat model is that the LLM responses are controlled by a literal devil and so they must never be trusted.
 We must be secure against everything up to kernel level exploits.
 
 This results in a more secure environment that Codex or Claude Code.

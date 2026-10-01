@@ -59,13 +59,17 @@ _dic_quote() {
 # empty argument, or one carrying whitespace or a shell metacharacter.
 # A path, a SHA, or a flag prints bare, so the audit line reads the way
 # the caller typed it; a prose prompt gets ' ', with any embedded
-# quote written as the POSIX close-reopen '\''.
+# quote written as the POSIX close-reopen '\''.  The optional $2 is an
+# elision marker -- <...> -- which follows the word when it printed
+# bare and sits inside the quotes when it did not, so it never reads
+# as a shell word of its own.
 _dic_quote() {
-    if [[ -n $1 && $1 != *[^A-Za-z0-9_@%+=:,./-]* ]]; then
-        printf '%s' "$1"
+    local s=$1
+    if [[ -n $s && $s != *[^A-Za-z0-9_@%+=:,./-]* ]]; then
+        printf '%s%s' "$s" "${2:+ $2}"
     else
         local q=\' e="'\\''"
-        printf "'%s'" "${1//$q/$e}"
+        printf "'%s%s'" "${s//$q/$e}" "${2:+ $2}"
     fi
 }
 
@@ -100,18 +104,29 @@ dic-run() {
     {
         printf '%s%s+' "$red" "$tag"
         for a in "$@"; do
-            # A long argument that contains whitespace is prose -- a
-            # prompt, or a heredoc that arrived as one argument -- and
-            # its first few words are enough to recognize it, so only
-            # the head is printed.  An argument with no whitespace is
-            # an identifier -- a SHA, a path, a mid -- and every byte
-            # of it is worth showing, so it is printed whole.
-            # DIC_TRACE_WORDS and DIC_TRACE_MAX are shell variables,
-            # not exports, because no child process reads them.
-            if [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
+            # A multi-line argument -- a heredoc pasted as one -- is
+            # summarized by its first line, which its author wrote as
+            # the summary: whole when it fits in a terminal line, cut
+            # to its first few words when it does not.  A single-line
+            # argument with whitespace is prose -- a prompt -- and its
+            # first few words are enough to recognize it.  An argument
+            # with no whitespace is an identifier -- a SHA, a path, a
+            # mid -- and every byte of it is worth showing, so it is
+            # printed whole.  DIC_TRACE_WORDS and DIC_TRACE_MAX are
+            # shell variables, not exports, because no child process
+            # reads them.
+            if [[ $a == *$'\n'* ]]; then
+                local head=${a%%$'\n'*}
+                if (( ${#head} >= 50 )); then
+                    local -a w
+                    read -ra w <<< "$head"
+                    head=${w[*]:0:5}
+                fi
+                printf ' %s' "$(_dic_quote "$head" '<...>')"
+            elif [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
                 local -a w
                 read -ra w <<< "$a"
-                printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}} <...>")"
+                printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}}" '<...>')"
             else
                 printf ' %s' "$(_dic_quote "$a")"
             fi

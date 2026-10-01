@@ -170,6 +170,13 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES):
     >>> [(os.path.relpath(p, d), t) for p, t in bundle([d + "/a"])
     ...  if p.startswith(d)]
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
+    A path named on the command line and reached as context is one
+    entry and not two:
+
+    >>> [(os.path.relpath(p, d), t)
+    ...  for p, t in bundle([d + "/a", d + "/README.md"])
+    ...  if p.startswith(d)]
+    [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> import shutil; shutil.rmtree(d)
     """
     seen, out = set(), []

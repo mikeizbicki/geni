@@ -93,7 +93,10 @@ _dic_complete() {
   case $prev in
     # tab complete model names
     -m|--model)
-      COMPREPLY=( $(compgen -W "$(dic --models)" -- "$cur") )
+      # --models prints a header then three columns: the id, its key
+      # variable, and whether that variable is set.  A completion reads
+      # the first column of every other line.
+      COMPREPLY=( $(compgen -W "$(dic --models | tail -n +2 | cut -f1)" -- "$cur") )
       return ;;
     # tab complete files
     -a|--attachment|--path|--models-file)

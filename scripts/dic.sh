@@ -6,7 +6,22 @@
 # available.  The guard keeps a second source (a .bashrc that names the
 # file twice, say) from re-registering the completion and re-binding
 # the keys below.
-[[ -n ${_DIC_LOADED:-} ]] && return
+#
+# A second source is a no-op by default, so an edited file does not
+# take effect until a new shell.  `source dic.sh -f` re-runs the file
+# in the shell that asks, so the reload reaches the functions and the
+# bindings the first source installed.  Any other argument is refused,
+# so a typo does not read as a reload that happened.
+if [[ -n ${_DIC_LOADED:-} ]]; then
+    case ${1:-} in
+        -f)  unset _DIC_LOADED ;;
+        '')  echo "dic.sh: already sourced; source ${BASH_SOURCE[0]} -f to reload" >&2
+             return 1 ;;
+        *)   echo "dic.sh: unknown argument: $1" >&2
+             echo "dic.sh: source ${BASH_SOURCE[0]} -f to reload" >&2
+             return 1 ;;
+    esac
+fi
 _DIC_LOADED=1
 
 export DIC_MODEL=groq+qwen

@@ -30,9 +30,21 @@ ITERA_MAX=${ITERA_MAX:-5}
 # run can print an estimate.  Per-repo and untracked, because a test time
 # belongs to this checkout and not to the project.  A single printf to an
 # O_APPEND file cannot interleave with another writer, so no lock is needed.
+#
+# The file is shared: --git-common-dir is the main .git, so a geni worktree
+# and the tree it branched from read and write one file instead of one
+# apiece.  --path-format=absolute is why the path prints absolute; the
+# common dir is otherwise relative to the cwd, and in a subdirectory the
+# relative form would name the wrong file.
+#
+# A worktree whose tests were genuinely slower would pollute the estimate,
+# but the same commit is checked out in both and the machine is the same,
+# so it is close enough for a progress label.  The honest fix -- record
+# the commit each sample was taken on and only weight the ancestors of
+# HEAD -- is not worth it for that edge case.  Left for later.
 itera-ema-file() {
     local dir
-    dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+    dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
     printf '%s\n' "${ITERA_EMA:-$dir/itera-test-times}"
 }
 
@@ -122,8 +134,17 @@ itera-run-tests() {
     local label='test'
     [[ -n $estimate ]] && label="test (expect ~${estimate}s)"
     start=$(date +%s.%N)
-    # shellcheck disable=SC2086  # $test_cmd is a word: `sandbox pytest -q`
-    $test_cmd 2>&1 | pv -l -t -N "$label" >"$captured"
+    # pv does not paint until its first read, and a quiet test can sit a
+    # full second before that.  Print the label with no newline so the
+    # terminal has something to show while pv waits; pv's own repaint
+    # begins with \r and overwrites this line.
+    printf '%s: 0:00\r' "$label" >&2
+    # dic-run traces the call, so the merge goes inside the string: a
+    # 2>&1 on dic-run itself would capture the trace as well.  eval runs
+    # in this shell, so a sourced function such as sandbox is still a
+    # function.  The parens make 2>&1 apply to the whole expression, and
+    # PIPESTATUS[0] is still the test's own status.
+    dic-run eval "($test_cmd) 2>&1" | pv -l -t -N "$label" >"$captured"
     status=${PIPESTATUS[0]}
     if (( status == 0 )); then
         # Time and record here, not in itera(), so a standalone run is

@@ -270,7 +270,6 @@ _dic_complete() {
     # tab complete files
     -a|--attachment|--path|--models-file)
       compopt -o default 2>/dev/null
-      COMPREPLY=( $(compgen -f -- "$cur") )
       return ;;
     # tab complete a message to continue: -c has no value of its own, so the
     # pick becomes --mid=REF beside it, while --mid, --show and --from each

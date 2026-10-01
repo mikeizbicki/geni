@@ -5,6 +5,9 @@ description = "a minimalist CLI for chat LLMs"
 requires-python = ">=3.8"
 dependencies = []
 
+[project.optional-dependencies]
+dev = ["ruff>=0.6", "bandit[toml]>=1.7"]
+
 [project.scripts]
 dic = "dic.__main__:main"
 accio = "accio.__main__:main"
@@ -27,3 +30,17 @@ dic = ["models.json"]
 [tool.pytest.ini_options]
 markers = ["slow: starts a real dic process; left out of the default run"]
 addopts = "-m 'not slow' --doctest-modules"
+
+[tool.ruff]
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["F", "B", "SIM", "UP", "RUF", "ARG", "A", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "ARG", "A"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = ["B101", "B404", "B603"]

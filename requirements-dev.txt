@@ -1,0 +1,5 @@
+# these libraries are needed only for dev/testing;
+# by spec, there are no libraries needed for an ordinary user install
+pytest
+ruff>=0.6
+bandit[toml]>=1.7

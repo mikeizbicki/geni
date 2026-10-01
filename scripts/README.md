@@ -17,14 +17,23 @@ It should be pronounced with a hard-G using classical Latin pronunciation rules.
 
 ## Setup
 
-These scripts are designed to live in your home folder and be sourced from your bashrc file.
-They can be installed with the following commands:
+Install dic, then let it name the shell file it ships:
+
 ```
-$ cd "$HOME"
-$ git clone https://github.com/mikeizbicki/.ai_scripts
-$ echo >> .bashrc <<'EOF'
-source .ai_scripts/geni.sh
-EOF
+$ pip3 install git+https://github.com/mikeizbicki/dic
+$ echo 'eval "$(dic --init)"' >> ~/.bashrc
+```
+
+`dic --init` prints one line, `source /path/to/dic.sh`, and `eval` runs
+it in the interactive shell that asked, so the functions and aliases
+this directory defines -- `dic`, `committe`, `itera`, `geni`, `sandbox`,
+the model aliases -- become available.  Nothing is cloned into `$HOME`.
+
+An edited dic.sh is reread by the shell that asks, because `-f` reaches
+it:
+
+```
+$ eval "$(dic --init -f)"
 ```
 
 ## Examples

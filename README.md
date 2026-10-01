@@ -1,116 +1,53 @@
-# dic
+# Geni
 
-<img src=img/unix-magic-poster.jpg align=right width=200px />
+<img align=center width="400" src="img/geni.png">
 
-`dic` is a minimalist CLI tool for working with chat LLMs models.
-It is designed to be a "thin wrapper" around API endpoints.
+`geni` is a bare-bones command line coding agent.
+It is designed to:
+1. be easy to understand,
+1. be usable on any project with zero setup, and
+1. integrate with standard shell workflows.
 
-The normative specification is [src/dic/SPEC.md](src/dic/SPEC.md); this file
-is the tour, and where the two disagree the spec wins.
+**About the Name:**
 
-`dic` is similar to simonw's `llm` tool but with an emphasis on speed and Unix-style composability.
-
-> **Etymology:**
->
-> "Dic" is Latin for the command "speak".
-> The idea is that working with AIs is like working with demons and magic,
-> and Latin is the traditional language for controlling demons and casting spells.
->
-> `dic` should be pronounced using classical Latin pronunciation.
-> It sounds like English "deek" and not "dick" or "dyke".
-
-## Why fork `llm`?
-
-### Speed
-
-Recent versions of `llm` are very slow.
-This slowness is due to three factors:
-1. Slow dependencies.
-
-    `llm` has many dependencies
-
-    ```
-    $ python3 -m venv venv
-    $ . venv/bin/activate
-    (venv) $ pip3 install llm
-    (venv) $ pip3 freeze | wc -l
-    28
-    ```
-
-    Many of these dependencies are very slow.
-    Just importing the `openai` library takes longer than the time-to-first-token of most providers.
-
-    ```
-    (venv) $ time python3 -c 'import openai'
-
-    real	0m0.632s
-    user	0m0.588s
-    sys	0m0.044s
-    ```
-
-1. Complicated plugin system.
-
-    1. Using a new provider requires adding a new plugin for that provider.
-        This makes it difficult to use the latest models as they're released because we must wait for the plugin to be updated.
-
-    1. Plugins are also slow.
-        (And there are many [github issues](https://github.com/simonw/llm/issues/732) about this slowness.)
-
-1. Lack of "unixyness".
-
-    1. `llm` supports many features for constructing complicated system prompts liek [fragments](https://llm.datasette.io/en/stable/fragments.html) and [templates](https://llm.datasette.io/en/stable/templates.html).
-        These features could live in separate tools (like `files-to-prompt`) and simplify/speed up the code.
-
-    1. `llm` also supports many different types of models like [embedding models](https://llm.datasette.io/en/stable/embeddings/index.html).
-        The "mental model" for working with embedding models and text models is essentially none, and so this feature adds complexity (and hence bugs/slowness) to the code.
-
-### Convenience
-
-The following features make `dic` more comfortable to use on the command line.
-
-1. `dic` is FAST because it uses no external dependencies and directly posts messages to the API endpoints.
-    `dic` adds an overhead of about 10ms to the time-to-first-token (TTFT) provider.
-
-1. `dic` tracks time-to-first-token (TTFT) and thinking tokens and outputs them to stderr to measure progress
-
-1. `dic` tracks total spend for each model and outputs it to stderr
-
-1. `dic` is backwards compatible with the `llm` API in most important ways.
-    For example:
-    - the system prompt (`-s`)
-    - attaching binary files (`-a`)
-    - continuing a conversation (`-c`)
-    - extracting markdown blocks (`-x`)
-    - passing options to the model (`-o`)
-
----
-
-# Framework
-
-**TODO:**
-Fix the whole readme and project structure to follow the framework lightly described here.
-`dic` was the first tool implemented, and that is why the README starts and focuses on it.
-
-`dic` is part of the `geni` framework.
-"Genius" is the Latin for the "demon" we are communicating with. 
-'geni' is the vocative/genitive which is the actual name of the library and all commits tagged with this because they belong to the genius.
-'geni' is more googlable than genius.
-Maybe in the future we will mak
-
-The register of a command says what kind of thing you are calling.
-
-- **Latin names a command given to the genius.** The model is nondeterministic, so the verb is a wish and not a guarantee: `dic` (speak), `committe` (the writes a git commit), `itera` (repeat until it is right), `fac` (make) is the build system.
-    These are all imperative singular latin verbs because we are ordering the "genium" to do something for us.
-    To the extent possible, the latin verb chosen should match what the English does (e.g. committe for commit)
-
-- **English names deterministic machinery.** It does exactly what it says or it fails: `sandbox`, `git-apply-fuzzy`.
-
-A Latin verb always invokes the model; an English verb never touches it.
+In ancient Rome, a [genius](https://en.wiktionary.org/wiki/genius#Latin) was a protective spirit like the Greek [daemon](https://en.wiktionary.org/wiki/daemon#English).
+A Latin speaker would address the genius as "geni" using the [Latin vocative case](https://en.wikipedia.org/wiki/Vocative_case).
+The command `geni` is supposed to imply that you are commanding a protective spirit to do your bidding.
+It should be pronounced with a hard-G using classical Latin pronunciation rules.
 
 ## Security Model
 
 The latin names are intended to remind us about the potentially dangerous nature of working with LLMs.
-All tools should default to being 100% secure by design and not relying on the LLMs for security.
-The threat model is that a nation state level actor might be subverting us via responses,
-and we must be secure against everything up to kernel level exploits.
-The user can relax this model, but any commands to do so must be explicitly labeled --unsafe-*.
+The threat model is that the LLM responses are maximally malicious (a nation state level actor, or worse: a literal devil) and so they must never be trusted.
+We must be secure against everything up to kernel level exploits.
+
+This results in a more secure environment that Codex or Claude Code.
+Both of these frameworks, for example, allow their agents full read access to the file system,
+which allows exfiltration of sensitive data.
+Our sandbox allows only read access to the local git repo by default.
+
+## Included tools
+
+Tools are divided into two categories:
+
+1. Tools that directly invoke the LLM are written in latin (typically second person imperative singular).
+
+    1. `dic` (latin for speak) - a thin CLI wrapper around LLM apis
+        1. similar in spirit to simonw's `llm` package, but: faster, more composable, and more unixy; see <./src/dic/README.md>
+    1. `committe` (latin for commit) - create a git commit
+    1. `itera` (latin for iterate) - run committe and a test script in a ralph loop
+    1. `geni` - the main interface for the coding agent
+    1. `accio` (latin for fetch) - a tool for building rag-like prompts
+
+1. English names are for deterministic machinery.
+    1. `git-apply-fuzzy` - like `git apply` but uses fuzzy matching for llm generated patches
+    1. `sandbox` - a thin wrapper around `bwrap` with strong defaults for a coding agent
+
+## Install
+
+The project is divided into a suite of python and shell scripts.
+```
+$ pip3 install git+https://github.com/mikeizbicki/geni
+$ eval "$(dic --init)"
+```
+It is recommended to put the eval line in your .bashrc.

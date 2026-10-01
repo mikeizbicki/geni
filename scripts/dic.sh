@@ -55,6 +55,20 @@ _dic_quote() {
 }
 
 # Echo a command to stderr and then run it.  This is the audit trail
+# Quote a word only when it would not survive a re-parse as-is: an
+# empty argument, or one carrying whitespace or a shell metacharacter.
+# A path, a SHA, or a flag prints bare, so the audit line reads the way
+# the caller typed it; a prose prompt gets ' ', with any embedded
+# quote written as the POSIX close-reopen '\''.
+_dic_quote() {
+    if [[ -n $1 && $1 != *[^A-Za-z0-9_@%+=:,./-]* ]]; then
+        printf '%s' "$1"
+    else
+        local q=\' e="'\\''"
+        printf "'%s'" "${1//$q/$e}"
+    fi
+}
+
 # these scripts do not get from `set -x`: xtrace is a shell-wide flag
 # that would print the wrappers' own internals, and several call sites
 # here -- git apply in committe's retry, itera's pre-check test -- are
@@ -97,8 +111,7 @@ dic-run() {
             if [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
                 local -a w
                 read -ra w <<< "$a"
-                printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}}")"
-                printf ' <...>'
+                printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}} <...>")"
             else
                 printf ' %s' "$(_dic_quote "$a")"
             fi

@@ -88,7 +88,8 @@ def matches(key, name, rule, facts):
     if rule.get("tier") and rule["tier"] != facts.get("tier"):
         return False
     when = rule.get("when")
-    return not when or bool(eval(when, {"__builtins__": {}}, dict(facts)))
+    return not when or bool(eval(  # noqa: S307
+        when, {"__builtins__": {}}, dict(facts)))
 
 
 def specificity(name, rule):

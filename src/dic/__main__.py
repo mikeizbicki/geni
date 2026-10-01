@@ -27,30 +27,6 @@ from dic.options import parser
 from dic.tty import DicError, die
 
 
-def load_adaptor(api_type):
-    """The module implementing api_type: PATH, auth, build, parse, finish.
-
-    Built-ins are dic.adaptors.<api_type with '-' as '_'>.  Anything else
-    must be ~/.config/fac/adapters/<api_type>.py exporting the same five
-    names and importing dic's own helpers by package name, e.g.
-    `from dic.store import data_url`.  Only the selected adaptor is ever
-    imported, and each one gets its own module name, so two of them cannot
-    collide.
-    """
-    import importlib
-    name = api_type.replace("-", "_")
-    if os.path.exists(os.path.join(HERE, "adaptors", f"{name}.py")):
-        return importlib.import_module(f"dic.adaptors.{name}")
-    path = os.path.join(config_dir(env), "adapters", f"{api_type}.py")
-    if not os.path.exists(path):
-        die(f"unknown api_type: {api_type}")
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(f"dic_adaptor_{name}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def main():
     try:
         parsed, extra = parser().parse_known_args()

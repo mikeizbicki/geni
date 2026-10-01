@@ -133,7 +133,7 @@ COLUMNS = ("mid", "round", "user", "system", "response", "response_raw",
            "api_type", "session", "provider", "status", "error", "usage", "cost",
            "cost_items", "price_hash", "t_start", "t_connect", "t_request",
            "t_headers", "t_first", "t_last", "t_done")
-INSERT = (f"INSERT INTO messages ({', '.join(COLUMNS)})"
+INSERT = (f"INSERT INTO messages ({', '.join(COLUMNS)})"  # noqa: S608
           f" VALUES ({', '.join('?' * len(COLUMNS))})")
 
 # What `dic --stats` prints: usage frequency and runtime performance are the
@@ -498,7 +498,7 @@ def history(conn, mid):
                "api_type,attachments,outputs,tool_results")
     qualified = ",".join(f"m.{c}" for c in columns.split(","))
     rows = conn.execute(
-        f"WITH RECURSIVE chain({columns}) AS ("
+        f"WITH RECURSIVE chain({columns}) AS ("  # noqa: S608
         f"  SELECT {columns} FROM messages WHERE mid=?"
         "  UNION ALL"
         f"  SELECT {qualified} FROM messages m JOIN chain c ON m.mid=c.prev_mid)"
@@ -564,7 +564,7 @@ def file_block(path, mime_type=None):
         with open(path, "rb") as f:
             data = f.read()
     except OSError as e:
-        raise DicError(f"cannot read {path}: {e}")
+        raise DicError(f"cannot read {path}: {e}") from None
     return {"type": "image", "mime_type": mime_type, "path": path, "data": data}
 
 
@@ -682,7 +682,7 @@ def session_path(env):
     """
     runtime = env.get("XDG_RUNTIME_DIR")
     base = (os.path.join(runtime, "fac", "dic") if runtime
-            else f"/tmp/fac-{os.getuid()}/dic")
+            else f"/tmp/fac-{os.getuid()}/dic")  # noqa: S108
     return os.path.join(base, session_filename(env.get("DIC_SESSION", "global")))
 
 

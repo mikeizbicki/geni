@@ -35,7 +35,7 @@ def newest(turns):
     return "", []
 
 
-def build(model, turns, system, params):
+def build(model, turns, system, params):  # noqa: ARG001
     """The request fields: the model, its prompt, its options, its images.
 
     size and quality and anything else the API knows are the config's
@@ -62,16 +62,16 @@ def build(model, turns, system, params):
 def fetch(request):
     """urlopen a request and decode its JSON body; every failure is a DicError."""
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request) as response:  # noqa: S310
             return json.load(response)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
-        raise DicError(f"images: {e.code} {detail}")
+        raise DicError(f"images: {e.code} {detail}") from None
     except urllib.error.URLError as e:
-        raise DicError(f"images: {e}")
+        raise DicError(f"images: {e}") from None
 
 
-def call(model, key, body, line, stamps):
+def call(model, key, body, line, stamps):  # noqa: ARG001
     """POST the request and yield the image bytes as one blob event.
 
     A turn with attachments goes to /images/edits as multipart and one
@@ -88,7 +88,7 @@ def call(model, key, body, line, stamps):
     else:
         data, content_type = json.dumps(body).encode(), "application/json"
     stamps["t_request"] = time.time_ns()
-    result = fetch(urllib.request.Request(
+    result = fetch(urllib.request.Request(  # noqa: S310
         base + path, data=data, headers={**headers, "Content-Type": content_type}))
     stamps["t_headers"] = stamps["t_first"] = time.time_ns()
     yield {"type": "result", "result": result}

@@ -9,7 +9,7 @@ argument is the parameter name, so argparse and `dic()` cannot drift apart.
 be imported at module level: `inspect`, which reads the signature, is
 imported inside `flags()`, and `argparse` only by the entry point.
 """
-import json, os
+import json
 
 
 class Flag:
@@ -21,9 +21,9 @@ class Flag:
     argument is not a plain value, and `env` is False for a knob whose
     variable means something other than the argument itself.
     """
-    __slots__ = ("help", "short", "long", "action", "type", "metavar", "env")
+    __slots__ = ("action", "env", "help", "long", "metavar", "short", "type")
 
-    def __init__(self, help="", short="", long="", action="", type=str,
+    def __init__(self, help="", short="", long="", action="", type=str,  # noqa: A002
                  metavar="", env=""):
         self.help = help
         self.short = short

@@ -69,7 +69,7 @@ class Sink:
             self.out.flush()
             return
         if self.file is None:
-            self.file = open(f"{self.path}.part", "w")
+            self.file = open(f"{self.path}.part", "w")  # noqa: SIM115
         self.file.write(text)
         self.file.flush()
 
@@ -77,7 +77,7 @@ class Sink:
         """A blob delta: appended to the current blob, opened lazily."""
         if self.blob is None:
             self.blob_path = self.free_path()
-            self.blob = open(f"{self.blob_path}.part", "wb")
+            self.blob = open(f"{self.blob_path}.part", "wb")  # noqa: SIM115
         self.blob.write(data)
         self.blob.flush()
 

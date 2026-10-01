@@ -107,7 +107,7 @@ def mark(blocks, cache):
     return out
 
 
-def breakpoint(body, cache):
+def mark_prefixes(body, cache):
     """Mark the system prompt and the last turn: the prefixes a later call reuses.
 
     The system prompt is the head of every request, and marking the last turn
@@ -120,7 +120,7 @@ def breakpoint(body, cache):
     ...         "messages": [{"role": "user", "content": "one"},
     ...                      {"role": "assistant", "content": "hi"},
     ...                      {"role": "user", "content": "two"}]}
-    >>> breakpoint(body, {"type": "ephemeral"})
+    >>> mark_prefixes(body, {"type": "ephemeral"})
     >>> body["system"]
     [{'type': 'text', 'text': 'be brief', 'cache_control': {'type': 'ephemeral'}}]
     >>> body["messages"][-1]["content"][-1]["cache_control"]
@@ -196,7 +196,7 @@ def build(model, turns, system, params):
     body.update(params)
     cache = cache_control(model)
     if cache:
-        breakpoint(body, cache)
+        mark_prefixes(body, cache)
     return body
 
 

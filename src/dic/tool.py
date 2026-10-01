@@ -105,7 +105,7 @@ def signature_schema(fn):
     try:
         hints = get_type_hints(fn)
     except Exception as e:
-        raise DicError(f"{fn.__name__}: cannot read its annotations: {e}")
+        raise DicError(f"{fn.__name__}: cannot read its annotations: {e}") from None
     properties, required = {}, []
     for name, parameter in inspect.signature(fn).parameters.items():
         if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
@@ -180,7 +180,7 @@ def split(spec):
             if missing and not (name.startswith(missing)
                                 or missing.startswith(name)):
                 # a dependency of a module that does exist, not the module
-                raise DicError(f"cannot import {spec}: {e}")
+                raise DicError(f"cannot import {spec}: {e}") from None
             continue
         return name, ".".join(parts[i:])
     raise DicError(f"cannot import a module of {spec}")
@@ -191,7 +191,7 @@ def load(module_name, spec):
     try:
         return importlib.import_module(module_name)
     except ImportError as e:
-        raise DicError(f"cannot import {module_name} (from {spec}): {e}")
+        raise DicError(f"cannot import {module_name} (from {spec}): {e}") from None
 
 
 def one(spec):
@@ -265,4 +265,4 @@ def call(record, arguments):
     try:
         return json.dumps(result, ensure_ascii=False)
     except (TypeError, ValueError) as e:
-        raise DicError(f"{record['name']}: its result is not JSON: {e}")
+        raise DicError(f"{record['name']}: its result is not JSON: {e}") from None

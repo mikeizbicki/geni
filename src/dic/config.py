@@ -130,9 +130,9 @@ def entries(path):
         with open(path) as f:
             data = json.load(f)
     except OSError as e:
-        raise DicError(f"cannot read {path}: {e}")
+        raise DicError(f"cannot read {path}: {e}") from None
     except ValueError as e:
-        raise DicError(f"malformed json in {path}: {e}")
+        raise DicError(f"malformed json in {path}: {e}") from None
     if not isinstance(data, dict):
         raise DicError(f"{path}: expected an object mapping model_id to its keys")
     out = {}
@@ -271,8 +271,8 @@ def default_id(conn, env):
         first = first or model_id
         if env.get(resolved_keys(conn, model_id).get("api_key_name") or ""):
             return model_id
+    if not first:
         raise DicError(f"no models configured: write {models_path(env)}")
-        die(f"no models configured: write {models_path(env)}")
     return first
 
 

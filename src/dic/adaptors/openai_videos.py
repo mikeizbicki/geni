@@ -40,7 +40,7 @@ def newest(turns):
     return "", []
 
 
-def build(model, turns, system, params):
+def build(model, turns, system, params):  # noqa: ARG001
     """The form fields of a create, with the input_reference kept apart.
 
     size and seconds come from the config's options and -o; the reference
@@ -59,13 +59,13 @@ def build(model, turns, system, params):
 def fetch(request, decode=True):
     """urlopen a request; JSON when asked, bytes when not, DicError on 4xx/5xx."""
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request) as response:  # noqa: S310
             return json.load(response) if decode else response.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
-        raise DicError(f"videos: {e.code} {detail}")
+        raise DicError(f"videos: {e.code} {detail}") from None
     except urllib.error.URLError as e:
-        raise DicError(f"videos: {e}")
+        raise DicError(f"videos: {e}") from None
 
 
 def call(model, key, body, line, stamps):
@@ -83,7 +83,7 @@ def call(model, key, body, line, stamps):
     else:
         data, content_type = json.dumps(body).encode(), "application/json"
     stamps["t_request"] = time.time_ns()
-    created = fetch(urllib.request.Request(
+    created = fetch(urllib.request.Request(  # noqa: S310
         base + PATH, data=data,
         headers={**headers, "Content-Type": content_type}))
     stamps["t_headers"] = time.time_ns()
@@ -92,7 +92,8 @@ def call(model, key, body, line, stamps):
         raise DicError(f"videos: no id in {created}")
     start = time.time()
     while True:
-        job = fetch(urllib.request.Request(f"{base}{PATH}/{video}", headers=headers))
+        job = fetch(urllib.request.Request(  # noqa: S310
+            f"{base}{PATH}/{video}", headers=headers))
         status = job.get("status")
         if status in ("completed", "failed"):
             break
@@ -106,7 +107,7 @@ def call(model, key, body, line, stamps):
         raise DicError(f"videos: {model['model_name']}: {message}")
     stamps["t_first"] = time.time_ns()
     yield {"type": "result", "result": job}
-    data = fetch(urllib.request.Request(
+    data = fetch(urllib.request.Request(  # noqa: S310
         f"{base}{PATH}/{video}/content?variant=video", headers=headers),
         decode=False)
     stamps["t_last"] = time.time_ns()

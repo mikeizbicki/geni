@@ -115,13 +115,13 @@ def newest(turns):
 def fetch(request):
     """urlopen a request and decode its JSON body; every failure is a DicError."""
     try:
-        with urllib.request.urlopen(request) as response:
+        with urllib.request.urlopen(request) as response:  # noqa: S310
             return json.load(response)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
-        raise DicError(f"fal: {e.code} {detail}")
+        raise DicError(f"fal: {e.code} {detail}") from None
     except urllib.error.URLError as e:
-        raise DicError(f"fal: {e}")
+        raise DicError(f"fal: {e}") from None
 
 
 def upload(key, data, mime_type, name="attachment"):
@@ -132,15 +132,16 @@ def upload(key, data, mime_type, name="attachment"):
     the call that asked for it, rather than sending a URL that is not a file.
     """
     init = json.dumps({"content_type": mime_type, "file_name": name}).encode()
-    ticket = fetch(urllib.request.Request(
+    ticket = fetch(urllib.request.Request(  # noqa: S310
         UPLOAD + "/storage/upload/initiate", data=init,
         headers={**auth(key), "Content-Type": "application/json"}))
-    fetch(urllib.request.Request(ticket["upload_url"], data=data, method="PUT",
-                                 headers={"Content-Type": mime_type}))
+    fetch(urllib.request.Request(  # noqa: S310
+        ticket["upload_url"], data=data, method="PUT",
+        headers={"Content-Type": mime_type}))
     return ticket["file_url"]
 
 
-def prepare(model, key, turns, params):
+def prepare(model, key, turns, params):  # noqa: ARG001
     """Upload the newest turn's attachments to fal and return them as URLs.
 
     fal reads an image, a video or an audio clip from a URL, so every file
@@ -159,7 +160,7 @@ def prepare(model, key, turns, params):
     return turns
 
 
-def build(model, turns, system, params):
+def build(model, turns, system, params):  # noqa: ARG001
     """The fal arguments for one call: the spec's shape, the options, the files.
 
     The newest turn's text is the prompt, its attachments land in the
@@ -219,16 +220,16 @@ def call(model, key, body, line, stamps):
     headers = {"Content-Type": "application/json", **auth(key),
                **(model.get("headers") or {})}
     stamps["t_request"] = time.time_ns()
-    create = fetch(urllib.request.Request(base, data=json.dumps(body).encode(),
-                                          headers=headers))
+    create = fetch(urllib.request.Request(  # noqa: S310
+        base, data=json.dumps(body).encode(), headers=headers))
     stamps["t_headers"] = time.time_ns()
     job = create.get("request_id") or create.get("id")
     if not job:
         raise DicError(f"fal: {model['model_name']}: no request id in {create}")
     start = time.time()
     while True:
-        status = fetch(urllib.request.Request(f"{base}/requests/{job}/status",
-                                              headers=headers))
+        status = fetch(urllib.request.Request(  # noqa: S310
+            f"{base}/requests/{job}/status", headers=headers))
         state = status.get("status")
         if state in ("COMPLETED", "OK"):
             break
@@ -239,16 +240,16 @@ def call(model, key, body, line, stamps):
                            f" after {POLL_S}s")
         line.status(f"fal: {state} {pv_clock(line.elapsed())}")
         time.sleep(POLL_MS / 1000)
-    result = fetch(urllib.request.Request(f"{base}/requests/{job}",
-                                          headers=headers))
+    result = fetch(urllib.request.Request(  # noqa: S310
+        f"{base}/requests/{job}", headers=headers))
     stamps["t_first"] = time.time_ns()
     yield {"type": "result", "result": result}
     url = asset_url(result)
     try:
-        with urllib.request.urlopen(url) as response:
+        with urllib.request.urlopen(url) as response:  # noqa: S310
             data = response.read()
     except urllib.error.HTTPError as e:
-        raise DicError(f"fal: {e.code} fetching {url}")
+        raise DicError(f"fal: {e.code} fetching {url}") from None
     stamps["t_last"] = time.time_ns()
     yield {"type": "blob", "data": data}
 

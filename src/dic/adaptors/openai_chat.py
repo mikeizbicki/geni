@@ -194,7 +194,7 @@ def calls(acc):
             arguments = json.loads(arguments)
         except ValueError as e:
             raise DicError(f"{function.get('name')}: its arguments are not"
-                           f" JSON: {e}")
+                           f" JSON: {e}") from None
         out.append({"id": call.get("id"), "name": function.get("name"),
                     "arguments": arguments})
     return out

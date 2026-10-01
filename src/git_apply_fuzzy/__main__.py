@@ -70,7 +70,7 @@ def stage(path):
     Run after the write, so a failure here only means the user has to
     stage the file by hand; the file on disk is already correct.
     """
-    result = subprocess.run(["git", "add", "-A", "--", path],
+    result = subprocess.run(["git", "add", "-A", "--", path],  # noqa: S603,S607
                             capture_output=True, text=True)
     if result.returncode != 0:
         error(f"{path}: git add failed: {result.stderr.strip()}")
@@ -203,7 +203,7 @@ def set_submodule(path, commit):
     the commit the patch names is `git submodule update`'s job, and it needs
     a network this program does not have.
     """
-    result = subprocess.run(submodule_argv(path, commit),
+    result = subprocess.run(submodule_argv(path, commit),  # noqa: S603
                             capture_output=True, text=True)
     if result.returncode != 0:
         note(f"{path}: {result.stderr.strip()}")

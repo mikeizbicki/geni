@@ -52,8 +52,8 @@ class Reply:
     caller see what the call cost, because a price is read from the config as
     it is now and recorded on the row rather than returned.
     """
-    __slots__ = ("text", "raw", "mid", "model_id", "api_type", "status",
-                 "error", "usage", "paths", "mime", "timings")
+    __slots__ = ("api_type", "error", "mid", "mime", "model_id", "paths",
+                 "raw", "status", "text", "timings", "usage")
 
     def __init__(self, text="", raw=None, mid=None, model_id=None,
                  api_type=None, status=None, error=None, usage=None,
@@ -399,11 +399,11 @@ def options(model, overrides):
     for override in overrides:
         if "=" not in override:
             raise DicError(f"bad option (expected key=value): {override}")
-        key, value = override.split("=", 1)
+        key, raw = override.split("=", 1)
         try:
-            value = json.loads(value)
+            value = json.loads(raw)
         except ValueError:
-            pass
+            value = raw
         opts[key.strip()] = value
     return opts
 
@@ -685,7 +685,7 @@ def dic(prompt,
         try:
             limit = float(budget)
         except ValueError:
-            raise DicError(f"DIC_COST_BUDGET={budget} is not a number")
+            raise DicError(f"DIC_COST_BUDGET={budget} is not a number") from None
         spent = conn.execute(SESSION_COST, (session, session)).fetchone()[0]
         if spent >= limit:
             raise DicError(f"{session}: ${spent:.4f} spent,"

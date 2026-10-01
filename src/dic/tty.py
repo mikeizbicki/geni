@@ -216,7 +216,9 @@ class Line:
             while not self.stop.wait(0.1):
                 if self.elapsed() >= WAIT_DELAY:
                     self.clock = True
-                    self.paint(f"ttft: {pv_clock(self.elapsed(), tenths=True)}")
+                    tail = f"  {self.extra}" if self.extra else ""
+                    self.paint(
+                        f"ttft: {pv_clock(self.elapsed(), tenths=True)}{tail}")
 
         self.thread = threading.Thread(target=tick, daemon=True)
         self.thread.start()

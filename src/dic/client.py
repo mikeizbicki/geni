@@ -772,9 +772,15 @@ def dic(prompt,
                 and getattr(adaptor, "calls", None)):
             raise DicError(f"{api_type}: this protocol does not support tools")
         opts["tools"] = adaptor.tool_schema(tools)
+    line = Line(err, env)
     prepare = getattr(adaptor, "prepare", None)
     if prepare is not None:            # fal reads URLs, so files go up first
+        # a prepare that uploads is time the user waits before anything
+        # is sent, so it gets the same one line the ttft clock does; a
+        # fast one never paints at all
+        line.wait()
         turns = prepare(model, api_key, turns, opts)
+        line.first_token()
     body = adaptor.build(model, turns, system, opts)
     headers = {"content-type": "application/json", "accept": "text/event-stream"}
     headers.update(adaptor.auth(api_key))
@@ -791,7 +797,6 @@ def dic(prompt,
     pv_response = (not out.isatty() if knobs["pv_response"] is None
                    else knobs["pv_response"])
     pv = pv_resp = None
-    line = Line(err, env)
 
     def close_meters():
         """Stop the wait clock and close each meter, so nothing repaints after."""

@@ -18,7 +18,7 @@ adaptors/openai_chat.py for the contract.
 import json, os, time, urllib.error, urllib.request
 
 from dic.store import http_url
-from dic.tty import DicError, pv_clock
+from dic.tty import DicError
 
 PATH = ""                              # the model name is the path; see call()
 QUEUE = "https://queue.fal.run"
@@ -243,7 +243,9 @@ def call(model, key, body, line, stamps):
         if time.time() - start > POLL_S:
             raise DicError(f"fal: {model['model_name']}: still {state}"
                            f" after {POLL_S}s")
-        line.status(f"fal: {state} {pv_clock(line.elapsed())}")
+        # the queue wait is part of the time-to-first-byte, so it annotates
+        # the ttft clock rather than replacing it: one line, one number
+        line.extra = f"fal: {state}"
         time.sleep(POLL_MS / 1000)
     result = fetch(urllib.request.Request(  # noqa: S310
         f"{base}/requests/{job}", headers=headers))

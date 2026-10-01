@@ -52,8 +52,12 @@ def test_bats(suite):
         pytest.fail(NO_BATS)
 
     # check=True would report a status and nothing else.  The suite prints
-    # the report, so it is captured and shown with the failure.
-    done = subprocess.run([BATS, str(suite)], capture_output=True, text=True)
+    # the report, so it is captured and shown with the failure, and
+    # --print-output-on-failure follows each failing `run` with the stdout
+    # and stderr it captured -- the half of the report that says what the
+    # tool under test actually printed.
+    done = subprocess.run([BATS, "--print-output-on-failure", str(suite)],
+                          capture_output=True, text=True)
     if done.returncode != 0:
         pytest.fail(
             f"{suite.name} failed ({done.returncode}):\n"

@@ -7,6 +7,10 @@
 #
 #     itera [--max N] [--test CMD] 'request'
 #
+# itera's own flags are parsed first; the first `--` ends them, and
+# everything after -- including a flag itera does not know, such as -c --
+# is passed through to committe, which passes it on to dic.
+#
 # ITERA_MAX (default 5) is the round budget; --max is the same knob on the
 # command line.  ITERA_TEST is the test command, and it is what a detection
 # is not asked for: when it is unset, itera-detect-test guesses one from the
@@ -138,18 +142,20 @@ itera-run-tests() {
 
 # The loop: pre-flight, then rounds until green or the budget runs out.
 itera() {
-    local max=${ITERA_MAX} arg
+    local max=${ITERA_MAX}
+    local -a llm_args=()
     while (( $# )); do
         case $1 in
             --max) max=$2; shift 2 ;;
             --test) ITERA_TEST=$2; shift 2 ;;
-            --) shift; break ;;
-            -*) echo "itera: unknown flag: $1" >&2; return 64 ;;
-            *) break ;;
+            --) shift; llm_args+=("$@"); break ;;
+            *) llm_args+=("$1"); shift ;;
         esac
     done
-    (( $# )) || { echo 'itera: no request' >&2; return 64; }
-    local request=$1
+    if (( ${#llm_args[@]} == 0 )) && [[ -t 0 ]]; then
+        echo 'itera: no request' >&2
+        return 64
+    fi
 
     test_cmd=$(itera-detect-test) || return 1
 
@@ -164,7 +170,7 @@ itera() {
     local round=1
     while (( round <= max )); do
         if (( round == 1 )); then
-            if ! committe "$request"; then
+            if ! committe "${llm_args[@]}"; then
                 echo 'itera: committe failed' >&2
                 return 1
             fi

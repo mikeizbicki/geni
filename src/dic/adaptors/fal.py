@@ -113,12 +113,12 @@ def newest(turns):
     return "", []
 
 
-def fetch(request):
-    """urlopen a request and decode its JSON body; every failure is a DicError."""
+def fetch(request, decode=True):
+    """urlopen a request; JSON when asked, bytes when not, DicError on 4xx/5xx."""
     try:
         http_url(request.full_url)
         with urllib.request.urlopen(request) as response:  # noqa: S310
-            return json.load(response)
+            return json.load(response) if decode else response.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
         raise DicError(f"fal: {e.code} {detail}") from None
@@ -137,9 +137,11 @@ def upload(key, data, mime_type, name="attachment"):
     ticket = fetch(urllib.request.Request(  # noqa: S310
         UPLOAD + "/storage/upload/initiate", data=init,
         headers={**auth(key), "Content-Type": "application/json"}))
+    # the PUT is answered with an empty body, so nothing here is json: the
+    # upload either took or the status code says so, and the URL is the truth
     fetch(urllib.request.Request(  # noqa: S310
         ticket["upload_url"], data=data, method="PUT",
-        headers={"Content-Type": mime_type}))
+        headers={"Content-Type": mime_type}), decode=False)
     return ticket["file_url"]
 
 

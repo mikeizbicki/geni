@@ -107,15 +107,26 @@ itera-detect-test() {
 # round should say.  PIPESTATUS[0] is the test's status; pv's is its own,
 # and it is not the one this function returns.
 itera-run-tests() {
-    local captured status estimate
+    local captured status estimate start elapsed
+    # A standalone call has no test_cmd from itera(); detect it here, so
+    # `itera-run-tests` is the run a round makes and not an empty pipeline.
+    if [[ -z ${test_cmd:-} ]]; then
+        test_cmd=$(itera-detect-test) || return 1
+    fi
     captured=$(mktemp) || return 1
     estimate=$(itera-estimate)
     local label='test'
     [[ -n $estimate ]] && label="test (expect ~${estimate}s)"
+    start=$(date +%s.%N)
     # shellcheck disable=SC2086  # $test_cmd is a word: `sandbox pytest -q`
     $test_cmd 2>&1 | pv -l -t -N "$label" >"$captured"
     status=${PIPESTATUS[0]}
     if (( status == 0 )); then
+        # Time and record here, not in itera(), so a standalone run is
+        # also a data point and there is only one place a run is timed.
+        elapsed=$(awk -v s="$start" -v e="$(date +%s.%N)" \
+            'BEGIN { printf "%.3f", e - s }')
+        itera-record-test "$elapsed"
         rm -f "$captured"
         return 0
     fi
@@ -150,9 +161,8 @@ itera() {
     fi
     itera-require-clean-tree || return 1
 
-    local round=1 start elapsed
+    local round=1
     while (( round <= max )); do
-        start=$(date +%s.%N)
         if (( round == 1 )); then
             if ! committe "$request"; then
                 echo 'itera: committe failed' >&2
@@ -165,9 +175,6 @@ itera() {
             fi
         fi
         if itera-run-tests; then
-            elapsed=$(awk -v s="$start" -v e="$(date +%s.%N)" \
-                'BEGIN { printf "%.3f", e - s }')
-            itera-record-test "$elapsed"
             echo "itera: green after $round round(s)"
             return 0
         fi

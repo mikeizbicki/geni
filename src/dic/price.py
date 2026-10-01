@@ -23,7 +23,7 @@ and the table that rated it is a config file that the next invocation may have
 edited, so the dollars it produced are recorded rather than recomputed.
 """
 import hashlib, json
-import ast, hashlib, json, operator
+import ast, operator
 from dic.tty import DicError
 
 # What a rate is quoted in.  A token is sold by the million and everything else

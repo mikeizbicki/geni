@@ -62,8 +62,8 @@ def build(model, turns, system, params):  # noqa: ARG001
 def fetch(request):
     """urlopen a request and decode its JSON body; every failure is a DicError."""
     try:
-        url = http_url(request.full_url)
-        with urllib.request.urlopen(url) as response:  # noqa: S310
+        http_url(request.full_url)
+        with urllib.request.urlopen(request) as response:  # noqa: S310
             return json.load(response)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]

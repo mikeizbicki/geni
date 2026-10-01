@@ -4,6 +4,11 @@ The tree is split by what it tests: `tests/dic` holds the python tests of
 the `dic` program, and everything beside this file is the shell side, where
 the tools under `scripts/` are tested.
 
+`./test.sh` is the one command a developer types and the command `itera`
+runs; it labels a stage per tool.  A new stage -- mypy, flake8 -- goes
+there once the tree is clean under it, because itera's pre-flight runs this
+script and a stage the tree cannot pass is a stage no round can start from.
+
 ## dic
 
 Most of `dic` is pure functions, and those are tested where they live: a
@@ -43,11 +48,11 @@ If a test needs three sentences of setup to be believed, the setup is the bug.
 ## shell
 
 The tools under `scripts/` are bash, and bats is what tests bash.
-`tests/shell/*.bats` is one file per tool, and `tests/test_shell.py` runs
-each one under pytest, so pytest stays the one command a developer types.
-A missing bats, or a `tests/shell` with no suites in it, is a failure and
-not a skip: an empty collection reads as a green run that covered less than
-it claims.
+`tests/shell/*.bats` is one file per tool, and `./test.sh` runs each one
+directly, so a bats report reaches the log without pytest's report around
+it.  A missing bats, or a `tests/shell` with no suites in it, is a failure
+and not a skip: an empty collection reads as a green run that covered less
+than it claims.
 
 Two things are faked in a shell test and nothing else is.  `tests/bin/dic`
 replays a recorded reply, and `tests/bin/bwrap` records the argument list

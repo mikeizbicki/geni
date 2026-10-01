@@ -73,6 +73,10 @@ function itera() {
         return 1
     fi
 
+    # Save the caller's stdout on fd 3, so the tests below can stream to
+    # it live while `$(...)` captures the same bytes for the next round.
+    exec 3>&1
+
     # The tree must already be green.  Otherwise the loop would be fixing
     # pre-existing failures, and a green tree would otherwise end the loop
     # before it had made the change being asked for.
@@ -80,8 +84,7 @@ function itera() {
     # local returns its own status and not the command substitution's.  So
     # the assignment is a statement of its own and the if reads the test's.
     local pre
-    if ! pre=$($test_cmd 2>&1); then
-        printf '%s\n' "$pre" >&2
+    if ! pre=$(set -o pipefail; $test_cmd 2>&1 | tee /dev/fd/3); then
         echo 'itera-error: tests do not pass before starting' >&2
         return 1
     fi
@@ -113,7 +116,7 @@ function itera() {
 
         # The tests run after committe, so a round that changes nothing and
         # a round that fixes the failure are told apart by the run after it.
-        if out=$($test_cmd 2>&1); then
+        if out=$(set -o pipefail; $test_cmd 2>&1 | tee /dev/fd/3); then
             printf 'itera: green after %d round(s)\n' "$i" >&2
             return 0
         fi

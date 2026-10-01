@@ -485,6 +485,10 @@ and `DIC_SESSION=foo dic -c ...` is a one-off way to address a named conversatio
 
 The pointer for each session is stored as a single file at
 `$XDG_RUNTIME_DIR/fac/dic/<session>` whose contents are the last `mid` written by that session.
+The name is percent-escaped before it is used as a filename -- `%` becomes
+`%25` and `/` becomes `%2F` -- because a session name is a path and a file
+cannot also be a directory: `parent` and `parent/child` are two files at the
+same level, and neither is in the way of the other.
 This location is a tmpfs, so the pointers are wiped on logout and reboot with no garbage collection,
 no liveness checking, and no locking beyond an atomic rename.
 The file's mtime serves as the "last used" time for free.

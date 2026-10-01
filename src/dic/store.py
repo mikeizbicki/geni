@@ -629,6 +629,21 @@ def normalize(turns):
 
 # ---------------------------------------------------------------- session
 
+def session_filename(name):
+    """A DIC_SESSION name as the one filename that stores its pointer.
+
+    A session name is a path -- `parent/scruta-1` is a child of `parent` --
+    so an unescaped '/' would make the pointer of the parent a directory
+    and the pointer of the child a file inside it: two things the same
+    path cannot be at once.  Escaping is injective ('%' first, then '/'),
+    so a name stays one file however deeply it nests.
+
+    >>> session_filename("global"), session_filename("a/b"), session_filename("a%2Fb")
+    ('global', 'a%2Fb', 'a%252Fb')
+    """
+    return name.replace("%", "%25").replace("/", "%2F")
+
+
 def session_path(env):
     """The tmpfs file holding this shell session's last mid.
 
@@ -638,7 +653,7 @@ def session_path(env):
     runtime = env.get("XDG_RUNTIME_DIR")
     base = (os.path.join(runtime, "fac", "dic") if runtime
             else f"/tmp/fac-{os.getuid()}/dic")
-    return os.path.join(base, env.get("DIC_SESSION", "global"))
+    return os.path.join(base, session_filename(env.get("DIC_SESSION", "global")))
 
 
 def session_read(env):

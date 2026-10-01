@@ -18,7 +18,7 @@ A call's other output is its usage: a disjoint dict of what the API counted, in
 the names a price table has rules for, stored beside the cost those rules made
 of it.  `tokens` and `openai_usage` are how an adaptor builds one.
 """
-import base64, hashlib, json, mimetypes, os, sqlite3, time
+import base64, hashlib, json, mimetypes, os, sqlite3, time, urllib.parse
 
 from dic.tty import DicError
 
@@ -443,6 +443,26 @@ def multipart(fields, files, field="image"):
         out += block["data"] + b"\r\n"
     out += f"--{boundary}--\r\n".encode()
     return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
+def http_url(url):
+    """The url, if its scheme is http or https; a DicError otherwise.
+
+    urlopen takes file: and ftp: as well, and an adaptor fetches a URL
+    that arrived from a provider's own response -- the asset a fal or a
+    videos job names -- so without this a hostile response could read a
+    local file into an answer.  Every adaptor's urlopen goes through here.
+
+    >>> http_url("https://x/y")
+    'https://x/y'
+    >>> http_url("file:///etc/passwd")
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: refusing non-http url: file:///etc/passwd
+    """
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        raise DicError(f"refusing non-http url: {url}")
+    return url
 
 
 # ---------------------------------------------------------------- sqlite

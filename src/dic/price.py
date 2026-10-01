@@ -23,7 +23,7 @@ and the table that rated it is a config file that the next invocation may have
 edited, so the dollars it produced are recorded rather than recomputed.
 """
 import hashlib, json
-
+import ast, hashlib, json, operator
 from dic.tty import DicError
 
 # What a rate is quoted in.  A token is sold by the million and everything else
@@ -63,6 +63,75 @@ def segments(name):
     return name.split(".")
 
 
+# The operations a `when` may use, so that a price rule is data and never
+# code: eval would let a shared models.json reach every class the
+# interpreter has loaded, and that is not a price table's business.
+_OPS = {ast.Gt: operator.gt, ast.Lt: operator.lt,
+        ast.GtE: operator.ge, ast.LtE: operator.le,
+        ast.Eq: operator.eq, ast.NotEq: operator.ne,
+        ast.Add: operator.add, ast.Sub: operator.sub,
+        ast.Mult: operator.mul, ast.Div: operator.truediv}
+
+
+def when(text, facts):
+    """Evaluate one price rule's `when` against the facts of the call.
+
+    The expression is a comparison, or a boolean combination of them, over
+    the names in facts: no call, no attribute, no subscript, no name that
+    is not a fact.  That is the whole language a price rule gets, because
+    a config file is data and not code.
+
+    >>> when("in_total > 200", {"in_total": 300})
+    True
+    >>> when("in_total > 200 and out_total < 10",
+    ...      {"in_total": 300, "out_total": 5})
+    True
+    >>> when("1 + 1 == 2", {})
+    True
+    >>> when("__import__('os')", {})
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: price rule: Call not allowed in `when`
+    >>> when("x.__class__", {"x": 1})
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: price rule: Attribute not allowed in `when`
+    """
+    def walk(node):
+        if isinstance(node, ast.Expression):
+            return walk(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id not in facts:
+                raise DicError(
+                    f"price rule: {node.id} is not a fact of the call")
+            return facts[node.id]
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return -walk(node.operand)
+        if isinstance(node, ast.BinOp) and type(node.op) in _OPS:
+            return _OPS[type(node.op)](walk(node.left), walk(node.right))
+        if isinstance(node, ast.BoolOp):
+            values = [walk(value) for value in node.values]
+            return all(values) if isinstance(node.op, ast.And) else any(values)
+        if isinstance(node, ast.Compare):
+            left = walk(node.left)
+            for operation, comparator in zip(node.ops, node.comparators):
+                if type(operation) not in _OPS:
+                    raise DicError(f"price rule:"
+                                   f" {type(operation).__name__} not"
+                                   " allowed in `when`")
+                right = walk(comparator)
+                if not _OPS[type(operation)](left, right):
+                    return False
+                left = right
+            return True
+        raise DicError(f"price rule: {type(node).__name__}"
+                       " not allowed in `when`")
+
+    return bool(walk(ast.parse(text, mode="eval")))
+
+
 def matches(key, name, rule, facts):
     """Whether the rule named `name` rates the usage name `key` in this call.
 
@@ -87,9 +156,8 @@ def matches(key, name, rule, facts):
         return False
     if rule.get("tier") and rule["tier"] != facts.get("tier"):
         return False
-    when = rule.get("when")
-    return not when or bool(eval(  # noqa: S307
-        when, {"__builtins__": {}}, dict(facts)))
+    condition = rule.get("when")
+    return not condition or when(condition, facts)
 
 
 def specificity(name, rule):

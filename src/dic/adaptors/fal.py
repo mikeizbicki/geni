@@ -17,6 +17,7 @@ adaptors/openai_chat.py for the contract.
 """
 import json, os, time, urllib.error, urllib.request
 
+from dic.store import http_url
 from dic.tty import DicError, pv_clock
 
 PATH = ""                              # the model name is the path; see call()
@@ -115,7 +116,8 @@ def newest(turns):
 def fetch(request):
     """urlopen a request and decode its JSON body; every failure is a DicError."""
     try:
-        with urllib.request.urlopen(request) as response:  # noqa: S310
+        url = http_url(request.full_url)
+        with urllib.request.urlopen(url) as response:  # noqa: S310
             return json.load(response)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
@@ -244,7 +246,7 @@ def call(model, key, body, line, stamps):
         f"{base}/requests/{job}", headers=headers))
     stamps["t_first"] = time.time_ns()
     yield {"type": "result", "result": result}
-    url = asset_url(result)
+    url = http_url(asset_url(result))
     try:
         with urllib.request.urlopen(url) as response:  # noqa: S310
             data = response.read()

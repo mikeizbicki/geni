@@ -14,7 +14,7 @@ Exports PATH, auth, build, call, parse, finish; see adaptors/openai_chat.py.
 """
 import json, time, urllib.error, urllib.request
 
-from dic.store import multipart
+from dic.store import http_url, multipart
 from dic.tty import DicError, pv_clock
 
 PATH = "/videos"
@@ -59,7 +59,8 @@ def build(model, turns, system, params):  # noqa: ARG001
 def fetch(request, decode=True):
     """urlopen a request; JSON when asked, bytes when not, DicError on 4xx/5xx."""
     try:
-        with urllib.request.urlopen(request) as response:  # noqa: S310
+        url = http_url(request.full_url)
+        with urllib.request.urlopen(url) as response:  # noqa: S310
             return json.load(response) if decode else response.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]

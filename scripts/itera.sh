@@ -124,18 +124,18 @@ itera-detect-test() {
 }
 
 # Run the test once through pv and return its status.  pv repaints one line
-# on stderr and the test's own output is captured, then read back only when
-# the status is nonzero -- a green round says nothing, which is what a green
-# round should say.  PIPESTATUS[0] is the test's status; pv's is its own,
-# and it is not the one this function returns.
+# on stderr and the test's own output lands in itera_test_output, then is
+# read back only when the status is nonzero -- a green round says nothing,
+# which is what a green round should say -- and left where the loop can
+# hand it to the next round's committe.  The status is the test's own and
+# not pv's, so it is read from PIPESTATUS before the substitution moves it.
 itera-run-tests() {
-    local captured status estimate start elapsed
+    local status estimate start elapsed
     # A standalone call has no test_cmd from itera(); detect it here, so
     # `itera-run-tests` is the run a round makes and not an empty pipeline.
     if [[ -z ${test_cmd:-} ]]; then
         test_cmd=$(itera-detect-test) || return 1
     fi
-    captured=$(mktemp) || return 1
     estimate=$(itera-estimate)
     local label='test'
     [[ -n $estimate ]] && label="test (expect ~${estimate}s)"
@@ -145,25 +145,30 @@ itera-run-tests() {
     # terminal has something to show while pv waits; pv's own repaint
     # begins with \r and overwrites this line.
     printf '%s: 0:00\r' "$label" >&2
+    # The test's output lands in itera_test_output rather than a temp
+    # file: the bytes of a red round must survive to the next round's
+    # committe -c, and a variable leaves no file behind to clean up.
     # dic-run traces the call, so the merge goes inside the string: a
-    # 2>&1 on dic-run itself would capture the trace as well.  eval runs
-    # in this shell, so a sourced function such as sandbox is still a
-    # function.  The parens make 2>&1 apply to the whole expression, and
-    # PIPESTATUS[0] is still the test's own status.
-    dic-run eval "($test_cmd) 2>&1" | pv -l -t -N "$label" >"$captured"
-    status=${PIPESTATUS[0]}
+    # 2>&1 on dic-run itself would capture the trace as well.  eval
+    # runs in this shell, so a sourced function such as sandbox is
+    # still a function.  The parens make 2>&1 apply to the whole
+    # expression.  The `exit` inside the substitution reads
+    # PIPESTATUS[0], which is still the test's own status, and makes it
+    # the substitution's status; nothing runs between the pipeline and
+    # the exit to move it.
+    itera_test_output=$(dic-run eval "($test_cmd) 2>&1" \
+        | pv -l -t -N "$label"; exit "${PIPESTATUS[0]}")
+    status=$?
     if (( status == 0 )); then
         # Time and record here, not in itera(), so a standalone run is
         # also a data point and there is only one place a run is timed.
         elapsed=$(awk -v s="$start" -v e="$(date +%s.%N)" \
             'BEGIN { printf "%.3f", e - s }')
         itera-record-test "$elapsed"
-        rm -f "$captured"
         return 0
     fi
     printf '\n' >&2                    # close pv's line before the dump
-    cat "$captured" >&2
-    rm -f "$captured"
+    printf '%s' "$itera_test_output" >&2
     return "$status"
 }
 
@@ -202,7 +207,13 @@ itera() {
                 return 1
             fi
         else
-            if ! committe -c; then
+            # -c continues the round-1 conversation, and the failed
+            # round's output is the request for this one: dic appends a
+            # non-tty stdin after a blank line, so the model reads what
+            # went red beside the code it wrote.  A herestring is one
+            # pipe and no subshell, so committe's fd 0 is stdin exactly
+            # as a heredoc would make it.
+            if ! committe -c <<< "$itera_test_output"; then
                 echo 'itera: committe failed' >&2
                 return 1
             fi

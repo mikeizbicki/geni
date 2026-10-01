@@ -22,6 +22,12 @@
 # a pipe.  A later round replaces that with the failing round's own output,
 # because the request is already in the history --c replays.
 
+# dic-run and dic-git-clean live in dic.sh, which sources this file in
+# turn.  A caller that sources this file directly -- a test, say --
+# gets the helpers by sourcing dic.sh first; when dic.sh is the entry
+# point, _DIC_LOADED is already set and this line does nothing.
+[[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
+
 # The test command when the caller names none, and the git-state check a
 # round must pass.  Both are pure functions of the tree.
 ITERA_MAX=${ITERA_MAX:-5}

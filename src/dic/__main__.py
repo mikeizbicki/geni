@@ -22,12 +22,36 @@ T0 = time.time_ns()             # cost -- imports, config, db -- as well as the 
 
 import os, sys
 
-from dic.client import dic
-from dic.options import parser
-from dic.tty import DicError, die
+
+def init_line():
+    """The one line `dic --init` prints: a `source` of the packaged dic.sh.
+
+    `eval "$(dic --init)"` is what a pip-installed dic offers instead of a
+    git clone: the shell sources the real file -- not a process
+    substitution, so BASH_SOURCE[0] in dic.sh is a path and the
+    sibling-sourcing loop there resolves.  The aliases, the tab completion
+    and the `itera` family come with it.  A `-f` in argv is forwarded, so
+    the shell that asks can reread an edited dic.sh into itself.
+    """
+    from importlib.resources import files
+    import shlex
+    path = files("dic.scripts") / "dic.sh"
+    extra = " -f" if "-f" in sys.argv[1:] else ""
+    return f"source {shlex.quote(str(path))}{extra}"
 
 
 def main():
+    # --init names a file and nothing else, so it is answered before the
+    # client, its sqlite and its json config are imported: a .bashrc pays
+    # for one importlib lookup and one print, not for the message tree.
+    if "--init" in sys.argv[1:]:
+        print(init_line())
+        return
+
+    from dic.client import dic
+    from dic.options import parser
+    from dic.tty import DicError, die
+
     try:
         parsed, extra = parser().parse_known_args()
         args = vars(parsed)

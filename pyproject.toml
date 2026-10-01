@@ -17,15 +17,19 @@ git-apply-fuzzy = "git_apply_fuzzy.__main__:main"
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
+# The shell scripts live at the repository root and not under src/, so that
+# a checkout can source them directly; mapping the package onto scripts/
+# ships them as dic/scripts/ in the wheel, which is what a pip-installed
+# `dic --init` names.  The list is explicit because packages.find cannot
+# discover a package whose directory is outside src/.
 [tool.setuptools]
-package-dir = {"" = "src"}
+packages = ["accio", "dic", "dic.adaptors", "dic.tools", "dic.scripts", "git_apply_fuzzy"]
+package-dir = {"" = "src", "dic.scripts" = "scripts"}
 include-package-data = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
 
 [tool.setuptools.package-data]
 dic = ["models.json"]
+"dic.scripts" = ["*.sh", "*.c"]
 
 [tool.pytest.ini_options]
 markers = ["slow: starts a real dic process; left out of the default run"]

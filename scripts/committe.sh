@@ -3,6 +3,13 @@
 # It is intended as a beginner-friendly intro to the "unix philosophy"
 # and how AI coding agents work.
 
+# dic-run, dic-git-clean and dic-llm live in dic.sh, which sources
+# this file in turn.  A caller that sources this file directly -- a
+# test, say -- gets the helpers by sourcing dic.sh first; when dic.sh
+# is the entry point, _DIC_LOADED is already set and this line does
+# nothing, so dic.sh sourcing this file does not loop.
+[[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
+
 function committe() {
     # exit code meaning:
     # 0 committed

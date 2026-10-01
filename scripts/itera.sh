@@ -17,6 +17,12 @@
 # no network: it is the only thing in the loop that runs code the model
 # wrote, and it must be assumed compromised.
 
+# dic-run lives in dic.sh, which sources this file in turn.  A caller
+# that sources this file directly -- a test, say -- gets the helper by
+# sourcing dic.sh first; when dic.sh is the entry point, _DIC_LOADED
+# is already set and this line does nothing.
+[[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
+
 function itera-usage() {
     cat <<'EOF'
 usage: itera [flags] [REQUEST...]

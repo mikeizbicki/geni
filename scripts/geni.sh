@@ -32,6 +32,12 @@
 # so the parse-the-`--` rule from scripts/AGENTS.md does not apply
 # yet; the pattern in committe and itera is what to copy when it does.
 
+# dic-run and dic-git-clean live in dic.sh, which sources this file in
+# turn.  A caller that sources this file directly -- a test, say --
+# gets the helpers by sourcing dic.sh first; when dic.sh is the entry
+# point, _DIC_LOADED is already set and this line does nothing.
+[[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
+
 geni-token() {
     # A token unique enough that two invocations in the same second do
     # not collide, and short enough to read in a directory listing.

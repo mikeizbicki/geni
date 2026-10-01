@@ -236,10 +236,10 @@ SELECT mid, prev_mid, t_start, model_id, user, status,
 MODELS = """
 WITH RECURSIVE
   have(name) AS (SELECT value FROM json_each(?)),
-  anc(root, id, keys, depth) AS (
-    SELECT id, id, keys, 0 FROM config WHERE abstract = 0
+  anc(root, id, parent, keys, depth) AS (
+    SELECT id, id, parent, keys, 0 FROM config WHERE abstract = 0
   UNION ALL
-    SELECT anc.root, c.id, c.keys, anc.depth + 1
+    SELECT anc.root, c.id, c.parent, c.keys, anc.depth + 1
       FROM config c JOIN anc ON c.id = anc.parent WHERE anc.depth < 32),
   kname(root, depth, name) AS (
     SELECT root, depth, json_extract(keys, '$.api_key_name')

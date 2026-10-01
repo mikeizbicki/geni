@@ -91,6 +91,16 @@ call_args() { sed -n "$1p" "$COMMITTE_ARGS"; }
     [ "$output" = "sandbox pytest -q" ]
 }
 
+@test "detection prefers a project's own test entry point" {
+    unset ITERA_TEST
+    touch pyproject.toml      # both are here; ./test.sh is the one that wins
+    printf '#!/bin/bash\nexit 0\n' > test.sh
+    chmod +x test.sh
+    run itera-detect-test
+    [ "$status" -eq 0 ]
+    [ "$output" = "sandbox ./test.sh" ]
+}
+
 @test "detection with nothing to find names the way out" {
     unset ITERA_TEST
     run itera-detect-test

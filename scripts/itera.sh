@@ -49,6 +49,9 @@ itera-detect-test() {
     # do not sandbox if the user specifies a command
     [[ -n ${ITERA_TEST:-} ]] && { echo "$ITERA_TEST"; return; }
 
+    # a tree that ships its own test entry point says what its tests are
+    [[ -x ./test.sh ]] && { echo 'sandbox ./test.sh'; return; }
+
     # sandbox autodetected test commands
     [[ -f pyproject.toml || -f pytest.ini || -f setup.cfg || -d tests ]] \
                                               && { echo 'sandbox pytest -q'; return; }

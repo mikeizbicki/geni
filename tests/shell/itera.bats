@@ -88,7 +88,7 @@ call_args() { sed -n "$1p" "$COMMITTE_ARGS"; }
     touch pyproject.toml
     run itera-detect-test
     [ "$status" -eq 0 ]
-    [ "$output" = "sandbox pytest" ]
+    [ "$output" = "sandbox pytest -q" ]
 }
 
 @test "detection with nothing to find names the way out" {

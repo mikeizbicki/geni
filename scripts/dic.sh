@@ -42,6 +42,18 @@ alias gemini='dic -m openrouter+gemini'
 
 # --- shared helpers -----------------------------------------------------
 
+# Single-quote an argument for the audit line.  The whole string sits
+# inside ' ', so a prose prompt reads as written instead of as a run of
+# escaped spaces, while a lone identifier -- a SHA, a path, a mid --
+# still reads as one token.  An embedded quote becomes the four-
+# character close-reopen '\'' that every POSIX shell has used forever.
+# %q is not this: it escapes whitespace one character at a time.
+_dic_quote() {
+    local s=$1
+    s=${s//\'/\'\\\'\'}
+    printf "'%s'" "$s"
+}
+
 # Echo a command to stderr and then run it.  This is the audit trail
 # these scripts do not get from `set -x`: xtrace is a shell-wide flag
 # that would print the wrappers' own internals, and several call sites
@@ -85,10 +97,10 @@ dic-run() {
             if [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
                 local -a w
                 read -ra w <<< "$a"
-                printf ' %q' "${w[*]:0:${DIC_TRACE_WORDS:-3}}"
+                printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}}")"
                 printf ' <...>'
             else
-                printf ' %q' "$a"
+                printf ' %s' "$(_dic_quote "$a")"
             fi
         done
         printf '%s\n' "$reset"

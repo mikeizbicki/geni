@@ -15,7 +15,7 @@ import json
 class Flag:
     """How one parameter of `dic()` is spelled on the command line and in $ENV.
 
-    The parameter's own default is the not-given value -- None, () or False --
+    The parameter's own default is the not-given value -- None or False --
     and the Flag says how to name it: `short` and `long` are the option
     strings, `action` is "append", "count", "bool" or "yes/no" when the
     argument is not a plain value, and `env` is False for a knob whose
@@ -38,8 +38,8 @@ flag = Flag
 
 # What "not given" looks like for each action; a knob still holding one of
 # these falls back to its environment variable.
-EMPTY = {"": None, "append": (), "count": None, "bool": False, "yes/no": None,
-         "?": None}
+EMPTY = {"": None, "append": None, "count": None, "bool": False,
+         "yes/no": None, "?": None}
 
 
 def _name(name):

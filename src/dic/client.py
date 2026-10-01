@@ -478,15 +478,15 @@ def dic(prompt,
         model:        flag(short="-m", help="which model") = None,
         system:       flag(short="-s", help="system prompt") = None,
         attachment:   flag(short="-a", action="append", metavar="FILE",
-                           help="attach a file") = (),
+                           help="attach a file") = None,
         option:       flag(short="-o", action="append", metavar="KEY=VALUE",
-                           help="override a model option") = (),
+                           help="override a model option") = None,
         cache:        flag(long="--cache", metavar="TTL",
                            help="cache the prompt: off (the default), or a"
                                 " TTL the model prices") = None,
         tools:        flag(long="--tools", action="append",
                            metavar="MODULE:FUNC",
-                           help="offer a python function as a tool; repeatable") = (),
+                           help="offer a python function as a tool; repeatable") = None,
         extract:      flag(short="-x", action="bool",
                            help="print only the first fenced code block") = False,
         path:         flag(long="--path", metavar="FILE",
@@ -750,13 +750,14 @@ def dic(prompt,
         # default rewrite the system prompt the thread was started with
         system = env.get("DIC_SYSTEM") or model.get("system")
 
-    attached = [store_attachment(conn, path) for path in knobs["attachment"]]
+    attached = [store_attachment(conn, path)
+                for path in knobs["attachment"] or ()]
     turns.append({"role": "user",
                   "blocks": [dict(att) for att in attached]
                             + [{"type": "text", "text": prompt}]})
     turns = normalize(turns)
 
-    opts = options(model, knobs["option"])
+    opts = options(model, knobs["option"] or ())
     # a cache breakpoint is a request dic builds and not an option it
     # forwards, so the TTL is settled here: off unless the caller asked for
     # one the model's own price table can rate

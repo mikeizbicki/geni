@@ -2,11 +2,11 @@
 
 export DIC_MODEL=groq+qwen
 export DIC_SYSTEM="Keep your response short, between 1-20 lines. Focus on a high signal to noise ratio (audience has strong math/cs background). If the question is about a computer, respond for: $(uname -a)."
-# Record per-round byte-rate samples into dic.db, so that a B/s over time
-# plot is a SQL query.  Off by default in dic; on here because the curves
-# are the whole reason this install exists.
-export DIC_TRACE=1
 [[ $- == *i* ]] && export DIC_SESSION="$$"
+
+# Record per-round byte-rate samples into dic.db, so that a B/s over time
+# plot is a SQL query.  Off by default in dic; on here
+export DIC_TRACE=1
 
 alias qwen='dic -m groq+qwen'
 alias fable='dic -m anthropic+fable'
@@ -93,7 +93,10 @@ _dic_complete() {
   case $prev in
     # tab complete model names
     -m|--model)
-      COMPREPLY=( $(compgen -W "$(dic --models)" -- "$cur") )
+      # --models prints a header then three columns: the id, its key
+      # variable, and whether that variable is set.  A completion reads
+      # the first column of every other line.
+      COMPREPLY=( $(compgen -W "$(dic --models | tail -n +2 | cut -f1)" -- "$cur") )
       return ;;
     # tab complete files
     -a|--attachment|--path|--models-file)

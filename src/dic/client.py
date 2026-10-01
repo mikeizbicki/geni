@@ -23,10 +23,10 @@ import http.client, json, os, re, sys, time, urllib.parse
 from dic import config, output, price
 from dic.options import flag, resolve
 from dic.store import (CONVERSATION_COST, COST_TREE, INSERT, LOG, LOG_ALL,
-                       LOG_SESSION, PROVIDERS, SESSION_COST, STATS, TOOL_STATS,
-                       Trace, config_dir, db, history, normalize, resolve_ref,
-                       session_read, session_write, store_attachment,
-                       turns_from_rows, ulid)
+                       LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
+                       TOOL_STATS, Trace, config_dir, db, history, normalize,
+                       resolve_ref, session_read, session_write,
+                       store_attachment, turns_from_rows, ulid)
 from dic.tty import (BLUE, RESET, THINKING, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
 
@@ -529,7 +529,8 @@ def dic(prompt,
         aliases:      flag(action="bool",
                            help="print shell alias definitions and exit") = False,
         models:       flag(action="bool",
-                           help="list the configured model ids and exit") = False,
+                           help="list every configured model id, the key"
+                                " each needs and whether it is set") = False,
         models_file:  flag(help="a json file of model entries to overlay") = None,
         stats:        flag(action="bool",
                            help="print per-model statistics and exit") = False,
@@ -590,8 +591,15 @@ def dic(prompt,
     session = env.get("DIC_SESSION", "global")
     config.sync(conn, env, knobs["models_file"])   # a stat per file; a parse only when one moved
     if knobs["aliases"] or knobs["models"]:
-        text = (config.aliases(conn) if knobs["aliases"]
-                else "".join(f"{name}\n" for name in config.model_ids(conn)))
+        if knobs["aliases"]:
+            text = config.aliases(conn)
+        else:
+            # every id, with the key it needs and whether that key is set:
+            # a listing that says why a model cannot be called beats a
+            # listing that quietly leaves it out, and the id stays in
+            # column one, so `tail -n +2 | cut -f1` reads it
+            text = table(conn.execute(
+                MODELS, (json.dumps(sorted(env)),)).fetchall())
         out.write(text)
         out.flush()
         return Reply(text=text)

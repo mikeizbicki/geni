@@ -225,6 +225,36 @@ SELECT mid, prev_mid, t_start, model_id, user, status,
  ORDER BY t_start DESC LIMIT ?
 """
 
+# What `dic --models` prints: every non-abstract id, the environment
+# variable its api_key_name resolves to, and whether that variable is set.
+# The chain is walked here and not by resolve() because --models asks about
+# every model at once, and the key that wins is the one the nearest ancestor
+# that states one gives, exactly as json_patch merge would produce.  A model
+# whose key is missing is marked rather than hidden: a user chasing a model
+# that will not run needs the id and the export it names, and the id stays
+# in column one so `tail -n +2 | cut -f1` is what a completion reads.
+MODELS = """
+WITH RECURSIVE
+  have(name) AS (SELECT value FROM json_each(?)),
+  anc(root, id, keys, depth) AS (
+    SELECT id, id, keys, 0 FROM config WHERE abstract = 0
+  UNION ALL
+    SELECT anc.root, c.id, c.keys, anc.depth + 1
+      FROM config c JOIN anc ON c.id = anc.parent WHERE anc.depth < 32),
+  kname(root, depth, name) AS (
+    SELECT root, depth, json_extract(keys, '$.api_key_name')
+      FROM anc WHERE json_extract(keys, '$.api_key_name') IS NOT NULL),
+  nearest(root, name) AS (
+    SELECT root, name FROM kname k
+     WHERE depth = (SELECT min(depth) FROM kname k2 WHERE k2.root = k.root))
+SELECT c.id, n.name AS api_key, have.name IS NOT NULL AS ok
+  FROM config c
+  LEFT JOIN nearest n ON n.root = c.id
+  LEFT JOIN have ON have.name = n.name
+ WHERE c.abstract = 0 AND c.pos IS NOT NULL
+ ORDER BY c.pos
+"""
+
 B32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 # The cost of a session and every session nested inside it.  A session name
 # is a path -- a subagent that runs under DIC_SESSION=parent/scruta-1 is a

@@ -726,7 +726,12 @@ in the environment, so an install holding only one provider's key needs no confi
 failing even that, the first entry, which then fails with a message naming the key to export.
 An id that is not configured is an error, never a silent fallback.
 
-`dic --models` lists every non-abstract id; `dic --aliases` prints
+`dic --models` is one tab-separated table with a header: the id, the
+environment variable its `api_key_name` resolves to, and whether that
+variable is set.  A model whose key is missing is marked rather than
+hidden, so a user chasing a model that will not run sees the export it
+names, and the id stays in column one, so `tail -n +2 | cut -f1` is what
+shell completion reads.  `dic --aliases` prints
 `alias qwen='dic -m groq+qwen'` for every entry with an `alias` key,
 which `dic.sh` evals.
 Shell names and model names therefore come from one table and cannot drift apart,

@@ -2,7 +2,7 @@
 
 <img align=right width=200px src="img/geni2.png">
 
-`geni` is a bare-bones command line coding agent.
+`geni` is a lightweight command line coding agent.
 It is designed to:
 1. be easy to understand,
 1. be usable on any project with zero setup, and

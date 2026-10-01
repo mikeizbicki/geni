@@ -50,13 +50,34 @@ alias gemini='dic -m openrouter+gemini'
 # skipped; the loop walks outwards, so each match is prepended and the
 # tag reads outermost first.
 dic-run() {
-    local f names=() tag= red= reset=
+    local f names=() tag= red= reset= a
     for f in "${FUNCNAME[@]:1}"; do
         case $f in geni|itera|committe) names=("$f" "${names[@]}");; esac
     done
     (( ${#names[@]} )) && tag="[${names[*]// /:}] "
     if [[ -t 2 && -z ${NO_COLOR:-} ]]; then red=$'\e[31m'; reset=$'\e[0m'; fi
-    { printf '%s%s+' "$red" "$tag"; printf ' %q' "$@"; printf '%s\n' "$reset"; } >&2
+    {
+        printf '%s%s+' "$red" "$tag"
+        for a in "$@"; do
+            # A long argument that contains whitespace is prose -- a
+            # prompt, or a heredoc that arrived as one argument -- and
+            # its first few words are enough to recognize it, so only
+            # the head is printed.  An argument with no whitespace is
+            # an identifier -- a SHA, a path, a mid -- and every byte
+            # of it is worth showing, so it is printed whole.
+            # DIC_TRACE_WORDS and DIC_TRACE_MAX are shell variables,
+            # not exports, because no child process reads them.
+            if [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
+                local -a w
+                read -ra w <<< "$a"
+                printf ' %q' "${w[*]:0:${DIC_TRACE_WORDS:-3}}"
+                printf ' <...>'
+            else
+                printf ' %q' "$a"
+            fi
+        done
+        printf '%s\n' "$reset"
+    } >&2
     "$@"
 }
 

@@ -67,9 +67,10 @@ def fetch(request):
             return json.load(response)
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
-        raise DicError(f"images: {e.code} {detail}") from None
+        parts = (str(e.code), request.full_url, detail)
+        raise DicError("images: " + " ".join(p for p in parts if p)) from None
     except urllib.error.URLError as e:
-        raise DicError(f"images: {e}") from None
+        raise DicError(f"images: {request.full_url}: {e}") from None
 
 
 def call(model, key, body, line, stamps):  # noqa: ARG001

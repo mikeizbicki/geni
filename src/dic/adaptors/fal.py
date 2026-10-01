@@ -121,9 +121,10 @@ def fetch(request, decode=True):
             return json.load(response) if decode else response.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
-        raise DicError(f"fal: {e.code} {detail}") from None
+        parts = (str(e.code), request.full_url, detail)
+        raise DicError("fal: " + " ".join(p for p in parts if p)) from None
     except urllib.error.URLError as e:
-        raise DicError(f"fal: {e}") from None
+        raise DicError(f"fal: {request.full_url}: {e}") from None
 
 
 def upload(key, data, mime_type, name="attachment"):

@@ -1,6 +1,6 @@
 # Geni
 
-<img align=center width="400" src="img/geni.png">
+<img align=right width=300px src="img/geni2.png">
 
 `geni` is a bare-bones command line coding agent.
 It is designed to:

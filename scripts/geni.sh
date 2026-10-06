@@ -38,26 +38,6 @@
 # point, _DIC_LOADED is already set and this line does nothing.
 [[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
 
-geni-token() {
-    # A token unique enough that two invocations in the same second do
-    # not collide, and short enough to read in a directory listing.
-    # BASHPID separates the two halves of `geni a & geni b`, which a
-    # bare $$ does not, and $RANDOM separates two shells started in
-    # the same second.
-    #
-    # It leads with the caller's source branch so a leftover is
-    # recognizable before any commit exists to name it better.  The
-    # branch is sanitized for both a ref and a path: a slash would
-    # otherwise nest the worktree a level deeper under .git/geni/ and
-    # split the branch across two path components.
-    local base
-    base=$(printf '%s' "${1:-anon}" | tr 'A-Z/' 'a-z-' | cut -c1-30)
-    printf '%s-%s-%s\n' \
-        "${base:-anon}" \
-        "$(date -u +%Y%m%d%H%M%S)" \
-        "${BASHPID:-$$}$RANDOM"
-}
-
 geni-slug() {
     # A commit subject as one path-safe word: lowercased, runs of
     # non-alphanumerics collapsed to a dash, trimmed, truncated.
@@ -117,7 +97,7 @@ function geni() {
     # filesystem as the repository and out of every walk of the tree.
     # It leads with the source branch, so a leftover is recognizable
     # before any commit exists to name it better.
-    token=$(geni-token "$branch")
+    token=$(worktree-token "$branch")
     wt_branch="geni/$token"
     common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
     wt_dir="$common_dir/geni/$token"

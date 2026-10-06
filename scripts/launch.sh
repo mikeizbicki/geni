@@ -134,42 +134,60 @@ launch-init() {
 }
 
 launch() {
-    # Open a new window and run $@ in it.  A failure of `kitty @ launch`
-    # is the only failure this function can report; once the window
-    # exists, the command's success or failure is the child's business.
+    # Open a new window and run $@ in it.  The command may be a program
+    # or a shell function.  A program is exec'd, so it owns the window
+    # and the window closes when it exits.  A function is run and then
+    # the shell stays interactive, so `launch worktree newfeature`
+    # opens a window, creates a worktree and cd's into it, and leaves
+    # the caller able to keep typing there.  A failure of
+    # `kitty @ launch` is the only failure this function can report;
+    # once the window exists, the command's success or failure is the
+    # child's business.
+    #
+    # The choice of branch cannot be made here: a function only lives
+    # inside a running shell, and this one has not been sourced in the
+    # child yet.  So the file the child reads makes the choice, and
+    # both branches are written into it below.
 
     # The child sources this file to reach launch-init, so the path has
     # to survive the trip: BASH_SOURCE names the file even when a caller
     # sourced it by a relative path or through a symlink, and realpath
     # makes it absolute so the child can source it from any cwd.  The
-    # rcfile the no-argument case writes names the file too, so the
-    # path is resolved before the arguments are inspected.
-    local self
+    # rcfile below names the file too, so the path is resolved before
+    # the arguments are inspected.
+    local self rc
     self=$(realpath "${BASH_SOURCE[0]}")
 
-    # With no arguments, open an interactive bash.  bash -i reads
-    # ~/.bashrc on startup, so the aliases and functions dic installs
-    # are there without anything being copied across.  The rcfile is
-    # still needed, because bash reinitializes PS1 when it starts an
-    # interactive shell: the value launch-init set in the environment
-    # is discarded before the first prompt is drawn, and calling
-    # launch-init again from inside the rcfile puts the marker back
-    # after bash has stopped resetting.  The OSC 11 tint survives the
-    # second call unchanged, because the background the first call
-    # wrote is what the second one reads.
-    if (( ! $# )); then
-        local rc
-        rc=$(mktemp -t launch.XXXXXX) || return 1
-        {
-            printf '[ -f ~/.bashrc ] && source ~/.bashrc\n'
-            printf 'source %q\n' "$self"
-            printf 'launch-init\n'
-            # The file erases itself once it has been read, so the
-            # caller needs no trap to clean up after it.
-            printf 'rm -f %q\n' "$rc"
-        } > "$rc" || { rm -f "$rc"; return 1; }
-        set -- bash --rcfile "$rc" -i
-    fi
+    # The child's interactive bash reads this file.  `source ~/.bashrc`
+    # is what gives it dic's functions and aliases, and a function
+    # named on the command line is one of dic's, so this line is why
+    # `launch` can take one at all.  `source $self` gives it
+    # launch-init, and the call puts the marker on a bash that has
+    # stopped resetting PS1.  The file erases itself once it has been
+    # read, so the caller needs no trap to clean up after it.
+    #
+    # The final branch is the whole point.  `type -t` names what the
+    # first word is, and a function is run -- in this shell, so a cd
+    # it makes persists -- while anything else is exec'd, so the
+    # window closes with the program.  With no argument at all the
+    # file stops after launch-init and bash presents a prompt, which
+    # is the interactive shell the no-argument case opened before.
+    rc=$(mktemp -t launch.XXXXXX) || return 1
+    {
+        printf '[ -f ~/.bashrc ] && source ~/.bashrc\n'
+        printf 'source %q\n' "$self"
+        printf 'launch-init\n'
+        printf 'rm -f %q\n' "$rc"
+        if (( $# )); then
+            printf 'if [[ "$(type -t -- %q)" == function ]]; then\n' "$1"
+            printf '  '
+            printf '%q ' "$@"
+            printf '\nelse\n'
+            printf '  exec '
+            printf '%q ' "$@"
+            printf '\nfi\n'
+        fi
+    } > "$rc" || { rm -f "$rc"; return 1; }
 
     # `env -0` separates on NUL, so a value with a newline in it is one
     # environment variable and not several.  The loop turns the current
@@ -183,14 +201,10 @@ launch() {
     # directory in the source window, which is this shell.  --type=os-
     # window asks for a top-level window and not a split.  The `--`
     # ends kitty's options, so a command that starts with `-` is not
-    # read as one.  `exec "$@"` and not `"$@"` so the child's bash does
-    # not linger beside the command it started.  BASH_ENV makes the
-    # child's bash source this file before it runs the command, which
-    # is where launch-init comes from, so the child does not need the
-    # path as an argument.  stdout goes to /dev/null because
-    # `kitty @ launch` prints the new window's id and the caller did
-    # not ask for it.
+    # read as one.  stdout goes to /dev/null because `kitty @ launch`
+    # prints the new window's id and the caller did not ask for it.
+    # bash reads the rcfile written above and does the rest.
     kitty @ launch --type=os-window --cwd=current "${e[@]}" -- \
-        env BASH_ENV="$self" bash -c 'launch-init; exec "$@"' launch "$@" \
+        bash --rcfile "$rc" -i \
         >/dev/null
 }

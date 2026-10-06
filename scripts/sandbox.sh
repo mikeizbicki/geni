@@ -97,6 +97,65 @@ sandbox-assign() {
     [[ ${1:-} == *=* && ${1%%=*} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
 
+# sandbox-complete -- bash completion for sandbox().
+#
+# The payload is the first word that is neither a leading NAME=value
+# (sandbox-assign, the same predicate sandbox() peels with, so
+# completion and the wrapper agree on where the run ends) nor a bwrap
+# option (a word that begins with -).  A `--` is bwrap's own
+# end-of-options marker: the word after it is the payload whether or
+# not it begins with -, and the walk stops there.
+#
+# Completion at the payload is command completion.  This is what
+# sudo(8)'s completion does at the word after its own options; the
+# PATH widening to the sbin directories and the _comp_command_offset
+# hand-off are sudo's recipe, because the position relative to the
+# options is the same.  The interpreter -- _comp_initialize,
+# _comp_command_offset, _comp_compgen_filedir -- is bash-completion's,
+# which the shell has already when it has sudo's completion.
+sandbox-complete() {
+    local cur prev words cword was_split
+    _comp_initialize -s -- "$@" || return
+
+    # Walk the words left to right; the loop stops at the payload's
+    # index.  Each word before it is a leading assignment or a bwrap
+    # option.  A `--` is bwrap's own, and the word after it is the
+    # payload.
+    local i=1
+    while (( i <= cword )); do
+        if sandbox-assign "${words[i]}"; then
+            ((i++))
+        elif [[ ${words[i]} == -- ]]; then
+            ((i++))
+            break
+        elif [[ ${words[i]} == -* ]]; then
+            ((i++))
+        else
+            break
+        fi
+    done
+
+    if (( i <= cword )); then
+        # The payload, whether the caller is still typing its name or
+        # is already past it and typing the command's own arguments.
+        # _comp_command_offset hands both to the payload's own
+        # completion, so `sandbox nma<TAB>` completes the name and
+        # `sandbox nmap --h<TAB>` completes nmap's flags.
+        local PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
+        local _comp_root_command=$1
+        _comp_command_offset "$i"
+        return
+    fi
+
+    # Still inside the option run.  An assignment in progress has a
+    # value the caller types, so nothing is offered for it; a bwrap
+    # option in progress names no file, so the fallback is a path.
+    [[ $cur == *=* ]] && return
+    _comp_compgen_filedir
+}
+
+complete -F sandbox-complete sandbox
+
 sandbox() {
     # A leading NAME=value is read here and nowhere else.  Peel the run of
     # them off before anything else looks at the argument list, so what is

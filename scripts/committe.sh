@@ -99,7 +99,17 @@ function committe-apply() {
     # making a change, so there is nothing to apply and nothing to commit
     if ! grep -q '^diff --git ' "$patch_file"; then
         echo "committe-question: the model made no change; it asks:" >&2
+        # FIXME: this hardcodes tty.BLUE.  use_color decides by DIC_COLOR,
+        # NO_COLOR and isatty, and only the terminal case is copied by hand
+        # here: a pipe or a NO_COLOR gets the escapes anyway and a
+        # DIC_COLOR=always is ignored.  Model output belongs in blue
+        # everywhere it is printed, and the one place that knows what blue
+        # means is tty.py, so the fix is a `dic --paint` that applies
+        # use_color to stdin and the question goes through it:
+        #     sed ... | dic --paint >&2
+        printf '%s' $'\e[38;5;39m' >&2
         sed 's/^#![[:space:]]*//' "$patch_file" >&2
+        printf '%s' $'\e[0m' >&2
         echo "committe-hint: continue with: committe -c '...'" >&2
         return 2
     fi

@@ -106,16 +106,17 @@ sandbox-assign() {
 # end-of-options marker: the word after it is the payload whether or
 # not it begins with -, and the walk stops there.
 #
-# Completion at the payload is command completion.  This is what
-# sudo(8)'s completion does at the word after its own options; the
-# PATH widening to the sbin directories and the _comp_command_offset
-# hand-off are sudo's recipe, because the position relative to the
-# options is the same.  The interpreter -- _comp_initialize,
-# _comp_command_offset, _comp_compgen_filedir -- is bash-completion's,
-# which the shell has already when it has sudo's completion.
+# Completion at the payload is command completion: PATH is widened
+# to the sbin directories, the same widening sudo(8)'s completion
+# does at the word after its own options, and bash's compgen -A
+# command lists the command names there.  Everywhere else the word
+# is a bwrap option or the value of a leading assignment, and file
+# completion is what a caller typing one of those wants.  Nothing
+# here is read from bash-completion, so the function stands on its
+# own in a shell that has never sourced it.
 sandbox-complete() {
-    local cur prev words cword was_split
-    _comp_initialize -s -- "$@" || return
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    local cword=$COMP_CWORD
 
     # Walk the words left to right; the loop stops at the payload's
     # index.  Each word before it is a leading assignment or a bwrap
@@ -123,27 +124,23 @@ sandbox-complete() {
     # payload.
     local i=1
     while (( i <= cword )); do
-        if sandbox-assign "${words[i]}"; then
+        if sandbox-assign "${COMP_WORDS[i]}"; then
             ((i++))
-        elif [[ ${words[i]} == -- ]]; then
+        elif [[ ${COMP_WORDS[i]} == -- ]]; then
             ((i++))
             break
-        elif [[ ${words[i]} == -* ]]; then
+        elif [[ ${COMP_WORDS[i]} == -* ]]; then
             ((i++))
         else
             break
         fi
     done
 
-    if (( i <= cword )); then
-        # The payload, whether the caller is still typing its name or
-        # is already past it and typing the command's own arguments.
-        # _comp_command_offset hands both to the payload's own
-        # completion, so `sandbox nma<TAB>` completes the name and
-        # `sandbox nmap --h<TAB>` completes nmap's flags.
+    # At the payload word, complete command names from the widened
+    # PATH.
+    if (( i == cword )); then
         local PATH=$PATH:/sbin:/usr/sbin:/usr/local/sbin
-        local _comp_root_command=$1
-        _comp_command_offset "$i"
+        mapfile -t COMPREPLY < <(compgen -A command -- "$cur" | sort -u)
         return
     fi
 
@@ -151,10 +148,10 @@ sandbox-complete() {
     # value the caller types, so nothing is offered for it; a bwrap
     # option in progress names no file, so the fallback is a path.
     [[ $cur == *=* ]] && return
-    _comp_compgen_filedir
+    mapfile -t COMPREPLY < <(compgen -f -- "$cur")
 }
 
-complete -F sandbox-complete sandbox
+complete -o filenames -F sandbox-complete sandbox
 
 sandbox() {
     # A leading NAME=value is read here and nowhere else.  Peel the run of

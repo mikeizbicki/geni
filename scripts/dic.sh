@@ -86,23 +86,11 @@ _dic_quote() {
 # dropped when fd 2 is not a terminal and when NO_COLOR is set, so the
 # same function fills an interactive terminal and, one `2>log` away,
 # the file a background geni will log to.
-#
-# The tag names the latin scripts this call is nested under, read from
-# the shell's own FUNCNAME rather than counted from a baseline depth:
-# the depth at which dic.sh was sourced depends on who sourced it, and
-# a helper added or renamed in between would move a count without
-# moving what the line means.  FUNCNAME[0] is dic-run itself and is
-# skipped; the loop walks outwards, so each match is prepended and the
-# tag reads outermost first.
 dic-run() {
-    local f names=() tag= red= reset= a
-    for f in "${FUNCNAME[@]:1}"; do
-        case $f in geni|itera|committe) names=("$f" "${names[@]}");; esac
-    done
-    (( ${#names[@]} )) && tag="[${names[*]// /:}] "
+    local red= reset= a
     if [[ -t 2 && -z ${NO_COLOR:-} ]]; then red=$'\e[31m'; reset=$'\e[0m'; fi
     {
-        printf '%s%s+' "$red" "$tag"
+        printf '%s+' "$red"
         for a in "$@"; do
             # A multi-line argument -- a heredoc pasted as one -- is
             # summarized by its first line, which its author wrote as

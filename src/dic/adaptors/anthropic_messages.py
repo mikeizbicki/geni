@@ -158,7 +158,7 @@ def build(model, turns, system, params):
     ...           [{"role": "user", "blocks": [{"type": "text", "text": "hi"}]}],
     ...           "sys", {"max_tokens": 10})
     >>> b["messages"]
-    [{'role': 'user', 'content': 'hi'}]
+    [{'role': 'user', 'content': [{'type': 'text', 'text': 'hi'}]}]
     >>> b["system"], b["max_tokens"]
     ('sys', 10)
     >>> b = build({"model_name": "m"},
@@ -170,11 +170,25 @@ def build(model, turns, system, params):
     {'role': 'assistant', 'content': [{'type': 'thinking'}]}
     >>> b["messages"][1]["content"][0]["source"]
     {'type': 'base64', 'media_type': 'image/png', 'data': 'aGk='}
+    >>> b = build({"model_name": "m"},
+    ...           [{"role": "assistant", "blocks": [],
+    ...             "raw": [{"type": "text", "text": "first"}]}],
+    ...           None, {})
+    >>> b["messages"][0]["content"]
+    'first'
     """
     msgs = []
     for turn in turns:
         if "raw" in turn:
-            msgs.append({"role": "assistant", "content": turn["raw"]})
+            # a replayed turn is this provider's own blocks, so a list of
+            # nothing but text is sent the way the API states it -- a string
+            # -- and a list with reasoning or a tool call in it is replayed
+            # as the list of blocks it is
+            content = turn["raw"]
+            if (isinstance(content, list) and content
+                    and all(block.get("type") == "text" for block in content)):
+                content = "\n\n".join(block["text"] for block in content)
+            msgs.append({"role": "assistant", "content": content})
             continue
         content = []
         for block in turn["blocks"]:
@@ -188,12 +202,6 @@ def build(model, turns, system, params):
                 content.append({"type": "tool_result",
                                 "tool_use_id": block["id"],
                                 "content": block["content"]})
-        # a content list of pure text is collapsed to a plain string, as the
-        # chat protocol's own builder already produces: the API accepts
-        # either, and a converted turn reads the same whether it was stored
-        # under this protocol or under another
-        if content and all(part["type"] == "text" for part in content):
-            content = "\n\n".join(part["text"] for part in content)
         msgs.append({"role": turn["role"], "content": content})
     body = {"model": model["model_name"], "messages": msgs, "stream": True,
             "max_tokens": 4096}

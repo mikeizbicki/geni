@@ -106,7 +106,7 @@ launch-init() {
     local bg tint
     if bg=$(launch-termbg) &&
        tint=$(launch-blend "$bg" "${DIC_LAUNCH_TINT:-#777777}" \
-                            "${DIC_LAUNCH_ALPHA:-990}"); then
+                            "${DIC_LAUNCH_ALPHA:-150}"); then
         # OSC 11 sets the background.  Written to stdout, which is the
         # child's pty, so this does not have to name a fd.
         printf '\033]11;%s\033\\' "$tint"

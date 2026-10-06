@@ -94,7 +94,6 @@ launch-blend() {
 }
 
 launch-init() {
-    echo "launch-init entered $$ $(tty) PS1=${PS1@Q}" >>/tmp/ltrace
     # Everything that marks this window as a launched one.  Runs in the
     # child, in a shell that has launch.sh sourced, before the command
     # the caller named.  A new marker is added here, never in `launch`.
@@ -132,7 +131,6 @@ launch-init() {
     # Appended, so that a PROMPT_COMMAND which computes a prompt of
     # its own runs first and the marker lands on what it computed.
     PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }launch-prompt"
-    export PS1
 }
 
 launch() {
@@ -149,37 +147,26 @@ launch() {
     local self
     self=$(realpath "${BASH_SOURCE[0]}")
 
-    # With no arguments, open an interactive bash that behaves like
-    # this one.  Nothing but the environment crosses execve, so every
-    # other piece of shell state has to be written down: `alias -p`
-    # and `declare -f` print the aliases and the functions, `shopt -p`
-    # and `set +o` the shell and set options, each as the command that
-    # would restore it.  The four go into a temporary file, and
-    # `--rcfile` reads that file in place of ~/.bashrc.
-    #
-    # PS1 is why the file ends by calling launch-init a second time.
-    # bash reinitializes PS1, PS2 and PS4 when it starts an interactive
-    # shell, so the PS1 launch-init exported is discarded before the
-    # first prompt is drawn; setting it from inside the rcfile puts it
-    # back after bash has stopped resetting.  The OSC 11 tint survives
-    # the second call unchanged, because the background the first call
+    # With no arguments, open an interactive bash.  bash -i reads
+    # ~/.bashrc on startup, so the aliases and functions dic installs
+    # are there without anything being copied across.  The rcfile is
+    # still needed, because bash reinitializes PS1 when it starts an
+    # interactive shell: the value launch-init set in the environment
+    # is discarded before the first prompt is drawn, and calling
+    # launch-init again from inside the rcfile puts the marker back
+    # after bash has stopped resetting.  The OSC 11 tint survives the
+    # second call unchanged, because the background the first call
     # wrote is what the second one reads.
     if (( ! $# )); then
         local rc
         rc=$(mktemp -t launch.XXXXXX) || return 1
         {
-            alias -p
-            declare -f
-            shopt -p
-            set +o
             printf '[ -f ~/.bashrc ] && source ~/.bashrc\n'
             printf 'source %q\n' "$self"
             printf 'launch-init\n'
             # The file erases itself once it has been read, so the
             # caller needs no trap to clean up after it.
             printf 'rm -f %q\n' "$rc"
-            echo "rcfile entered $$ $(tty) PS1=${PS1@Q}" >> /tmp/ltrace
-            #printf 'PS1="ZZZ> "\n'
         } > "$rc" || { rm -f "$rc"; return 1; }
         set -- bash --rcfile "$rc" -i
     fi
@@ -197,7 +184,13 @@ launch() {
     # window asks for a top-level window and not a split.  The `--`
     # ends kitty's options, so a command that starts with `-` is not
     # read as one.  `exec "$@"` and not `"$@"` so the child's bash does
-    # not linger beside the command it started.
+    # not linger beside the command it started.  BASH_ENV makes the
+    # child's bash source this file before it runs the command, which
+    # is where launch-init comes from, so the child does not need the
+    # path as an argument.  stdout goes to /dev/null because
+    # `kitty @ launch` prints the new window's id and the caller did
+    # not ask for it.
     kitty @ launch --type=os-window --cwd=current "${e[@]}" -- \
-        bash -c 'source "$1"; shift; launch-init; exec "$@"' launch "$self" "$@"
+        env BASH_ENV="$self" bash -c 'launch-init; exec "$@"' launch "$@" \
+        >/dev/null
 }

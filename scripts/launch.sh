@@ -115,17 +115,25 @@ launch-init() {
     # A prompt that names the window, so the marking survives an
     # interactive command that repaints the screen over the tint.
     #
-    # The assignment is made here and then made again before every
-    # prompt.  It cannot be made once: writing PS1 is not enough to
-    # keep it, because bash initializes PS1 itself when an interactive
-    # shell starts, and the startup files such a shell reads around
-    # this call -- /etc/bash.bashrc on Debian, a --rcfile passed by a
-    # caller -- write it afterwards, whichever runs last winning.
-    # PROMPT_COMMAND runs after all of them and immediately before the
-    # prompt is expanded, so a marker set there is the one the user
-    # sees.
+    # The prefix is set here and set again before every prompt.
+    # Setting it once at source time is not enough, because bash
+    # initializes PS1 itself when an interactive shell starts, and the
+    # startup files such a shell reads around this call --
+    # /etc/bash.bashrc on Debian, a --rcfile passed by a caller --
+    # write it afterwards, whichever runs last winning.  PROMPT_COMMAND
+    # runs after all of them and immediately before the prompt is
+    # expanded, so it is where the prefix is last applied.
+    #
+    # A shell variable and not a substring test on $PS1 decides whether
+    # that later application has anything to do: kitty wraps $PS1 in
+    # its own escape sequences on the way to the prompt, so the
+    # '[launch] ' prefix leaves the front of the string, a substring
+    # test then fails, and the prefix is added a second time -- which
+    # is what multiplied [launch] over the first few prompts.
     launch-prompt() {
-        [[ ${PS1-} == '[launch] '* ]] || PS1='[launch] '"${PS1:-\$ }"
+        [[ -n ${_LAUNCH_MARK:-} ]] && return
+        _LAUNCH_MARK=1
+        PS1='[launch] '"${PS1:-\$ }"
     }
     launch-prompt
     # Appended, so that a PROMPT_COMMAND which computes a prompt of

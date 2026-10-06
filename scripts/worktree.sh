@@ -79,6 +79,7 @@ function worktree() {
             echo "worktree-error: could not enter $wt_dir" >&2
             return 1
         }
+        worktree-prompt "$token"
         return 0
     fi
 
@@ -93,4 +94,20 @@ function worktree() {
         echo "worktree-error: could not enter $wt_dir" >&2
         return 1
     }
+    worktree-prompt "$token"
+}
+
+worktree-prompt() {
+    # Name the worktree in the prompt: the token in purple, then a
+    # green $.  A shell variable and not a substring test on $PS1:
+    # kitty wraps $PS1 in its own escape sequences on the way to the
+    # prompt, so a prefix placed at the front of the string leaves the
+    # front, a substring test then fails, and the prefix is added a
+    # second time on every prompt -- which is the [launch] bug this
+    # also closes.  _LAUNCH_MARK is what tells launch.sh's
+    # launch-prompt, which launch-init leaves appended to
+    # PROMPT_COMMAND and which runs again before every prompt, that
+    # its own prefix is already accounted for.
+    _LAUNCH_MARK=1
+    PS1='\[\e[0;35m\]['"${1:-}"']\[\e[0m\] \[\e[0;32m\]$\[\e[0m\] '
 }

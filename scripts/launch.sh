@@ -94,6 +94,7 @@ launch-blend() {
 }
 
 launch-init() {
+    echo "launch-init entered $$ $(tty) PS1=${PS1@Q}" >>/tmp/ltrace
     # Everything that marks this window as a launched one.  Runs in the
     # child, in a shell that has launch.sh sourced, before the command
     # the caller named.  A new marker is added here, never in `launch`.
@@ -106,7 +107,7 @@ launch-init() {
     local bg tint
     if bg=$(launch-termbg) &&
        tint=$(launch-blend "$bg" "${DIC_LAUNCH_TINT:-#777777}" \
-                            "${DIC_LAUNCH_ALPHA:-150}"); then
+                            "${DIC_LAUNCH_ALPHA:-050}"); then
         # OSC 11 sets the background.  Written to stdout, which is the
         # child's pty, so this does not have to name a fd.
         printf '\033]11;%s\033\\' "$tint"
@@ -171,11 +172,14 @@ launch() {
             declare -f
             shopt -p
             set +o
+            printf '[ -f ~/.bashrc ] && source ~/.bashrc\n'
             printf 'source %q\n' "$self"
             printf 'launch-init\n'
             # The file erases itself once it has been read, so the
             # caller needs no trap to clean up after it.
             printf 'rm -f %q\n' "$rc"
+            echo "rcfile entered $$ $(tty) PS1=${PS1@Q}" >> /tmp/ltrace
+            #printf 'PS1="ZZZ> "\n'
         } > "$rc" || { rm -f "$rc"; return 1; }
         set -- bash --rcfile "$rc" -i
     fi

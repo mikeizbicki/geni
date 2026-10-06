@@ -36,17 +36,19 @@ worktree-token() {
 
 function worktree() {
     # Create a worktree branched from HEAD and cd into it.  With no
-    # argument the source branch names it; with one, that name leads
-    # the token.  The worktree lives under .git/geni/<token>, so it
-    # is invisible to `git status` and to a walk of the working tree,
-    # and it is on the same filesystem as the repository in the usual
-    # case.
+    # argument the source branch names it; with one, that name is used
+    # verbatim -- no timestamp, no random tail -- so a second caller
+    # asking for the same name lands in the same worktree.  An
+    # existing worktree of that name is entered and not recreated.
+    # The worktree lives under .git/geni/<token>, so it is invisible
+    # to `git status` and to a walk of the working tree, and it is on
+    # the same filesystem as the repository in the usual case.
     #
-    # The caller must be on a branch and the tree must be clean.  A
-    # detached HEAD names no branch to merge back into, and
+    # Creating a worktree requires being on a branch and a clean tree:
+    # a detached HEAD names no branch to merge back into, and
     # uncommitted changes are excluded from a worktree branched from
-    # HEAD by construction, so either case is an error before the
-    # worktree is created.
+    # HEAD by construction.  Entering an existing one makes neither
+    # requirement, so the checks run only on the create path.
     local name=$1
     local branch common_dir token wt_dir wt_branch
 
@@ -58,12 +60,29 @@ function worktree() {
         echo "worktree-error: detached HEAD; check out a branch first" >&2
         return 1
     }
-    dic-git-clean worktree || return 1
 
-    token=$(worktree-token "${name:-$branch}")
+    if [[ -n $name ]]; then
+        token=$name
+    else
+        token=$(worktree-token "$branch")
+    fi
     wt_branch="geni/$token"
     common_dir=$(git rev-parse --path-format=absolute --git-common-dir)
     wt_dir="$common_dir/geni/$token"
+
+    # An existing worktree of this name -- a second terminal got there
+    # first -- is entered rather than refused.  `git worktree list`
+    # and not `[[ -d ]]` decides, so a stray directory under
+    # .git/geni/ is not mistaken for one.
+    if git worktree list --porcelain | grep -qxF "worktree $wt_dir"; then
+        cd "$wt_dir" || {
+            echo "worktree-error: could not enter $wt_dir" >&2
+            return 1
+        }
+        return 0
+    fi
+
+    dic-git-clean worktree || return 1
 
     if ! dic-run git worktree add --quiet -b "$wt_branch" "$wt_dir" HEAD; then
         echo "worktree-error: could not create worktree" >&2

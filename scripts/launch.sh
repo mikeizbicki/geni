@@ -114,7 +114,23 @@ launch-init() {
 
     # A prompt that names the window, so the marking survives an
     # interactive command that repaints the screen over the tint.
-    PS1='[launch] '"${PS1:-\$ }"
+    #
+    # The assignment is made here and then made again before every
+    # prompt.  It cannot be made once: writing PS1 is not enough to
+    # keep it, because bash initializes PS1 itself when an interactive
+    # shell starts, and the startup files such a shell reads around
+    # this call -- /etc/bash.bashrc on Debian, a --rcfile passed by a
+    # caller -- write it afterwards, whichever runs last winning.
+    # PROMPT_COMMAND runs after all of them and immediately before the
+    # prompt is expanded, so a marker set there is the one the user
+    # sees.
+    launch-prompt() {
+        [[ ${PS1-} == '[launch] '* ]] || PS1='[launch] '"${PS1:-\$ }"
+    }
+    launch-prompt
+    # Appended, so that a PROMPT_COMMAND which computes a prompt of
+    # its own runs first and the marker lands on what it computed.
+    PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }launch-prompt"
     export PS1
 }
 

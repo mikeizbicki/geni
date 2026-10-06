@@ -122,29 +122,47 @@ launch() {
     # Open a new window and run $@ in it.  A failure of `kitty @ launch`
     # is the only failure this function can report; once the window
     # exists, the command's success or failure is the child's business.
+
+    # The child sources this file to reach launch-init, so the path has
+    # to survive the trip: BASH_SOURCE names the file even when a caller
+    # sourced it by a relative path or through a symlink, and realpath
+    # makes it absolute so the child can source it from any cwd.  The
+    # rcfile the no-argument case writes names the file too, so the
+    # path is resolved before the arguments are inspected.
+    local self
+    self=$(realpath "${BASH_SOURCE[0]}")
+
+    # With no arguments, open an interactive bash that behaves like
+    # this one.  Nothing but the environment crosses execve, so every
+    # other piece of shell state has to be written down: `alias -p`
+    # and `declare -f` print the aliases and the functions, `shopt -p`
+    # and `set +o` the shell and set options, each as the command that
+    # would restore it.  The four go into a temporary file, and
+    # `--rcfile` reads that file in place of ~/.bashrc.
     #
-    # With no arguments, open an interactive bash that inherits this
-    # shell's functions and aliases.  `alias -p` and `declare -f` write
-    # them into a temporary rcfile, which the child reads via --rcfile
-    # in place of /etc/bash.bashrc and ~/.bashrc.  The rcfile removes
-    # itself once sourced, so the parent needs no trap to clean up.
+    # PS1 is why the file ends by calling launch-init a second time.
+    # bash reinitializes PS1, PS2 and PS4 when it starts an interactive
+    # shell, so the PS1 launch-init exported is discarded before the
+    # first prompt is drawn; setting it from inside the rcfile puts it
+    # back after bash has stopped resetting.  The OSC 11 tint survives
+    # the second call unchanged, because the background the first call
+    # wrote is what the second one reads.
     if (( ! $# )); then
         local rc
         rc=$(mktemp -t launch.XXXXXX) || return 1
         {
             alias -p
             declare -f
+            shopt -p
+            set +o
+            printf 'source %q\n' "$self"
+            printf 'launch-init\n'
+            # The file erases itself once it has been read, so the
+            # caller needs no trap to clean up after it.
             printf 'rm -f %q\n' "$rc"
         } > "$rc" || { rm -f "$rc"; return 1; }
         set -- bash --rcfile "$rc" -i
     fi
-
-    # The child sources this file to reach launch-init, so the path has
-    # to survive the trip: BASH_SOURCE names the file even when a caller
-    # sourced it by a relative path or through a symlink, and realpath
-    # makes it absolute so the child can source it from any cwd.
-    local self
-    self=$(realpath "${BASH_SOURCE[0]}")
 
     # `env -0` separates on NUL, so a value with a newline in it is one
     # environment variable and not several.  The loop turns the current

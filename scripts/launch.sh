@@ -76,19 +76,21 @@ launch-termbg() {
 }
 
 launch-blend() {
-    # Blend color $2 over color $1 at weight $3 parts in ten, and print
-    # the result.  Both colors are #rrggbb; the default weight is 5, so
-    # an equal mix.  There is no alpha: kitty's `background_opacity`
+    # Blend color $2 over color $1 at weight $3 parts in a thousand, and
+    # print the result.  Both colors are #rrggbb; the default weight is
+    # 500, an even mix.  Per mille rather than parts in ten, so that the
+    # weights in use -- a tint laid on nearly full -- are stated exactly.
+    # There is no alpha: kitty's `background_opacity`
     # composites against the desktop and not against the terminal's own
     # background, so a translucent window would show wallpaper rather
     # than a grayed theme color.  A blend computed here is what
     # "overlay at 0.9 alpha" actually means.
     local r=$((16#${1:1:2})) g=$((16#${1:3:2})) b=$((16#${1:5:2}))
-    local w=${3:-5}
+    local w=${3:-500}
     printf '#%02x%02x%02x' \
-        $(( (16#${2:1:2}*w + r*(10-w))/10 )) \
-        $(( (16#${2:3:2}*w + g*(10-w))/10 )) \
-        $(( (16#${2:5:2}*w + b*(10-w))/10 ))
+        $(( (16#${2:1:2}*w + r*(1000-w))/1000 )) \
+        $(( (16#${2:3:2}*w + g*(1000-w))/1000 )) \
+        $(( (16#${2:5:2}*w + b*(1000-w))/1000 ))
 }
 
 launch-init() {
@@ -98,13 +100,13 @@ launch-init() {
     #
     # The tint is blended in rather than the background replaced, so
     # the window stays readable in a light theme and in a dark one:
-    # with the defaults, white becomes #b2b2b2 and black becomes
-    # #999999.  The two knobs below are shell variables, not exports,
+    # with the defaults, white becomes #787878 and black becomes
+    # #757575.  The two knobs below are shell variables, not exports,
     # because only this function reads them.
     local bg tint
     if bg=$(launch-termbg) &&
-       tint=$(launch-blend "$bg" "${DIC_LAUNCH_TINT:-#aaaaaa}" \
-                            "${DIC_LAUNCH_ALPHA:-9}"); then
+       tint=$(launch-blend "$bg" "${DIC_LAUNCH_TINT:-#777777}" \
+                            "${DIC_LAUNCH_ALPHA:-990}"); then
         # OSC 11 sets the background.  Written to stdout, which is the
         # child's pty, so this does not have to name a fd.
         printf '\033]11;%s\033\\' "$tint"

@@ -58,7 +58,12 @@ launch-termbg() {
     while IFS= read -r -t 1 -n 1 c <&$fd; do
         reply+=$c
         [[ $c == $'\a' ]] && break
-        [[ $reply == *rgb:* && $c == $'\033' ]] && break
+        if [[ $reply == *rgb:* && $c == $'\033' ]]; then
+            # ST is `ESC \`; the `\` is still queued and would be read
+            # as shell input in the new window, so consume it here.
+            IFS= read -r -t 1 -n 1 c <&$fd
+            break
+        fi
     done
     stty "$saved" <&$fd
     exec {fd}>&-
@@ -93,12 +98,12 @@ launch-init() {
     #
     # The tint is blended in rather than the background replaced, so
     # the window stays readable in a light theme and in a dark one:
-    # with the defaults, white becomes #858585 and black becomes
-    # #6b6b6b.  The two knobs below are shell variables, not exports,
+    # with the defaults, white becomes #b2b2b2 and black becomes
+    # #999999.  The two knobs below are shell variables, not exports,
     # because only this function reads them.
     local bg tint
     if bg=$(launch-termbg) &&
-       tint=$(launch-blend "$bg" "${DIC_LAUNCH_TINT:-#777777}" \
+       tint=$(launch-blend "$bg" "${DIC_LAUNCH_TINT:-#aaaaaa}" \
                             "${DIC_LAUNCH_ALPHA:-9}"); then
         # OSC 11 sets the background.  Written to stdout, which is the
         # child's pty, so this does not have to name a fd.

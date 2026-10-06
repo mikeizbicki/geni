@@ -122,7 +122,22 @@ launch() {
     # Open a new window and run $@ in it.  A failure of `kitty @ launch`
     # is the only failure this function can report; once the window
     # exists, the command's success or failure is the child's business.
-    (( $# )) || { echo 'launch: no command' >&2; return 64; }
+    #
+    # With no arguments, open an interactive bash that inherits this
+    # shell's functions and aliases.  `alias -p` and `declare -f` write
+    # them into a temporary rcfile, which the child reads via --rcfile
+    # in place of /etc/bash.bashrc and ~/.bashrc.  The rcfile removes
+    # itself once sourced, so the parent needs no trap to clean up.
+    if (( ! $# )); then
+        local rc
+        rc=$(mktemp -t launch.XXXXXX) || return 1
+        {
+            alias -p
+            declare -f
+            printf 'rm -f %q\n' "$rc"
+        } > "$rc" || { rm -f "$rc"; return 1; }
+        set -- bash --rcfile "$rc" -i
+    fi
 
     # The child sources this file to reach launch-init, so the path has
     # to survive the trip: BASH_SOURCE names the file even when a caller

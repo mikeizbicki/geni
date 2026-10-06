@@ -49,7 +49,11 @@ launch-termbg() {
     saved=$(stty -g <&$fd) || { exec {fd}>&-; return 1; }
     stty raw -echo min 0 time 2 <&$fd
     printf '\033]11;?\033\\' >&$fd
-    IFS= read -r -t 1 -d $'\a' reply <&$fd || true
+    reply=
+    while IFS= read -r -t 0.2 chunk <&$fd; do
+        reply+=$chunk
+        [[ $reply == *$'\a' || $reply == *$'\033\\' ]] && break
+    done
     stty "$saved" <&$fd
     exec {fd}>&-
     # The reply is `ESC ] 11 ; rgb:RR../GG../BB.. ST`, terminated with

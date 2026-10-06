@@ -43,16 +43,22 @@ launch-termbg() {
     # byte string with no newline, so the read is on the tty directly,
     # in raw mode, with a short timeout; the settings are restored
     # before the function returns.
-    local tty saved reply fd
+    local tty saved reply c fd
     tty=$(tty) || return 1
     exec {fd}<>"$tty" || return 1
     saved=$(stty -g <&$fd) || { exec {fd}>&-; return 1; }
-    stty raw -echo min 0 time 2 <&$fd
+    # `min 1 time 0` makes each read block for one byte, so a byte the
+    # terminal has not sent yet is waited for and not dropped.
+    stty raw -echo min 1 time 0 <&$fd
     printf '\033]11;?\033\\' >&$fd
+    # No single delimiter covers the reply: the terminator is BEL on
+    # some terminals and ST on others.  Read a byte at a time and stop
+    # at whichever arrives; -t 1 bounds a terminal that sends nothing.
     reply=
-    while IFS= read -r -t 0.2 chunk <&$fd; do
-        reply+=$chunk
-        [[ $reply == *$'\a' || $reply == *$'\033\\' ]] && break
+    while IFS= read -r -t 1 -n 1 c <&$fd; do
+        reply+=$c
+        [[ $c == $'\a' ]] && break
+        [[ $reply == *rgb:* && $c == $'\033' ]] && break
     done
     stty "$saved" <&$fd
     exec {fd}>&-

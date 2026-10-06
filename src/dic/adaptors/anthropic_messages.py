@@ -158,7 +158,7 @@ def build(model, turns, system, params):
     ...           [{"role": "user", "blocks": [{"type": "text", "text": "hi"}]}],
     ...           "sys", {"max_tokens": 10})
     >>> b["messages"]
-    [{'role': 'user', 'content': [{'type': 'text', 'text': 'hi'}]}]
+    [{'role': 'user', 'content': 'hi'}]
     >>> b["system"], b["max_tokens"]
     ('sys', 10)
     >>> b = build({"model_name": "m"},
@@ -188,6 +188,12 @@ def build(model, turns, system, params):
                 content.append({"type": "tool_result",
                                 "tool_use_id": block["id"],
                                 "content": block["content"]})
+        # a content list of pure text is collapsed to a plain string, as the
+        # chat protocol's own builder already produces: the API accepts
+        # either, and a converted turn reads the same whether it was stored
+        # under this protocol or under another
+        if content and all(part["type"] == "text" for part in content):
+            content = "\n\n".join(part["text"] for part in content)
         msgs.append({"role": turn["role"], "content": content})
     body = {"model": model["model_name"], "messages": msgs, "stream": True,
             "max_tokens": 4096}

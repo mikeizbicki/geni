@@ -38,10 +38,6 @@
 # built into the cache the first time the function runs.  If it cannot be
 # built, the function refuses to run anything, because a jail that quietly
 # drops its filter is worse than no jail at all.
-#
-# Sourcing this file defines the functions and registers the completion at
-# the end of it, and does nothing else.  It sets no shell option, exports
-# no variable and runs no other command.
 
 # Build the filter if the cache does not have it, and print the path to the
 # compiled blob.  This is a cache, not state: the blob is named after a
@@ -247,48 +243,3 @@ sandbox() {
 
     ( exec bwrap "${args[@]}" --seccomp 3 "$@" 3<"$blob" )
 }
-
-# --- tab completion -----------------------------------------------------
-
-# Complete the word after the assignments, the `--` and the command name as
-# that command's own word, so `sandbox NO_COLOR=1 -- git ch<TAB>` completes
-# a git subcommand and `sandbox -- make <TAB>` completes a make target.
-# The walk is the one sandbox() itself makes, through the same
-# sandbox-assign, so the two cannot disagree about where the command is.
-#
-# `=` is in COMP_WORDBREAKS, so bash hands `NO_COLOR=1` to a completion as
-# the three words NO_COLOR, =, 1, and a walk over COMP_WORDS stops on the
-# first of them.  `_init_completion -n =` is bash-completion's way of being
-# handed the words with that break suppressed; it sets `words` and `cword`
-# to the reassembled list.  Copying those back over COMP_WORDS is what puts
-# the offset below in the coordinates _command_offset reads, since that
-# function shifts COMP_WORDS itself and cannot be told about a second list.
-#
-# _command_offset N drops the first N words and calls whatever completion
-# is registered for the word that is now first, which is how sudo(8) and
-# env(1) complete their command.  With N at the word being completed there
-# is no such word, and it falls back to completing a command name, which is
-# what a caller typing the command wants.  It lives in bash-completion, so
-# a shell without that file gets no completion here rather than a broken
-# one.
-sandbox-complete() {
-    local cur prev words cword split
-    local i
-
-    _init_completion -n = || return
-
-    # word 0 is `sandbox`; skip the assignments it consumes, then the `--`
-    i=1
-    while (( i < cword )) && sandbox-assign "${words[i]}"; do
-        ((i++))
-    done
-    [[ ${words[i]:-} == -- ]] && ((i++))
-
-    COMP_WORDS=("${words[@]}")
-    COMP_CWORD=$cword
-    _command_offset "$i"
-}
-
-if declare -F _command_offset >/dev/null; then
-    complete -F sandbox-complete sandbox
-fi

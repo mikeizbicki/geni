@@ -10,11 +10,19 @@
 #     sandbox --ro-bind /home/me/.gitconfig /home/me/.gitconfig -- git log
 #     sandbox --bind /home/me/src /home/me/src -- make -C /home/me/src
 #     sandbox --share-net -- cargo build
+#     sandbox NO_COLOR=1 -- make -j
 #
 # bwrap applies its arguments from left to right and the last one wins, so
 # the function lays down a strict default and you add back exactly the path
 # you need.  The function has no flags of its own, so there is nothing here
 # to learn that is not already bwrap(1).
+#
+# The one word the function reads for itself is a leading NAME=value, the
+# form env(1) and sudo(8) also accept, and it reads it the way bash does:
+# a run of assignments that ends at the first word that is not one.  Each
+# becomes a --setenv of its own, laid down after the default environment,
+# so NO_COLOR=1 reaches the payload and PATH=/x overrides the PATH the
+# defaults would have passed through.
 #
 # The default is a jail that sees almost nothing.  The point is that the
 # files worth stealing -- ~/.ssh, ~/.aws, ~/.config/gh, a database socket
@@ -31,8 +39,9 @@
 # built, the function refuses to run anything, because a jail that quietly
 # drops its filter is worse than no jail at all.
 #
-# Sourcing this file defines the function and does nothing else.  It sets
-# no shell option, exports no variable and runs no command.
+# Sourcing this file defines the functions and registers the completion at
+# the end of it, and does nothing else.  It sets no shell option, exports
+# no variable and runs no other command.
 
 # Build the filter if the cache does not have it, and print the path to the
 # compiled blob.  This is a cache, not state: the blob is named after a
@@ -82,7 +91,28 @@ sandbox-seccomp-blob() {
     printf '%s\n' "$blob"
 }
 
+# True when a word is a leading NAME=value assignment: a shell identifier,
+# an equals sign, and the value.  A `--`, a command name and a bwrap option
+# are none of those, so a walk that stops at the first word this rejects
+# stops exactly where bash's own assignment prefix stops.  sandbox() and
+# sandbox-complete() both walk with it, so completion can never offer a
+# word the wrapper would not have peeled.
+sandbox-assign() {
+    [[ ${1:-} == *=* && ${1%%=*} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+}
+
 sandbox() {
+    # A leading NAME=value is read here and nowhere else.  Peel the run of
+    # them off before anything else looks at the argument list, so what is
+    # left is the same list bwrap would have been handed without them.
+    local -a envs=()
+    local name
+    while (( $# )) && sandbox-assign "$1"; do
+        name=${1%%=*}
+        envs+=(--setenv "$name" "${1#*=}")
+        shift
+    done
+
     # `local -a` gives this call its own array, so two calls cannot collide
     # and a shell running `set -u` is unaffected.  A bash array passes its
     # elements to bwrap as separate words, so a path with a space in it is
@@ -196,6 +226,13 @@ sandbox() {
         [[ -v $p ]] && args+=(--setenv "$p" "${!p}")
     done
 
+    # The assignments peeled off the front go here, after the default
+    # environment above, because bwrap applies its --setenv words in order
+    # and the last one for a name wins.  That is what lets a caller's
+    # PATH=/x override the PATH passed through above and NO_COLOR=1 add a
+    # name the defaults never set.
+    (( ${#envs[@]} )) && args+=("${envs[@]}")
+
     # The caller's arguments come last, so they are the exceptions to
     # everything above.  The syscall filter goes before them and not after,
     # because the caller's arguments may end with a `--` and bwrap would
@@ -210,3 +247,48 @@ sandbox() {
 
     ( exec bwrap "${args[@]}" --seccomp 3 "$@" 3<"$blob" )
 }
+
+# --- tab completion -----------------------------------------------------
+
+# Complete the word after the assignments, the `--` and the command name as
+# that command's own word, so `sandbox NO_COLOR=1 -- git ch<TAB>` completes
+# a git subcommand and `sandbox -- make <TAB>` completes a make target.
+# The walk is the one sandbox() itself makes, through the same
+# sandbox-assign, so the two cannot disagree about where the command is.
+#
+# `=` is in COMP_WORDBREAKS, so bash hands `NO_COLOR=1` to a completion as
+# the three words NO_COLOR, =, 1, and a walk over COMP_WORDS stops on the
+# first of them.  `_init_completion -n =` is bash-completion's way of being
+# handed the words with that break suppressed; it sets `words` and `cword`
+# to the reassembled list.  Copying those back over COMP_WORDS is what puts
+# the offset below in the coordinates _command_offset reads, since that
+# function shifts COMP_WORDS itself and cannot be told about a second list.
+#
+# _command_offset N drops the first N words and calls whatever completion
+# is registered for the word that is now first, which is how sudo(8) and
+# env(1) complete their command.  With N at the word being completed there
+# is no such word, and it falls back to completing a command name, which is
+# what a caller typing the command wants.  It lives in bash-completion, so
+# a shell without that file gets no completion here rather than a broken
+# one.
+sandbox-complete() {
+    local cur prev words cword split
+    local i
+
+    _init_completion -n = || return
+
+    # word 0 is `sandbox`; skip the assignments it consumes, then the `--`
+    i=1
+    while (( i < cword )) && sandbox-assign "${words[i]}"; do
+        ((i++))
+    done
+    [[ ${words[i]:-} == -- ]] && ((i++))
+
+    COMP_WORDS=("${words[@]}")
+    COMP_CWORD=$cword
+    _command_offset "$i"
+}
+
+if declare -F _command_offset >/dev/null; then
+    complete -F sandbox-complete sandbox
+fi

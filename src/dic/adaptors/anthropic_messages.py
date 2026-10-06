@@ -170,25 +170,11 @@ def build(model, turns, system, params):
     {'role': 'assistant', 'content': [{'type': 'thinking'}]}
     >>> b["messages"][1]["content"][0]["source"]
     {'type': 'base64', 'media_type': 'image/png', 'data': 'aGk='}
-    >>> b = build({"model_name": "m"},
-    ...           [{"role": "assistant", "blocks": [],
-    ...             "raw": [{"type": "text", "text": "first"}]}],
-    ...           None, {})
-    >>> b["messages"][0]["content"]
-    'first'
     """
     msgs = []
     for turn in turns:
         if "raw" in turn:
-            # a replayed turn is this provider's own blocks, so a list of
-            # nothing but text is sent the way the API states it -- a string
-            # -- and a list with reasoning or a tool call in it is replayed
-            # as the list of blocks it is
-            content = turn["raw"]
-            if (isinstance(content, list) and content
-                    and all(block.get("type") == "text" for block in content)):
-                content = "\n\n".join(block["text"] for block in content)
-            msgs.append({"role": "assistant", "content": content})
+            msgs.append({"role": "assistant", "content": turn["raw"]})
             continue
         content = []
         for block in turn["blocks"]:

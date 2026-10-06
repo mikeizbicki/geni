@@ -357,9 +357,9 @@ def dic(prompt,
     # never reaches the network: options.modes() already refused a second
     # readout, so this is the whole of the dispatch, and commands.py is the
     # whole of what any one of them does.
-    asked = modes(knobs)
-    if asked:
-        text = commands.BY_FLAG[asked[0]](conn, env, knobs)
+    given = modes(knobs)
+    if given:
+        text = commands.BY_FLAG[given[0]](conn, env, knobs)
         out.write(text)
         out.flush()
         return Reply(text=text)

@@ -144,10 +144,14 @@ launch() {
     # once the window exists, the command's success or failure is the
     # child's business.
     #
-    # The choice of branch cannot be made here: a function only lives
-    # inside a running shell, and this one has not been sourced in the
-    # child yet.  So the file the child reads makes the choice, and
-    # both branches are written into it below.
+    # Whether the first word is a function is decided here, in the
+    # shell that ran launch, and not in the child.  The child reads
+    # its own ~/.bashrc before it runs anything, and that file may
+    # name a different dic.sh than the one that sourced launch, so a
+    # `type -t` there would answer about a symbol the caller did not
+    # type.  Here the shell that typed `launch worktree` is the one
+    # whose functions completion offered, so its answer is the one
+    # the caller means.
 
     # The child sources this file to reach launch-init, so the path has
     # to survive the trip: BASH_SOURCE names the file even when a caller
@@ -155,23 +159,28 @@ launch() {
     # makes it absolute so the child can source it from any cwd.  The
     # rcfile below names the file too, so the path is resolved before
     # the arguments are inspected.
-    local self rc
+    local self rc kind=program
     self=$(realpath "${BASH_SOURCE[0]}")
+    if (( $# )) && [[ $(type -t -- "$1") == function ]]; then
+        kind=function
+    fi
 
     # The child's interactive bash reads this file.  `source ~/.bashrc`
-    # is what gives it dic's functions and aliases, and a function
-    # named on the command line is one of dic's, so this line is why
-    # `launch` can take one at all.  `source $self` gives it
-    # launch-init, and the call puts the marker on a bash that has
-    # stopped resetting PS1.  The file erases itself once it has been
-    # read, so the caller needs no trap to clean up after it.
+    # is what gives it dic's functions and aliases; a function the
+    # caller named is one of dic's, so this line is why the child can
+    # run one at all.  `source $self` gives it launch-init, and the
+    # call puts the marker on a bash that has stopped resetting PS1.
+    # The file erases itself once it has been read, so the caller
+    # needs no trap to clean up after it.
     #
-    # The final branch is the whole point.  `type -t` names what the
-    # first word is, and a function is run -- in this shell, so a cd
-    # it makes persists -- while anything else is exec'd, so the
-    # window closes with the program.  With no argument at all the
-    # file stops after launch-init and bash presents a prompt, which
-    # is the interactive shell the no-argument case opened before.
+    # The command, when there is one, is the last thing written.  A
+    # function runs in the child's shell -- so a cd it makes persists
+    # -- and the shell falls through to a prompt, which is the
+    # interactive shell the no-argument case opens.  A program is
+    # exec'd, so it owns the window and the window closes with it.
+    # The `rm` goes before either, because a read of a file the shell
+    # has already opened is not stopped by unlinking it, and after
+    # would never run at all in the exec case.
     rc=$(mktemp -t launch.XXXXXX) || return 1
     {
         printf '[ -f ~/.bashrc ] && source ~/.bashrc\n'
@@ -179,13 +188,9 @@ launch() {
         printf 'launch-init\n'
         printf 'rm -f %q\n' "$rc"
         if (( $# )); then
-            printf 'if [[ "$(type -t -- %q)" == function ]]; then\n' "$1"
-            printf '  '
+            [[ $kind == program ]] && printf 'exec '
             printf '%q ' "$@"
-            printf '\nelse\n'
-            printf '  exec '
-            printf '%q ' "$@"
-            printf '\nfi\n'
+            printf '\n'
         fi
     } > "$rc" || { rm -f "$rc"; return 1; }
 

@@ -23,8 +23,8 @@ import http.client, json, os, re, sys, time, urllib.parse
 
 from dic import commands, config, output, price
 from dic.options import MODE, OUTPUT, flag, modes, resolve
-from dic.store import (INSERT, Trace, config_dir, db, history, normalize,
-                       resolve_ref, session_read, session_write,
+from dic.store import (INSERT, SESSION_COST, Trace, config_dir, db, history,
+                       normalize, resolve_ref, session_read, session_write,
                        store_attachment, turns_from_rows, ulid)
 from dic.tty import (BLUE, RESET, THINKING, DicError, Line, osc52, pv_update,
                      report, summary, use_color)

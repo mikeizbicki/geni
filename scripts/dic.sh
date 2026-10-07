@@ -168,7 +168,7 @@ _dic_src=${BASH_SOURCE[0]}
 _dic_dir=${_dic_src%/*}
 [[ $_dic_dir == "$_dic_src" ]] && _dic_dir=.
 _dic_dir=$(cd -- "$_dic_dir" && pwd) || _dic_dir=.
-for _dic_s in committe.sh itera.sh geni.sh worktree.sh sandbox.sh; do
+for _dic_s in committe.sh itera.sh geni.sh worktree.sh sandbox.sh launch.sh; do
     source "$_dic_dir/$_dic_s"
 done
 unset _dic_src _dic_dir _dic_s

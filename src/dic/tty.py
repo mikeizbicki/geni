@@ -176,6 +176,7 @@ class Line:
         self.thread = None
         self.clock = False          # whether the clock owns the line now
         self.extra = ""             # attribution appended to the ttft line
+        self.label = "ttft"         # what the clock is waiting for
 
     def restart(self):
         """Start this line's clock over: a tool loop is more than one request.
@@ -184,7 +185,16 @@ class Line:
         token, so the ttft clock is the round's and not the call's.
         """
         self.start = time.time_ns()
-        self.extra = ""
+        self.label, self.extra = "ttft", ""
+
+    def waiting_for(self, label, extra=""):
+        """Name what the clock is waiting for, without restarting it.
+
+        A dns wait and the ttft wait that follows it are one wait from the
+        user's side, so the number on the line keeps counting from where it
+        was and only the word in front of it moves.
+        """
+        self.label, self.extra = label, extra
 
     def elapsed(self):
         """Seconds since this line was made: one clock for every writer."""
@@ -218,7 +228,7 @@ class Line:
                     self.clock = True
                     tail = f"  {self.extra}" if self.extra else ""
                     self.paint(
-                        f"ttft: {pv_clock(self.elapsed(), tenths=True)}{tail}")
+                        f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}{tail}")
 
         self.thread = threading.Thread(target=tick, daemon=True)
         self.thread.start()
@@ -244,7 +254,8 @@ class Line:
         """
         if self.stop_clock():
             tail = f"  {self.extra}" if self.extra else ""
-            self.paint(f"ttft: {pv_clock(self.elapsed(), tenths=True)}{tail}")
+            self.paint(
+                f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}{tail}")
         self.close()
 
     def status(self, msg):
@@ -257,7 +268,7 @@ class Line:
         """
         if self.stop_clock():
             self.paint(f"ttft: {pv_clock(self.elapsed(), tenths=True)}")
-            self.close()
+            self.paint(f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}")
         self.paint(msg)
 
 

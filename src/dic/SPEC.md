@@ -254,6 +254,23 @@ ttft: 0:00:03.4
 It has no byte counter because no bytes have arrived; it is closed with the final
 time when the first token does arrive, and a faster call never shows it at all.
 
+The same clock names what it is waiting for.  The name is `ttft` for the request
+itself, and `dns` while the host is being resolved, because a resolver that has
+stopped answering is a ten-second wait that otherwise looks exactly like a
+provider that has stopped answering:
+
+```
+dns: 0:00:03.4  api.groq.com
+```
+
+The resolver runs on a thread of its own, so that `^C` interrupts it:
+`getaddrinfo` is a blocking C call that never returns to the interpreter, and a
+signal cannot be handled while it runs.  The label returns to `ttft` once the
+addresses are in hand, and the clock behind the label is never restarted, since
+a dns wait and the ttft wait that follows it are one wait from the user's side.
+The addresses the thread found are handed to the socket, so the lookup is not
+done twice.
+
 ### Verbosity
 
 stderr is graded, and the grade is one integer resolved once at startup:

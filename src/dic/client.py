@@ -293,8 +293,8 @@ def curl_command(model, adaptor, body, headers, api_key, api_type):
     # api_type   openai-chat, path /chat/completions
     # api_key    $GROQ_API_KEY
     <BLANKLINE>
-    curl -sS 'https://api.groq.com/openai/v1/chat/completions' \
-      -H "Authorization: Bearer $GROQ_API_KEY" \
+    curl -sS 'https://api.groq.com/openai/v1/chat/completions' \\
+      -H "Authorization: Bearer $GROQ_API_KEY" \\
       --data-binary @- <<'DIC_BODY'
     {
       "model": "qwen/q"

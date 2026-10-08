@@ -22,10 +22,10 @@ entry point.
 import http.client, json, os, re, sys, time, urllib.parse
 
 from dic import commands, config, output, price
-from dic.options import MODE, OUTPUT, flag, modes, resolve
-from dic.store import (INSERT, SESSION_COST, Trace, config_dir, db, history,
-                       normalize, resolve_ref, session_read, session_write,
-                       store_attachment, turns_from_rows, ulid)
+from dic.options import MODE, OUTPUT, PRINT, flag, modes, resolve
+from dic.store import (INSERT, SESSION_COST, Trace, config_dir, db, file_block,
+                       history, normalize, resolve_ref, session_read,
+                       session_write, store_attachment, turns_from_rows, ulid)
 from dic.tty import (BLUE, RESET, THINKING, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
 
@@ -35,6 +35,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # that loops is a bug and not a conversation, and a call is not an infinite
 # budget.
 MAX_TOOL_ROUNDS = 16
+
+# The two flags that answer with the request instead of sending it.  They are
+# modes -- exclusive with every readout and with each other -- but their
+# answer needs a body only the adaptor can build, so `dic()` handles them
+# itself rather than dispatching to commands.py.
+PRINT_MODES = ("print_curl", "print_body")
 
 
 class Reply:
@@ -225,6 +231,119 @@ def cache_ttl(model, asked):
     return asked
 
 
+def redact(value, key, variable):
+    """A header value with the API key replaced by the variable holding it.
+
+    The replacement is length-guarded because a key short enough to appear
+    in an unrelated header is one whose substitution would corrupt it; a
+    real key is long and unique.
+
+    >>> redact("Bearer sk-abcdef123", "sk-abcdef123", "K")
+    'Bearer $K'
+    >>> redact("application/json", "sk-abcdef123", "K")
+    'application/json'
+    >>> redact("Bearer x", "x", "K")
+    'Bearer x'
+    """
+    if key and len(key) >= 8 and key in value:
+        return value.replace(key, f"${variable}")
+    return value
+
+
+def printable(body):
+    """The body as data json can encode, its file parts named rather than sent.
+
+    A multipart adaptor keeps its files under a private key, which json.dumps
+    cannot encode any more than curl can read it from -d; they are named here
+    so the rest of the body is still visible.
+
+    >>> printable({"model": "m"})
+    {'model': 'm'}
+    >>> printable({"model": "m", "_files": [{"path": "a.png", "data": b"x"}]})
+    {'model': 'm', '# files': ['a.png']}
+    """
+    out = dict(body)
+    for key, name in (("_files", "# files"), ("_file", "# file")):
+        if key in out:
+            files = out.pop(key)
+            files = files if isinstance(files, list) else [files]
+            out[name] = [block.get("path", "attachment") for block in files]
+    return out
+
+
+def curl_command(model, adaptor, body, headers, api_key, api_type):
+    """The one request as a shell command a student can read and run.
+
+    dic builds the last line and nothing else: the URL, the headers and the
+    name of the variable holding the key are the same for every call to a
+    model, and differ between models only in the configuration.  The key is
+    printed as the variable that holds it, so the command pasted into a bug
+    report leaks nothing, and the body is a heredoc so that a prompt with a
+    quote in it is still one command.
+
+    >>> class A: PATH = "/chat/completions"
+    >>> model = {"model_id": "groq+qwen", "model_name": "qwen/q",
+    ...          "api_base": "https://api.groq.com/openai/v1",
+    ...          "api_key_name": "GROQ_API_KEY"}
+    >>> print(curl_command(model, A, {"model": "qwen/q"},
+    ...                    {"Authorization": "Bearer sk-abcdef123"},
+    ...                    "sk-abcdef123", "openai-chat"), end="")
+    # model      groq+qwen  (qwen/q)
+    # api_base   https://api.groq.com/openai/v1
+    # api_type   openai-chat, path /chat/completions
+    # api_key    $GROQ_API_KEY
+    <BLANKLINE>
+    curl -sS 'https://api.groq.com/openai/v1/chat/completions' \
+      -H "Authorization: Bearer $GROQ_API_KEY" \
+      --data-binary @- <<'DIC_BODY'
+    {
+      "model": "qwen/q"
+    }
+    DIC_BODY
+    """
+    path = getattr(adaptor, "PATH", "") or ""
+    lines = [
+        f"# model      {model['model_id']}  ({model['model_name']})",
+        f"# api_base   {model['api_base']}",
+        f"# api_type   {api_type}, path {path or '(none)'}",
+    ]
+    if model.get("api_key_name"):
+        lines.append(f"# api_key    ${model['api_key_name']}")
+    if model.get("cache"):
+        lines.append(f"# cache      {model['cache']}")
+    if hasattr(adaptor, "call"):
+        lines.append("# note       this adaptor polls; this starts the job")
+    lines.append("")
+
+    # a call() adaptor names its resource in the model and not in PATH, and
+    # that is the one place the URL is not the base plus the adaptor's path
+    base = model["api_base"].rstrip("/")
+    url = base + path if path else f"{base}/{model['model_name']}"
+    lines.append(f"curl -sS '{url}' \\")
+    for name, value in headers.items():
+        shown = redact(value, api_key, model.get("api_key_name") or "")
+        quote = '"' if shown != value else "'"
+        lines.append(f"  -H {quote}{name}: {shown}{quote} \\")
+    shown_body = printable(body)
+    files = [b for b in body.get("_files", []) if isinstance(b, dict)]
+    if isinstance(body.get("_file"), dict):
+        files.append(body["_file"])
+    if files:
+        # multipart: its fields are form parts and its files are file parts,
+        # and curl picks its own boundary, so this is the shape and not the
+        # bytes -- a -d body would not reproduce the request at all
+        for block in files:
+            lines.append(f"  -F 'file=@{block.get('path', 'attachment')}' \\")
+        for name, value in shown_body.items():
+            lines.append(f"  -F '{name}={value}' \\")
+        lines[-1] = lines[-1].rstrip(" \\")
+    else:
+        lines.append("  --data-binary @- <<'DIC_BODY'")
+        lines.append(json.dumps(shown_body, indent=2, ensure_ascii=False))
+        lines.append("DIC_BODY")
+    return "\n".join(lines) + "\n"
+
+
 def dic(prompt,
         # ----- the call -----
         model:        flag(short="-m", help="which model") = None,
@@ -269,6 +388,15 @@ def dic(prompt,
                            help="overwrite the file named by --path") = False,
         mime_type:    flag(long="--mime-type", metavar="TYPE", group=OUTPUT,
                            help="the mime type of the answer") = None,
+        # ----- print the request instead of sending it; at most one -----
+        print_curl:   flag(long="--print-curl", action="bool", group=PRINT,
+                           mode=True,
+                           help="print the request as a curl command and exit"
+                           ) = False,
+        print_body:   flag(long="--print-body", action="bool", group=PRINT,
+                           mode=True,
+                           help="print the request body as indented JSON and exit"
+                           ) = False,
         # ----- readouts; at most one may be given -----
         aliases:      flag(action="bool", group=MODE, mode=True,
                            help="print shell alias definitions and exit") = False,
@@ -349,6 +477,9 @@ def dic(prompt,
     err = sys.stderr if err is None else err
     asked = model                   # -m, before $DIC_MODEL fills it in
     knobs = resolve(locals(), env)
+    # a print flag answers with the request dic would send, so it needs the
+    # model, the history and the adaptor, and it stops before the network
+    printing = knobs["print_curl"] or knobs["print_body"]
 
     conn = db(env)
     session = env.get("DIC_SESSION", "global")
@@ -358,7 +489,7 @@ def dic(prompt,
     # readout, so this is the whole of the dispatch, and commands.py is the
     # whole of what any one of them does.
     given = modes(knobs)
-    if given:
+    if given and given[0] not in PRINT_MODES:
         text = commands.BY_FLAG[given[0]](conn, env, knobs)
         out.write(text)
         out.flush()
@@ -429,14 +560,18 @@ def dic(prompt,
     # what the answer will be, settled before the call so that a missing or
     # taken --path fails before the network instead of after a whole video
     mime = knobs["mime_type"] or model.get("output") or "text/plain"
-    if mime.startswith("text/"):
-        output.check_free(knobs["path"], knobs["force"])
-    else:
-        if not knobs["path"]:
-            raise DicError(f"{mime}: a non-text answer needs --path FILE")
-        output.check_free(output.numbered(knobs["path"], 0), knobs["force"])
-    sink = output.Sink(path=knobs["path"], force=knobs["force"],
-                       out=out, err=err, env=env, verbosity=verbosity)
+    sink = None
+    if not printing:
+        # a printed request writes no file and makes no call, so the sink
+        # and the --path check that guards it have nothing to guard
+        if mime.startswith("text/"):
+            output.check_free(knobs["path"], knobs["force"])
+        else:
+            if not knobs["path"]:
+                raise DicError(f"{mime}: a non-text answer needs --path FILE")
+            output.check_free(output.numbered(knobs["path"], 0), knobs["force"])
+        sink = output.Sink(path=knobs["path"], force=knobs["force"],
+                           out=out, err=err, env=env, verbosity=verbosity)
 
     turns, system = [], knobs["system"]
     if rows:
@@ -448,7 +583,9 @@ def dic(prompt,
         # default rewrite the system prompt the thread was started with
         system = env.get("DIC_SYSTEM") or model.get("system")
 
-    attached = [store_attachment(conn, path)
+    # a printed request writes no row for an attachment to live in, so the
+    # file is read here and nothing is recorded
+    attached = [file_block(path) if printing else store_attachment(conn, path)
                 for path in knobs["attachment"] or ()]
     turns.append({"role": "user",
                   "blocks": [dict(att) for att in attached]
@@ -473,16 +610,33 @@ def dic(prompt,
     line = Line(err, env)
     prepare = getattr(adaptor, "prepare", None)
     if prepare is not None:            # fal reads URLs, so files go up first
-        # a prepare that uploads is time the user waits before anything
-        # is sent, so it gets the same one line the ttft clock does; a
-        # fast one never paints at all
-        line.wait()
-        turns = prepare(model, api_key, turns, opts)
-        line.first_token()
+        # a prepare that uploads is time the user waits, and an upload is a
+        # side effect: a print mode names the step and never runs it
+        pending = any("data" in block
+                      for turn in reversed(turns) if turn.get("role") == "user"
+                      for block in turn["blocks"])
+        if printing and pending:
+            raise DicError(f"{api_type}: this adaptor uploads its attachments"
+                           " before the call, so a printed request would be"
+                           " built from URLs that do not exist yet")
+        if not printing:
+            line.wait()
+            turns = prepare(model, api_key, turns, opts)
+            line.first_token()
     body = adaptor.build(model, turns, system, opts)
     headers = {"content-type": "application/json", "accept": "text/event-stream"}
     headers.update(adaptor.auth(api_key))
     headers.update(model.get("headers") or {})
+
+    if printing:
+        # the printer answers with the request, and no request is made: both
+        # flags render the same body, so they cannot disagree about it
+        text = json.dumps(printable(body), indent=2, ensure_ascii=False) + "\n"
+        if knobs["print_curl"]:
+            text = curl_command(model, adaptor, body, headers, api_key, api_type)
+        out.write(text)
+        out.flush()
+        return Reply(text=text, model_id=model["model_id"], api_type=api_type)
 
     report(verbosity, 3,
            f"POST {model['api_base']}{adaptor.PATH} {json.dumps(body, default=str)}",

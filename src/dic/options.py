@@ -22,10 +22,12 @@ import json
 from dic.tty import DicError
 
 # The --help sections, and the partition the mode check reads: a call flag
-# belongs to a request, an output flag to the file the answer lands in, and
-# a readout flag to a question the database answers without a model at all.
+# belongs to a request, an output flag to the file the answer lands in, a
+# print flag to the request itself, and a readout flag to a question the
+# database answers without a model at all.
 CALL = "the call"
 OUTPUT = "where the answer goes"
+PRINT = "print the request (do not call a model)"
 MODE = "readouts (do not call a model)"
 
 
@@ -118,12 +120,12 @@ def flags():
 def modes(knobs):
     """The mode flags that were given, in signature order.
 
-    A mode flag is a readout: it asks a question of the database and prints
-    the answer, and it never calls a model.  The commands are mutually
-    exclusive -- the answer to two is not one table -- so this list is at
-    most one long, and `resolve` refuses a longer one.  The same list is
-    `commands.BY_FLAG`'s key, so the help, the exclusion and the dispatch
-    cannot disagree about which readout was asked.
+    A mode flag answers without calling a model: a readout asks a question
+    of the database, and --print-curl and --print-body ask what the request
+    would have been.  Modes are mutually exclusive -- the answer to two is
+    not one table -- so this list is at most one long, and `resolve` refuses
+    a longer one.  The readouts are `commands.BY_FLAG`'s keys, so the help,
+    the exclusion and the dispatch cannot disagree about which was asked.
 
     >>> modes({"stats": True, "models": False, "aliases": None})
     ['stats']

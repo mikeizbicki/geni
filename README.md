@@ -24,7 +24,11 @@ It should be pronounced with a hard-G using classical Latin pronunciation rules.
 
 The latin names are intended to remind us about the dangerous nature of working with LLMs---we are wizards casting spells to control evil demons.
 The threat model is that the LLM responses are controlled by a literal devil and so they must never be trusted.
-We must be secure against everything up to kernel level exploits.
+In particular, the default permissions enforce:
+- LLM sessions must never be allowed to communicate with each other through back channels (or even be aware of each other)
+- agents must never be allowed to exfiltrate secrets to any source, including to their API providers
+- tool calls must always be side effect free
+The code is structured so that these restrictions cannot be circumvented without a kernel level exploit.
 
 This results in a more secure environment that Codex or Claude Code.
 Both of these frameworks, for example, allow their agents full read access to the file system,

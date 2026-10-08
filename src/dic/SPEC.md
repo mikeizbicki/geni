@@ -47,6 +47,7 @@ Whenever possible, names and semantics remain the same as simonw's `llm`.
 | ---------- | -------------- | ------- |
 | `-m`       | `--model`      | which model to use |
 | `-s`       | `--system`     | system prompt |
+|            | `--prepend-prompt` | prepend TEXT to the prompt; repeatable |
 | `-a`       | `--attachment` | attach the file |
 | `-x`       | `--extract`    | extracts first fenced code block |
 |            | `--path`       | write the answer to this file, atomically |
@@ -80,13 +81,12 @@ reads a number and not a line of prose:
 
 The prompt is what is left over.  Every word on the command line that is not
 an option is a prompt word, wherever it sits, and they are joined with one
-space; a stdin that is not a terminal is appended after a blank line.  An
-option `dic` does not know is a prompt word too and never an error, because a
-wrapper such as `committe` puts its own instructions in front of a request it
-forwards and cannot be asked to know which of `dic`'s options the rest of the
-line holds.
-
-### Defaults
+The prompt is one argument.  A stdin that is not a terminal is appended after
+a blank line, and each `--prepend-prompt TEXT` is prepended above both, in
+the order given.  An option `dic` does not know is an error and not a prompt
+word: a wrapper that has instructions of its own passes them with
+`--prepend-prompt`, so every part of the prompt is named and a misspelled
+flag is never sent silently to a model as prose.
 
 Two environment variables supply defaults for the two flags a user tends to want
 set the same way every time:

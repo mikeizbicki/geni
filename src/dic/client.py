@@ -348,6 +348,11 @@ def dic(prompt,
         # ----- the call -----
         model:        flag(short="-m", help="which model") = None,
         system:       flag(short="-s", help="system prompt") = None,
+        prepend_prompt: flag(long="--prepend-prompt", action="append",
+                             metavar="TEXT", env=False,
+                             help="prepend TEXT to the prompt, above the"
+                                  " command-line words and any stdin;"
+                                  " repeatable") = None,
         attachment:   flag(short="-a", action="append", metavar="FILE",
                            help="attach a file") = None,
         option:       flag(short="-o", action="append", metavar="KEY=VALUE",
@@ -477,6 +482,14 @@ def dic(prompt,
     err = sys.stderr if err is None else err
     asked = model                   # -m, before $DIC_MODEL fills it in
     knobs = resolve(locals(), env)
+    # The prompt is one argument, so a wrapper with instructions of its own
+    # passes them with --prepend-prompt and never as extra words on the
+    # line; each is prepended in the order given, above the caller's own
+    # words and above anything that arrived on stdin.
+    prepend = knobs["prepend_prompt"] or []
+    if isinstance(prepend, str):
+        prepend = [prepend]
+    prompt = "\n\n".join(piece for piece in [*prepend, prompt] if piece)
     # a print flag answers with the request dic would send, so it needs the
     # model, the history and the adaptor, and it stops before the network
     printing = knobs["print_curl"] or knobs["print_body"]

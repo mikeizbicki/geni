@@ -74,18 +74,20 @@ function committe-mkpatch() {
     local llm_command
     llm_command=$(dic-llm) || return 1
 
-    # We pass the user's request as positional args to llm_command,
-    # preceded by the instructions that say what to do with it.  Those
-    # instructions belong in the user turn and not in the system prompt:
-    # the system prompt is the head of every request dic makes, so
-    # rewriting it throws away the cached prefix that -c exists to hit.
+    # The user's request is the prompt, and the instructions that say what
+    # to do with it are prepended above it, so the two are named apart and
+    # neither can be read as the other's arguments.  Those instructions
+    # belong in the user turn and not in the system prompt: the system
+    # prompt is the head of every request dic makes, so rewriting it
+    # throws away the cached prefix that -c exists to hit.
     #
     # The model is asked once and never retried.  stdin is part of the
     # request when it is not a terminal, and a pipe reads once: a retry
     # that inherited it would find EOF and ask the model without the
     # request it was sent.  The caller's fd 0 is inherited here and goes
     # to $llm_command unchanged.
-    if dic-run "$llm_command" "$(committe-prompt)" "$@" > "$(committe-patchfile)"; then
+    if dic-run "$llm_command" --prepend-prompt "$(committe-prompt)" "$@" \
+            > "$(committe-patchfile)"; then
         return 0
     fi
     echo "committe-error: $llm_command failed" >&2

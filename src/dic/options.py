@@ -189,7 +189,7 @@ def parser():
     """
     import argparse
     p = argparse.ArgumentParser(prog="dic", description="talk to a chat model")
-    p.add_argument("prompt", nargs="*", help="the prompt, or stdin")
+    p.add_argument("prompt", nargs="?", help="the prompt, or stdin")
     sections = {}
 
     def section(f):

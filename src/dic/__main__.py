@@ -53,13 +53,12 @@ def main():
     from dic.tty import DicError, die
 
     try:
-        parsed, extra = parser().parse_known_args()
-        args = vars(parsed)
-        # Every word argparse did not claim is a prompt word too.  A wrapper
-        # such as committe puts its own instructions in front of the request
-        # it forwards, and argparse matches only one run of positionals, so
-        # the words on either side of a flag would otherwise be dropped.
-        prompt = " ".join(args.pop("prompt") + extra)
+        args = vars(parser().parse_args())
+        # The prompt is one argument.  An option dic does not know is an
+        # error and not a prompt word: a wrapper's own instructions travel
+        # in --prepend-prompt, so a misspelled flag is never sent to a
+        # model as prose.
+        prompt = args.pop("prompt") or ""
         if not sys.stdin.isatty():
             piped = sys.stdin.read()
             prompt = f"{prompt}\n\n{piped}" if (prompt and piped.strip()) else (prompt or piped)

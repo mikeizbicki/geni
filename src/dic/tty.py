@@ -269,6 +269,7 @@ class Line:
         if self.stop_clock():
             self.paint(f"ttft: {pv_clock(self.elapsed(), tenths=True)}")
             self.paint(f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}")
+            self.close()
         self.paint(msg)
 
 

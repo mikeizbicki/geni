@@ -482,6 +482,21 @@ def dic(prompt,
                            env=False, group=MODE, mode=True,
                            help="print a per-session cost breakdown"
                                 " (default: $DIC_SESSION)") = None,
+        tps_csv:      flag(long="--tps-csv", action="bool", group=MODE,
+                           mode=True,
+                           help="print per-decile output token rates over"
+                                " time, as TSV; --filter narrows the rows"
+                           ) = False,
+        tps_svg:      flag(long="--tps-svg", action="bool", group=MODE,
+                           mode=True,
+                           help="draw those rates as an SVG fan of deciles"
+                                " over elapsed time; --filter narrows the rows"
+                           ) = False,
+        filter:       flag(long="--filter", metavar="WHERE", env=False,
+                           group=MODE,
+                           help="a WHERE clause narrowing the rows a --tps"
+                                " readout includes: the columns of messages,"
+                                " plus head") = None,
         log:          flag(action="bool", env=False, group=MODE, mode=True,
                            help="list recent messages, newest first, and exit")
                       = False,

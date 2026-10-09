@@ -20,7 +20,7 @@ that was asked looks like.
 """
 import json, time
 
-from dic import config
+from dic import config, tps
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
                        TOOL_STATS, resolve_ref, session_read)
@@ -386,4 +386,6 @@ BY_FLAG = {
     "cost_tree":    cost,
     "log":          log,
     "show":         show,
+    "tps_csv":      tps.csv_readout,
+    "tps_svg":      tps.svg_readout,
 }

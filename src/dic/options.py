@@ -19,8 +19,6 @@ imported inside `flags()`, and `argparse` only by `parser()`.
 """
 import json
 
-from dic.tty import DicError
-
 # The --help sections.
 CALL = "the call"
 OUTPUT = "where the answer goes"

@@ -447,7 +447,7 @@ def dic(prompt,
         mime_type:    flag(long="--mime-type", metavar="TYPE", group=OUTPUT,
                            help="the mime type of the answer") = None,
         # ----- print the request instead of sending it -----
-        print:        flag(long="--print", metavar="WHAT", env=False,
+        print_:       flag(long="--print", metavar="WHAT", env=False,
                            group=PRINT,
                            help="print the request as curl or indented json"
                                 " and exit") = None,
@@ -498,7 +498,7 @@ def dic(prompt,
     prompt = "\n\n".join(piece for piece in [*prepend, prompt] if piece)
     # a print flag answers with the request dic would send, so it needs the
     # model, the history and the adaptor, and it stops before the network
-    printing = knobs["print"]
+    printing = knobs["print_"]
     if knobs["record"] not in (None, "bps"):
         raise DicError(f"--record must be bps, not {knobs['record']!r}")
 
@@ -648,7 +648,7 @@ def dic(prompt,
         # the printer answers with the request, and no request is made: both
         # flags render the same body, so they cannot disagree about it
         text = json.dumps(printable(body), indent=2, ensure_ascii=False) + "\n"
-        if knobs["print"] == "curl":
+        if knobs["print_"] == "curl":
             text = curl_command(model, adaptor, body, headers, api_key, api_type)
         out.write(text)
         out.flush()

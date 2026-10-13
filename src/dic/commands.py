@@ -293,7 +293,7 @@ def models(conn, env, *,
     return table(conn.execute(MODELS, (json.dumps(sorted(env)),)).fetchall())
 
 
-def stats(conn, env, *,
+def stats(conn, env, *,  # noqa: ARG001
           provider: flag(long="--provider", metavar="MODEL", action="?",
                          env=False,
                          help="print the upstreams a router chose, per model"

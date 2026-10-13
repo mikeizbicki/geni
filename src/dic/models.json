@@ -54,19 +54,19 @@
     "model_name": "qwen-3.8-27b"
   },
 
-  "anthropic+fable":  {"model_name": "claude-fable-5-1",  "cost_input": 10.0,  "cost_output": 50.0,
+  "anthropic+fable":  {"model_name": "claude-fable-5-1",  "alias": "fable",  "cost_input": 10.0,  "cost_output": 50.0,
                        "price": {"in.cache_read":     {"rate":  1.00},
                                  "in.cache_write.5m": {"rate": 12.50},
                                  "in.cache_write.1h": {"rate": 20.00}}},
-  "anthropic+opus":   {"model_name": "claude-opus-5",     "cost_input":  5.0,  "cost_output": 25.0,
+  "anthropic+opus":   {"model_name": "claude-opus-5",     "alias": "opus",   "cost_input":  5.0,  "cost_output": 25.0,
                        "price": {"in.cache_read":     {"rate":  0.50},
                                  "in.cache_write.5m": {"rate":  6.25},
                                  "in.cache_write.1h": {"rate": 10.00}}},
-  "anthropic+sonnet": {"model_name": "claude-sonnet-5",   "cost_input":  2.0,  "cost_output": 10.0,
+  "anthropic+sonnet": {"model_name": "claude-sonnet-5",   "alias": "sonnet", "cost_input":  2.0,  "cost_output": 10.0,
                        "price": {"in.cache_read":     {"rate":  0.20},
                                  "in.cache_write.5m": {"rate":  2.50},
                                  "in.cache_write.1h": {"rate":  4.00}}},
-  "anthropic+haiku":  {"model_name": "claude-haiku-4-5",  "cost_input":  1.0,  "cost_output":  5.0,
+  "anthropic+haiku":  {"model_name": "claude-haiku-4-5",  "alias": "haiku",  "cost_input":  1.0,  "cost_output":  5.0,
                        "price": {"in.cache_read":     {"rate":  0.10},
                                  "in.cache_write.5m": {"rate":  1.25},
                                  "in.cache_write.1h": {"rate":  2.00}}},
@@ -191,8 +191,8 @@
     }
   },
 
-  "openrouter+deepseek":     {"model_name": "deepseek/deepseek-v4.1-flash", "cost_input": 0.15, "cost_output": 0.60},
-  "openrouter+gemini-flash": {"model_name": "google/gemini-3.8-flash",     "cost_input": 0.75, "cost_output": 0.75}
+  "openrouter+deepseek":     {"model_name": "deepseek/deepseek-v4.1-flash", "alias": "deepseek", "cost_input": 0.15, "cost_output": 0.60},
+  "openrouter+gemini-flash": {"model_name": "google/gemini-3.8-flash",     "alias": "gemini",   "cost_input": 0.75, "cost_output": 0.75}
 
   ,"fal": {
     "abstract": true,

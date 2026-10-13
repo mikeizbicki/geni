@@ -26,7 +26,7 @@ from dic.tty import DicError
 # version of dic migrates another one: dic is pre-release, so an older file is
 # not upgraded but reported with the rm that removes it, because a database
 # that is only nearly right fails later as a confusing sqlite error.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_id TEXT,
     api_type TEXT,
     session TEXT,                -- the DIC_SESSION this row was written under
-    provider TEXT,               -- the upstream a router chose, NULL if none
+    upstream TEXT,               -- the upstream a router chose, NULL if none
     status INTEGER,              -- HTTP status, NULL if we never got one
     error TEXT,                  -- the server's body when status <> 200
     usage TEXT,                  -- disjoint counts: "in.cache_read" -> 8000
@@ -76,10 +76,12 @@ CREATE INDEX IF NOT EXISTS messages_session ON messages(session);
 -- Every derived number is a subtraction of two stored instants, so the view
 -- is a view: nothing is materialized, nothing can go stale, and no python
 -- computes a statistic.  `head` is the first name of the model_id chain --
--- the provider entry a model inherits from -- and `provider` is the upstream
--- that actually answered, which only a router reports.
+-- the provider entry a model inherits from -- and `upstream` is the upstream
+-- that actually answered, which only a router reports.  The router's own
+-- field is `provider`; the column is not, because in dic a "provider" is a
+-- configuration entry a model inherits from and the two are different things.
 CREATE VIEW IF NOT EXISTS stats AS SELECT
-    mid, round, model_id, api_type, status, provider,
+    mid, round, model_id, api_type, status, upstream,
     cost, price_hash,
     coalesce(json_array_length(tool_results), 0) AS tools,
     substr(model_id, 1, instr(model_id || '+', '+') - 1) AS head,
@@ -131,7 +133,7 @@ CREATE TABLE IF NOT EXISTS config_meta (
 # them written, which is the point of them.
 COLUMNS = ("mid", "round", "user", "system", "response", "response_raw",
            "prev_mid", "attachments", "outputs", "tool_results", "model_id",
-           "api_type", "session", "provider", "status", "error", "usage", "cost",
+           "api_type", "session", "upstream", "status", "error", "usage", "cost",
            "cost_items", "price_hash", "t_start", "t_connect", "t_request",
            "t_headers", "t_first", "t_last", "t_done")
 INSERT = (f"INSERT INTO messages ({', '.join(COLUMNS)})"  # noqa: S608
@@ -156,7 +158,8 @@ SELECT model_id, count(*) AS n, sum(status <> 200) AS errors,
        , round(100.0 * sum(tokens_cache_read)
                / nullif(sum(tokens_input) + sum(tokens_cache_read), 0), 1)
          AS cache_hit_pct
-  FROM stats GROUP BY model_id ORDER BY n DESC
+  FROM stats WHERE (? = '' OR model_id = ? OR head = ?)
+ GROUP BY model_id ORDER BY n DESC
 """
 
 # Which tools ran, and which of them failed: one row per tool call, read out of
@@ -168,8 +171,10 @@ SELECT model_id, json_extract(value, '$.name') AS tool,
        count(*) AS n, sum(NOT json_extract(value, '$.ok')) AS errors,
        round(avg((json_extract(value, '$.t_end')
                   - json_extract(value, '$.t_start')) / 1e6), 1) AS ms
-  FROM messages, json_each(messages.tool_results)
- GROUP BY model_id, tool ORDER BY n DESC
+  FROM messages m, json_each(m.tool_results)
+ WHERE (? = '' OR m.model_id = ? OR substr(m.model_id, 1,
+       instr(m.model_id || '+', '+') - 1) = ?)
+ GROUP BY m.model_id, tool ORDER BY n DESC
 """
 
 # Which upstream a router chose, and how it did: the aggregates --stats prints,
@@ -178,9 +183,9 @@ SELECT model_id, json_extract(value, '$.name') AS tool,
 # why this is a query of its own rather than a column of --stats -- the
 # question is not how a model performed but which route served it.  A model
 # whose rows were served by two upstreams at two ttfts is then visible rather
-# than averaged, and an empty MODEL is every model.
+# than averaged, and an empty --model is every model.
 PROVIDERS = """
-SELECT model_id, provider, count(*) AS n, sum(status <> 200) AS errors,
+SELECT model_id, upstream, count(*) AS n, sum(status <> 200) AS errors,
        round(avg(ms_overhead) FILTER (WHERE status = 200), 1) AS overhead,
        round(avg(ms_ttft)     FILTER (WHERE status = 200), 1) AS ttft,
        round(avg(tok_per_sec) FILTER (WHERE status = 200), 1) AS tok_s,
@@ -189,8 +194,9 @@ SELECT model_id, provider, count(*) AS n, sum(status <> 200) AS errors,
        round(100.0 * sum(tokens_cache_read)
                / nullif(sum(tokens_input) + sum(tokens_cache_read), 0), 1)
          AS cache_hit_pct
-  FROM stats WHERE provider IS NOT NULL AND (? = '' OR model_id = ?)
- GROUP BY model_id, provider ORDER BY model_id, n DESC
+  FROM stats WHERE upstream IS NOT NULL
+       AND (? = '' OR model_id = ? OR head = ?)
+ GROUP BY model_id, upstream ORDER BY model_id, n DESC
 """
 
 # What `dic --log` prints into a completion picker: one row per message, in

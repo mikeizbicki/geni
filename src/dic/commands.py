@@ -294,23 +294,29 @@ def models(conn, env, *,
 
 
 def stats(conn, env, *,  # noqa: ARG001
-          provider: flag(long="--provider", metavar="MODEL", action="?",
-                         env=False,
-                         help="print the upstreams a router chose, per model"
-                              " or for MODEL") = None):
+          model: flag(short="-m", metavar="PAT", env=False,
+                      help="only this model, or every model of this provider:"
+                           " a PAT without a '+' names the head of the chain,"
+                           " so `-m anthropic` narrows to every anthropic+*") = None,
+          upstreams: flag(long="--upstreams", action="bool", env=False,
+                          help="break each model's rows down by the upstream"
+                               " a router chose, instead of by model") = False):
     """Per-model usage frequency and runtime performance, plus tool failures.
 
     Frequency and performance are one aggregate over the same rows, so they
     are one query; the tool rows are a second over json_each, below it,
     because a tool that failed is a turn the model had to correct and not a
-    call dic made.  --provider is that same aggregate one level deeper, over
-    the rows a router named an upstream for; a model served slowly by one
-    upstream and quickly by another is otherwise a single average.
+    call dic made.  -m narrows every query to one model, or to every model
+    whose id chain starts with one; --upstreams is that same aggregate one
+    level deeper, over the rows a router named an upstream for, because a
+    model served slowly by one upstream and quickly by another is otherwise
+    a single average.
     """
-    if provider is not None:
-        return table(conn.execute(PROVIDERS, (provider, provider)).fetchall())
-    text = table(conn.execute(STATS).fetchall())
-    tools = table(conn.execute(TOOL_STATS).fetchall())
+    scope = (model or "", model or "", model or "")
+    if upstreams:
+        return table(conn.execute(PROVIDERS, scope).fetchall())
+    text = table(conn.execute(STATS, scope).fetchall())
+    tools = table(conn.execute(TOOL_STATS, scope).fetchall())
     if tools:
         text += "\n" + tools
     return text

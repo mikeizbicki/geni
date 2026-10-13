@@ -54,11 +54,11 @@ call's prompt.
 |---|---|---|
 | `dic [PROMPT]` | `client.dic` | `-m/--model` `-s/--system` `--prepend-prompt*` `-a/--attachment*` `-o/--option*` `--cache=off\|TTL` `--tools*` `-x/--extract` `-c/--continue` `--mid REF` `--record=bps` `--pv-thinking/--no-…` `--pv-response/--no-…` `--clipboard/--no-…` `--path FILE` `-f/--force` `--mime-type TYPE` `--print=curl\|json` |
 | `dic log` | `commands.log` | `--limit N` `--all` `--session [NAME]` `--from REF` `--graph` |
-| `dic stats` | `commands.stats` | `--provider [MODEL]` |
+| `dic stats` | `commands.stats` | `-m/--model PAT` `--upstreams` |
 | `dic models` | `commands.models` | `--aliases` |
 | `dic cost` | `commands.cost` | `--session NAME` `--tree` `--of REF` |
 | `dic show` | `commands.show` | `REF` |
-| `dic bps` | `bps.bps` | `--format=csv\|svg` `--where SQL` |
+| `dic bps` | `bps.bps` | `-m/--model PAT` `--upstream PAT` `--format=csv\|svg` `--where SQL` |
 
 | short form | long form      | meaning |
 | ---------- | -------------- | ------- |
@@ -372,11 +372,13 @@ The messages table has the following columns:
   of `parent`, and the cost of a harness run is one query over one index.  This
   is not session state: a pointer is still a tmpfs file, and this is a fact about
   the row, like `model_id`.
-- `provider`: the upstream that actually answered, as the router named it in
+- `upstream`: the upstream that actually answered, as the router named it in
   its own `provider` field, or NULL when the response named none.  A fact about
   the row like `session`, and the one that makes a router's choices countable:
   a model served slowly by one upstream and quickly by another is otherwise a
-  single average over both.
+  single average over both.  The wire field is the router's `provider`; the
+  column is `upstream`, because a "provider" in dic is a configuration entry
+  a model inherits from and the two are not the same thing.
 - `status`, `error`: the HTTP status of the call and the server's message when it was not 200
 - `usage`: the quantities the API reported, as a JSON object of disjoint dotted
   names: `in` is the input charged at the usual rate, `in.cache_read` the part
@@ -451,7 +453,7 @@ milliseconds, and each rate:
 
 ```sql
 CREATE VIEW stats AS SELECT
-    mid, model_id, api_type, status, provider, cost, price_hash,
+    mid, model_id, api_type, status, upstream, cost, price_hash,
     substr(model_id, 1, instr(model_id || '+', '+') - 1) AS head,
     t_start / 1000000000 AS time,
     (t_request - t_start) / 1e6 AS ms_overhead,
@@ -475,9 +477,9 @@ has run: each tool, per model, with how often it was called and how often it
 failed, because a tool that fails is a turn the model had to correct and not a
 call dic made.
 
-`dic --providers [MODEL]` is that same aggregate one level deeper: `GROUP BY
-model_id, provider` over the rows a router named an upstream for, filtered to
-one model when one is named.  A provider that answers directly sends no
+`dic stats --upstreams` is that same aggregate one level deeper: `GROUP BY
+model_id, upstream` over the rows a router named an upstream for, filtered by
+`-m` the same way `--stats` is.  A provider that answers directly sends no
 `provider` field and so has no rows here, which is why it is a query of its own
 and not a column of `--stats`: the question is not how a model performed but
 which of the routes it was served by did.

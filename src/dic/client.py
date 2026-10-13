@@ -751,7 +751,7 @@ def dic(prompt,
             mid, index, prompt if index == 0 else "", system, response,
             json.dumps(raw), prev, json.dumps(ids if index == 0 else []),
             json.dumps(outputs), json.dumps(results) if results else None,
-            model["model_id"], api_type, session, acc.get("provider"),
+            model["model_id"], api_type, session, acc.get("upstream"),
             status, error,
             json.dumps(usage) if usage else None,
             cost, json.dumps(items) if items is not None else None,
@@ -804,10 +804,10 @@ def dic(prompt,
                              wire, line))
             for event in stream:
                 chunk, kind = adaptor.parse(event, acc)
-                if acc.get("provider"):
+                if acc.get("upstream"):
                     # a router named the upstream mid-wait, so it rides the
                     # clock it explains
-                    line.extra = f"provider: {acc['provider']}"
+                    line.extra = f"upstream: {acc['upstream']}"
                 if not chunk:
                     continue
                 if kind != "blob":

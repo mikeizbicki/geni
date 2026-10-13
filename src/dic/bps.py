@@ -7,8 +7,9 @@ a table or draws them as a fan of curves.
 
     dic bps --format=csv                       > rates.tsv
     dic bps --format=svg                       > rates.svg
-    dic bps --format=svg --where "provider LIKE 'openrouter/%'"
-    dic bps --format=svg --where "head = 'anthropic' and status = 200"
+    dic bps --format=svg -m anthropic
+    dic bps --format=svg -m anthropic+opus --upstream anthropic
+    dic bps --format=svg --where "status = 200"
 
 The rate is cumulative and plotted against the generation itself.  For one
 round, x is the bytes generated so far -- reasoning and answer together --
@@ -31,18 +32,38 @@ code and a thinking block each compress differently -- so a token axis
 would be an assumption about the text that this readout does not need to
 make.
 
-`--where` is handed to sqlite unparsed.  The names it may use are the
-columns of the messages table plus `head`, the first name of the model_id
-chain, so `head = 'anthropic'` narrows to every anthropic+* model without
-listing them.  A name that is not a column is sqlite's own error to give,
-because it is argv and not a boundary: the same user could open dic.db and
-ask the same question directly.
+`-m PAT` and `--upstream PAT` are the two filters a person reaches for,
+and their values are *bound*: a '+' in a model id or a '/' in an upstream
+is not SQL punctuation, and a shell has already decided what the quotes
+mean.  A PAT without a '+' names the head of a model_id chain, so
+`-m anthropic` narrows to every anthropic+* model without listing them;
+with a '+' it names one model.  `--upstream PAT` matches the router's own
+name for the upstream that answered, and `--upstream ''` is the rows no
+router named -- a direct provider.
+
+`--where SQL` is the escape hatch beneath them, handed to sqlite
+unparsed and AND-ed with the two above: it is argv, and the same user
+could open dic.db and ask the same question directly.  The names it may
+use are the columns of the messages table plus `head` (the first name of
+the model_id chain) and `upstream` (the router's own field).  A statement
+sqlite refuses is reported with that list, because "no such column:
+anthropic" is what a quoted literal was meant to prevent.
 
 `--format` names the rendering and nothing else, so a third format is one
 more branch here and no new flag.
 """
+import sqlite3
+
 from dic.options import flag
 from dic.tty import DicError
+
+# What --where may name, appended to sqlite's own message: a column that
+# does not exist is sqlite's error, but a *name* meant as a literal is the
+# mistake a user actually makes, and the message has to say so.
+FIELDS = ("the names --where may use are the columns of messages, plus head"
+          " (a model's provider, the first name of its id chain) and upstream"
+          " (the router-chosen upstream); a literal must be quoted, but -m"
+          " and --upstream take one without quotes")
 
 SOURCE = """
 WITH m AS (
@@ -117,14 +138,58 @@ COLUMNS = ("gen_b", "y", "model_id", "provider", "bucket", "n", "think_frac",
 HEADER = "bytes\tbps\t" + "\t".join(COLUMNS[2:])
 
 
-def run(conn, where):
+def clause(model=None, upstream=None, where=None):
+    """(sql, params): --where raw, then -m and --upstream with bound values.
+
+    --where is interpolated because it is SQL the same user could type at
+    sqlite's own prompt; -m and --upstream are values and are bound,
+    because a '+' or a '/' in a model name is not SQL.  The three compose
+    with AND, so a narrower filter never widens the one before it.
+
+    >>> clause()
+    ('1', [])
+    >>> clause("anthropic")
+    ('(model_id = ? OR head = ?)', ['anthropic', 'anthropic'])
+    >>> clause(upstream="")
+    ('upstream IS NULL', [])
+    >>> clause("a", "b", "status = 200")
+    ("(status = 200) AND (model_id = ? OR head = ?) AND upstream = ?", ['a', 'a', 'b'])
+    """
+    parts, params = [], []
+    if where:
+        parts.append(f"({where})")
+    if model:
+        # a chain names one model; a single name names every model whose
+        # chain starts with it
+        parts.append("(model_id = ? OR head = ?)")
+        params.extend((model, model))
+    if upstream is not None:
+        parts.append("upstream IS NULL" if upstream == "" else "upstream = ?")
+        if upstream:
+            params.append(upstream)
+    return " AND ".join(parts) or "1", params
+
+
+def run(conn, where, params=()):
     """Every binned median and its quartiles, as sqlite rows."""
-    return conn.execute(RATES.format(where=where or "1")).fetchall()
+    return execute(conn, RATES, where, params)
 
 
-def points(conn, where):
+def points(conn, where, params=()):
     """Every sample of every matching round: the faint per-call lines."""
-    return conn.execute(POINTS.format(where=where or "1")).fetchall()
+    return execute(conn, POINTS, where, params)
+
+
+def execute(conn, sql, where, params):
+    """One of the two queries, its --where spliced and its values bound.
+
+    The only place sqlite3 may raise, so the one place that can turn "no
+    such column" into the sentence that says what a name had to be.
+    """
+    try:
+        return conn.execute(sql.format(where=where), params).fetchall()
+    except sqlite3.OperationalError as e:
+        raise DicError(f"{e}\n  {FIELDS}") from None
 
 
 def fmt(v):
@@ -140,7 +205,7 @@ def fmt(v):
     return str(v)
 
 
-def csv(conn, where):
+def csv(conn, where, params=()):
     """The rates as TSV: one row per (bucket, model, provider).
 
     Long and not wide, so that `sort`, `awk` and a plotter's `using 1:2`
@@ -152,7 +217,7 @@ def csv(conn, where):
     """
     lines = [HEADER]
     lines.extend("\t".join(fmt(row[c]) for c in COLUMNS)
-                 for row in run(conn, where))
+                 for row in run(conn, where, params))
     return "\n".join(lines) + "\n"
 
 
@@ -193,7 +258,7 @@ def shade(n):
     return max(0.08, 0.35 - 0.01 * n)
 
 
-def svg(conn, where, width=720, height=360, margin=48):
+def svg(conn, where, params=(), width=720, height=360, margin=48):
     """The rates as an SVG: one panel per (model, provider), stacked.
 
     A panel is drawn in linear axes because the quantity is linear: the
@@ -205,7 +270,7 @@ def svg(conn, where, width=720, height=360, margin=48):
     Nothing here rasterizes, shells out or imports a plotting library,
     because the whole answer is text on stdout and every renderer reads SVG.
     """
-    rows = run(conn, where)
+    rows = run(conn, where, params)
     head = (f"<svg xmlns='http://www.w3.org/2000/svg'"
             f" width='{width}' height='{height}'"
             f" viewBox='0 0 {width} {height}'>"
@@ -217,7 +282,7 @@ def svg(conn, where, width=720, height=360, margin=48):
     for row in rows:
         panels.setdefault((row["model_id"], row["provider"]), []).append(row)
     calls = {}
-    for point in points(conn, where):
+    for point in points(conn, where, params):
         calls.setdefault((point["model_id"], point["provider"]), {}
                          ).setdefault(point["mid"], []).append(point)
     items = sorted(panels, key=lambda key: (key[0], key[1] or ""))
@@ -330,18 +395,28 @@ def svg(conn, where, width=720, height=360, margin=48):
 def bps(conn, env, *,  # noqa: ARG001
         format_: flag(long="--format", metavar="FMT", env=False,
                       help="csv (the default) or svg") = None,
+        model: flag(short="-m", metavar="PAT", env=False,
+                    help="only this model, or every model of this provider:"
+                         " a PAT without a '+' names the head of the chain") = None,
+        upstream: flag(long="--upstream", metavar="PAT", env=False,
+                       help="only the rounds a router served from this"
+                            " upstream; '' is the rows no router named") = None,
         where: flag(long="--where", env=False,
-                    help="a WHERE clause narrowing the rows: the columns of"
-                         " messages, plus head") = None):
+                    help="a raw WHERE clause, AND-ed with the two above; the"
+                         " names it may use are the columns of messages,"
+                         " plus head and upstream") = None):
     """The rates, as TSV or as an SVG fan of deciles over bytes generated.
 
     Both renderings are the same ten deciles of generated bytes per (model,
     provider): the median rate at each, the quartiles around it, and how
-    many samples stand behind it.
+    many samples stand behind it.  -m and --upstream name the two rows a
+    person asks about without writing SQL; --where is the escape hatch
+    beneath them.
     """
     kind = format_ or "csv"
+    built, params = clause(model, upstream, where)
     if kind == "csv":
-        return csv(conn, where)
+        return csv(conn, built, params)
     if kind == "svg":
-        return svg(conn, where)
+        return svg(conn, built, params)
     raise DicError(f"--format must be csv or svg, not {kind!r}")

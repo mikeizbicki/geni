@@ -128,9 +128,11 @@ def parse(event, acc):
         # and never from the request options that were sent
         acc["tier"] = event["service_tier"]
     if event.get("provider"):
-        # a router (OpenRouter) names the upstream it chose; a direct
-        # provider sends no such field, so this costs it nothing
-        acc["provider"] = event["provider"]
+        # a router (OpenRouter) names the upstream it chose; the wire
+        # field is `provider`, but the fact is about which upstream served
+        # the request, so it is normalized onto one name here and every
+        # adaptor that reports the same fact uses it
+        acc["upstream"] = event["provider"]
     usage = event.get("usage")
     if usage:
         acc["usage"] = openai_usage(usage)

@@ -43,6 +43,23 @@ each other by their full package name.
 `dic` supports the following options.
 Whenever possible, names and semantics remain the same as simonw's `llm`.
 
+The command line is a tree of commands: the call is the default, and every
+other command is a readout that answers a question about the database and
+never calls a model.  Each command takes the options of its own row, plus
+the globals `-v`, `-q` and `--models-file`, which every command accepts.
+The command name must be `argv[0]`: a word that is not a command name is the
+call's prompt.
+
+| command | → library function | options |
+|---|---|---|
+| `dic [PROMPT]` | `client.dic` | `-m/--model` `-s/--system` `--prepend-prompt*` `-a/--attachment*` `-o/--option*` `--cache=off\|TTL` `--tools*` `-x/--extract` `-c/--continue` `--mid REF` `--record=bps` `--pv-thinking/--no-…` `--pv-response/--no-…` `--clipboard/--no-…` `--path FILE` `-f/--force` `--mime-type TYPE` `--print=curl\|json` |
+| `dic log` | `commands.log` | `--limit N` `--all` `--session [NAME]` `--from REF` `--graph` |
+| `dic stats` | `commands.stats` | `--provider [MODEL]` |
+| `dic models` | `commands.models` | `--aliases` |
+| `dic cost` | `commands.cost` | `--session NAME` `--tree` `--of REF` |
+| `dic show` | `commands.show` | `REF` |
+| `dic bps` | `bps.bps` | `--format=csv\|svg` `--where SQL` |
+
 | short form | long form      | meaning |
 | ---------- | -------------- | ------- |
 | `-m`       | `--model`      | which model to use |
@@ -60,27 +77,13 @@ Whenever possible, names and semantics remain the same as simonw's `llm`.
 |            | `--no-pv-thinking` | stream the reasoning text itself instead |
 |            | `--pv-response` | meter the answer on stderr too; the default when stdout is not a terminal |
 |            | `--no-pv-response` | do not meter the answer |
-|            | `--trace`      | record per-round byte-rate samples for plotting |
+|            | `--record`     | record per-round byte-rate samples for plotting (`bps`) |
 |            | `--clipboard`  | copy the answer to the terminal's clipboard (the default on a terminal) |
 |            | `--tools`      | offer an importable python function as a tool; repeatable |
-|            | `--aliases`    | print shell alias definitions for `dic.sh` to eval |
-|            | `--models`     | list the configured model ids |
-|            | `--stats`      | print per-model runtime and usage statistics |
+|            | `--print`      | print the request instead of sending it: `curl` or `json` |
 | `-v`       | `--verbose`    | raise stderr verbosity; repeatable |
 | `-q`       | `--quiet`      | print nothing to stderr but errors |
 
-Readout commands name their scope and print nothing else, so a harness
-reads a number and not a line of prose:
-
-| short form | long form       | meaning |
-| ---------- | --------------- | ------- |
-|            | `--cost-session` | the spend of a session and its sub-sessions |
-|            | `--cost-of`     | the spend of the conversation ending at REF |
-|            | `--cost-tree`   | the per-session breakdown of a session's subtree |
-|            | `--providers`   | the upstreams a router chose, per model |
-
-The prompt is what is left over.  Every word on the command line that is not
-an option is a prompt word, wherever it sits, and they are joined with one
 The prompt is one argument.  A stdin that is not a terminal is appended after
 a blank line, and each `--prepend-prompt TEXT` is prepended above both, in
 the order given.  An option `dic` does not know is an error and not a prompt
@@ -519,7 +522,8 @@ If `XDG_RUNTIME_DIR` is unset, fall back to `/tmp/fac-$UID/dic/`.
 If `-c` is passed we assume that `--mid` is not passed,
 and the correct behavior is to first do a lookup to find the appropriate `--mid` value and then proceed as if that value was passed.
 That is, `-c` is pure sugar for `--mid $(cat $XDG_RUNTIME_DIR/fac/dic/$DIC_SESSION)`.
-If both are passed, `--mid` wins.
+If both are passed, this is an error: `-c` and `--mid` name two answers to
+one question and neither silently wins.
 If `-c` is passed and the session pointer does not exist, this is an error and `dic` exits nonzero;
 it must never silently start a new conversation or continue somebody else's.
 
@@ -542,7 +546,7 @@ carries no bytes and no reader of the message tree pays for the indirection.
 `samples` is a JSON list of `[t_ms, thinking, response]` on a 100ms grid: how
 many bytes of reasoning and how many bytes of answer had arrived by each
 point, in milliseconds since the round's request went out.  Recording is off
-by default -- `--trace` / `DIC_TRACE` -- because it is a diagnostic and not
+by default -- `--record=bps` / `DIC_RECORD` -- because it is a diagnostic and not
 a fact a conversation needs, and a round it skips is a missing row rather
 than a null.
 

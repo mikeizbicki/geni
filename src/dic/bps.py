@@ -1,14 +1,14 @@
-"""tps: the token-rate trace, and its two renderings.
+"""bps: the token-rate trace, and its two renderings.
 
 A traced round stored byte totals on a 100ms grid (see store.Trace); this
 is the readout that turns those bytes into the rate a person actually
 thinks in -- bytes of output per second -- and either hands them over as
 a table or draws them as a fan of curves.
 
-    dic --tps-csv                       > rates.tsv
-    dic --tps-svg                       > rates.svg
-    dic --tps-svg --where "provider LIKE 'openrouter/%'"
-    dic --tps-svg --where "head = 'anthropic' and status = 200"
+    dic bps --format=csv                       > rates.tsv
+    dic bps --format=svg                       > rates.svg
+    dic bps --format=svg --where "provider LIKE 'openrouter/%'"
+    dic bps --format=svg --where "head = 'anthropic' and status = 200"
 
 The rate is cumulative and plotted against the generation itself.  For one
 round, x is the bytes generated so far -- reasoning and answer together --
@@ -38,8 +38,11 @@ listing them.  A name that is not a column is sqlite's own error to give,
 because it is argv and not a boundary: the same user could open dic.db and
 ask the same question directly.
 
-See TODO-tps.md.
+`--format` names the rendering and nothing else, so a third format is one
+more branch here and no new flag.
 """
+from dic.options import flag
+from dic.tty import DicError
 
 SOURCE = """
 WITH m AS (
@@ -318,11 +321,16 @@ def svg(conn, where, width=720, height=360, margin=48):
     return head + "".join(parts) + "</svg>\n"
 
 
-def csv_readout(conn, env, knobs):  # noqa: ARG001
-    """commands.BY_FLAG's --tps-csv: the rates, as text on stdout."""
-    return csv(conn, knobs.get("where"))
-
-
-def svg_readout(conn, env, knobs):  # noqa: ARG001
-    """commands.BY_FLAG's --tps-svg: the rates, as SVG on stdout."""
-    return svg(conn, knobs.get("where"))
+def bps(conn, env, *,  # noqa: ARG001
+        format_: flag(long="--format", metavar="FMT", env=False,
+                      help="csv (the default) or svg") = None,
+        where: flag(long="--where", env=False,
+                    help="a WHERE clause narrowing the rows: the columns of"
+                         " messages, plus head") = None):
+    """The rates, as TSV or as an SVG fan of deciles over elapsed time."""
+    kind = format_ or "csv"
+    if kind == "csv":
+        return csv(conn, where)
+    if kind == "svg":
+        return svg(conn, where)
+    raise DicError(f"--format must be csv or svg, not {kind!r}")

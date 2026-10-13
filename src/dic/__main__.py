@@ -9,6 +9,7 @@ stdin, and turn a DicError or a ^C into an exit status.
     dic/dic.py          arguments, stdin, os._exit
     dic/client.py       dic(), Reply -- the program
     dic/options.py      Flag: one declaration per knob, the CLI, the env vars
+    dic/commands.py     the readouts: one command each, never a model call
     dic/config.py       model and provider config: json sources, sqlite cache
     dic/store.py        sqlite message tree, attachments, session pointers
     dic/tty.py          colour, errors, the cost line, the progress meters
@@ -48,21 +49,43 @@ def main():
         print(init_line())
         return
 
+    from dic import commands, config
     from dic.client import dic
     from dic.options import parser
+    from dic.store import db
     from dic.tty import DicError, die
 
     try:
-        args = vars(parser().parse_args())
-        # The prompt is one argument.  An option dic does not know is an
-        # error and not a prompt word: a wrapper's own instructions travel
-        # in --prepend-prompt, so a misspelled flag is never sent to a
-        # model as prose.
-        prompt = args.pop("prompt") or ""
-        if not sys.stdin.isatty():
-            piped = sys.stdin.read()
-            prompt = f"{prompt}\n\n{piped}" if (prompt and piped.strip()) else (prompt or piped)
-        dic(prompt, **args, t_start=T0, env=os.environ, out=sys.stdout, err=sys.stderr)
+        # The command name must be argv[0], because argparse's subparsers
+        # reject an unknown first word: a word that is not a command name is
+        # the call's prompt, and "call" is prepended to say so.
+        argv = sys.argv[1:]
+        if not argv or argv[0] not in commands.COMMANDS:
+            argv = ["call", *argv]
+        args = vars(parser().parse_args(argv))
+        command = args.pop("command")
+        if command == "call":
+            # The prompt is one argument.  An option dic does not know is an
+            # error and not a prompt word: a wrapper's own instructions travel
+            # in --prepend-prompt, so a misspelled flag is never sent to a
+            # model as prose.
+            prompt = args.pop("prompt") or ""
+            if not sys.stdin.isatty():
+                piped = sys.stdin.read()
+                prompt = (f"{prompt}\n\n{piped}"
+                          if (prompt and piped.strip()) else (prompt or piped))
+            dic(prompt, **args, t_start=T0, env=os.environ,
+                out=sys.stdout, err=sys.stderr)
+        else:
+            # A readout answers from the database, so its connection and its
+            # parsed config cache are opened here and never inside a call.
+            models_file = args.pop("models_file", None)
+            args.pop("verbosity", None)
+            args.pop("quiet", None)
+            conn = db(os.environ)
+            config.sync(conn, os.environ, models_file)
+            sys.stdout.write(commands.COMMANDS[command](conn, os.environ,
+                                                        **args))
         sys.stdout.flush()
     except DicError as e:
         # dic() reports a failure by raising, so the CLI is the one place

@@ -30,7 +30,7 @@ export DIC_SYSTEM="Keep your response short, between 1-20 lines. Focus on a high
 
 # Record per-round byte-rate samples into dic.db, so that a B/s over time
 # plot is a SQL query.  Off by default in dic; on here
-export DIC_TRACE=1
+export DIC_RECORD=bps
 
 alias qwen='dic -m groq+qwen'
 alias fable='dic -m anthropic+fable'
@@ -215,14 +215,14 @@ _dic_mids() {
   local -a flags
   mapfile -t flags < <(_dic_log_flags)
   local rows
-  rows=$(dic --log "${flags[@]}" 2>/dev/null \
+  rows=$(dic log "${flags[@]}" 2>/dev/null \
          | awk -F'\t' 'NR == 1 || $1 != ""')
   [[ -z $rows ]] && return
   if command -v fzf >/dev/null 2>&1; then
     printf '%s\n' "$rows" | fzf \
         --reverse --no-multi --prompt='mid> ' \
         --header-lines=1 --with-nth=2.. --delimiter='\t' \
-        --preview 'dic --show {1}' --preview-window=right:60% \
+        --preview 'dic show {1}' --preview-window=right:60% \
       | awk -F'\t' '$1 != "" { print $1; exit }'
   else
     printf '%s\n' "$rows" | tail -n +2 | cut -f1
@@ -250,10 +250,10 @@ _dic_complete() {
   case $prev in
     # tab complete model names
     -m|--model)
-      # --models prints a header then three columns: the id, its key
+      # `dic models` prints a header then three columns: the id, its key
       # variable, and whether that variable is set.  A completion reads
       # the first column of every other line.
-      COMPREPLY=( $(compgen -W "$(dic --models | tail -n +2 | cut -f1)" -- "$cur") )
+      COMPREPLY=( $(compgen -W "$(dic models | tail -n +2 | cut -f1)" -- "$cur") )
       return ;;
     # tab complete files
     -a|--attachment|--path|--models-file)
@@ -265,19 +265,19 @@ _dic_complete() {
     -c|--continue)
       _dic_complete_mid "--mid=" "$cur"
       return ;;
-    --mid|--show|--from)
+    --mid|--from)
       _dic_complete_mid "" "$cur"
       return ;;
   esac
 
   if [[ $cur == -* ]]; then
-    COMPREPLY=( $(compgen -W "-m --model -s --system -a --attachment \
+    COMPREPLY=( $(compgen -W "call log stats models cost show bps \
+                              -m --model -s --system -a --attachment \
                               -x --extract -f --force -c --continue \
-                              --mid --show --from --log --limit --all \
-                              --graph --session \
+                              --mid --from \
                               --cache --tools --path --mime-type \
                               --pv-thinking --no-pv-thinking \
-                              --clipboard --no-clipboard --trace --stats" -- "$cur") )
+                              --clipboard --no-clipboard --record" -- "$cur") )
   fi
 }
 complete -F _dic_complete dic

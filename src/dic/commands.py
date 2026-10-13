@@ -1,26 +1,25 @@
 """Readouts: what dic says about itself, its history and its spend, and never
 a call to a model.
 
-One function per readout, taking the open connection and the environment and
+One function per command, taking the open connection and the environment and
 returning the whole reply as a string.  sqlite computes every number and
 python joins the cells with tabs and computes nothing, so the same function
-is a library call, a shell one-liner and the body of a mode flag.  The
-variants of one question -- "how much", asked of a conversation, of a session
-subtree, or as a breakdown -- are one function with one `if`, because they
-are one query over one index.
+is a library call, a shell one-liner and a command of the CLI.  Each
+function's options are Flag-annotated parameters, so the parser, the help
+and the dispatch are generated from one declaration and cannot drift apart.
 
-    dic/commands.py     the readouts, one function each
-    dic/options.py      Flag(group=, mode=): the grouping and the exclusion
-    dic/client.py       dic() -- the call to a model, and the one dispatch
+    dic/commands.py     the commands, one function each
+    dic/options.py      Flag(command=): which parser an option lives on
+    dic/client.py       dic() -- the one call to a model
 
-"--stats and --models both" is an error and not a menu: a readout is one
-question asked of the database and the answer to two is not one table.
-`options.modes()` is what says so; this module is what the answer to the one
-that was asked looks like.
+The variants of one question -- "how much", asked of a conversation, of a
+session subtree, or as a breakdown -- are one function with one `if`,
+because they are one query over one index.
 """
 import json, time
 
-from dic import config, tps
+from dic import bps, client, config
+from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
                        TOOL_STATS, resolve_ref, session_read)
@@ -277,34 +276,39 @@ def message_text(conn, mid):
 
 # ------------------------------------------------------------------ readouts
 
-def aliases(conn, env, knobs):  # noqa: ARG001
-    """`alias qwen='dic -m groq+qwen'` for every entry that names an alias.
-
-    This is what `dic.sh` evals, so the shell name and the model name come
-    from the same table and cannot drift apart.
-    """
-    return config.aliases(conn)
-
-
-def models(conn, env, knobs):  # noqa: ARG001
+def models(conn, env, *,
+           aliases: flag(long="--aliases", action="bool", env=False,
+                         help="print shell alias definitions for `dic.sh` to"
+                              " eval, and nothing else") = False):
     """Every configured model id, the key it needs, and whether that key is set.
 
     A model whose key is missing is marked rather than hidden, so a user
     chasing a model that will not run sees the export it names, and the id
     stays in column one, so `tail -n +2 | cut -f1` is what shell completion
-    reads.
+    reads.  With --aliases the same table's aliases are printed instead, so
+    the shell name and the model name come from one place and cannot drift.
     """
+    if aliases:
+        return config.aliases(conn)
     return table(conn.execute(MODELS, (json.dumps(sorted(env)),)).fetchall())
 
 
-def stats(conn, env, knobs):  # noqa: ARG001
+def stats(conn, env, *,
+          provider: flag(long="--provider", metavar="MODEL", action="?",
+                         env=False,
+                         help="print the upstreams a router chose, per model"
+                              " or for MODEL") = None):
     """Per-model usage frequency and runtime performance, plus tool failures.
 
     Frequency and performance are one aggregate over the same rows, so they
     are one query; the tool rows are a second over json_each, below it,
     because a tool that failed is a turn the model had to correct and not a
-    call dic made.
+    call dic made.  --provider is that same aggregate one level deeper, over
+    the rows a router named an upstream for; a model served slowly by one
+    upstream and quickly by another is otherwise a single average.
     """
+    if provider is not None:
+        return table(conn.execute(PROVIDERS, (provider, provider)).fetchall())
     text = table(conn.execute(STATS).fetchall())
     tools = table(conn.execute(TOOL_STATS).fetchall())
     if tools:
@@ -312,44 +316,46 @@ def stats(conn, env, knobs):  # noqa: ARG001
     return text
 
 
-def providers(conn, env, knobs):  # noqa: ARG001
-    """The upstream each router chose, one level deeper than --stats.
+def cost(conn, env, *,
+         session: flag(long="--session", metavar="NAME", env=False,
+                       help="a session's spend, its sub-sessions included"
+                            " (default: $DIC_SESSION)") = None,
+         tree: flag(long="--tree", action="bool", env=False,
+                    help="print the per-session breakdown of a session"
+                         " subtree") = False,
+         of: flag(long="--of", metavar="REF", env=False,
+                  help="the spend of the conversation ending at REF") = None):
+    """What a conversation or a session subtree spent.
 
-    A provider that answers directly sends no `provider` field and so has no
-    rows here at all, which is why this is a query of its own and not a
-    column of --stats: the question is not how a model performed but which
-    of its routes did.
+    `--of REF` is a conversation: a walk up prev_mid from one message.
+    `--session` is a session subtree -- the session itself, or with --tree
+    its per-session breakdown -- and defaults to $DIC_SESSION, so a bare
+    flag asks about this shell.  A session is a subtree and a conversation
+    is a walk, so the two scopes are orthogonal and each flag names one.
     """
-    model = knobs["providers"] or ""
-    return table(conn.execute(PROVIDERS, (model, model)).fetchall())
-
-
-def cost(conn, env, knobs):
-    """What a conversation or a session subtree spent, at one of three scopes.
-
-    `--cost-of REF` is a conversation: a walk up prev_mid from one message.
-    `--cost-session` and `--cost-tree` are a session subtree -- the session
-    itself, or its per-session breakdown -- and both default to $DIC_SESSION,
-    so a bare flag asks about this shell.  A session is a subtree and a
-    conversation is a walk, so the two scopes are orthogonal and each flag
-    names which one it means.
-    """
-    if knobs["cost_of"]:
+    if of:
         spent = conn.execute(
-            CONVERSATION_COST,
-            (resolve_ref(conn, knobs["cost_of"], env),)).fetchone()[0]
+            CONVERSATION_COST, (resolve_ref(conn, of, env),)).fetchone()[0]
         return f"${spent:.4f}\n"
-    name = (knobs["cost_session"] if knobs["cost_session"] is not None
-            else knobs["cost_tree"])
-    if not name:
-        name = env.get("DIC_SESSION", "global")
-    if knobs["cost_tree"] is not None:
+    name = session or env.get("DIC_SESSION", "global")
+    if tree:
         return session_cost_tree(conn, name)
     spent = conn.execute(SESSION_COST, (name, name)).fetchone()[0]
     return f"${spent:.4f}\n"
 
 
-def log(conn, env, knobs):
+def log(conn, env, *,
+        limit: flag(metavar="N", type=int, env=False,
+                    help="how many rows --log prints (default 200)") = None,
+        all_: flag(long="--all", action="bool", env=False,
+                   help="list every message, not just this session") = False,
+        session: flag(long="--session", metavar="NAME", action="?", env=False,
+                      help="list a session and its sub-sessions"
+                           " (default: $DIC_SESSION)") = None,
+        from_: flag(long="--from", metavar="REF", env=False,
+                    help="list from REF instead of the session pointer") = None,
+        graph: flag(long="--graph", action="bool", env=False,
+                    help="draw the forest in a column of its own") = False):
     """Recent messages: this session's subtree, --all, or a chain from --from.
 
     The two commands a completion picker is built from: the list it reads,
@@ -358,34 +364,33 @@ def log(conn, env, knobs):
     --all scopes it to the whole database; a bare --session is this shell's
     own session.
     """
-    mid = (resolve_ref(conn, knobs["from_"], env) if knobs["from_"]
+    mid = (resolve_ref(conn, from_, env) if from_
            else session_read(env))
-    scope = knobs["log_session"]
+    scope = session
     if scope == "":
         scope = env.get("DIC_SESSION", "global")
-    return log_table(log_rows(conn, mid, knobs["limit"] or 200,
-                              knobs["all_"], scope),
-                     graph=knobs["graph"])
+    return log_table(log_rows(conn, mid, limit or 200, all_, scope),
+                     graph=graph)
 
 
-def show(conn, env, knobs):
+def show(conn, env, ref=None):
     """One message's details: the preview --log's picker draws for its row."""
-    return message_text(conn, resolve_ref(conn, knobs["show"], env))
+    if not ref:
+        raise DicError("show needs a message ref")
+    return message_text(conn, resolve_ref(conn, ref, env))
 
 
-# The one dispatch: which readout answers for which flag.  A new mode flag is
-# a Flag(mode=True) in `dic()`'s signature and one line here, and --help, the
-# exclusive check and this table all read the same declaration.
-BY_FLAG = {
-    "aliases":      aliases,
-    "models":       models,
-    "stats":        stats,
-    "providers":    providers,
-    "cost_session": cost,
-    "cost_of":      cost,
-    "cost_tree":    cost,
-    "log":          log,
-    "show":         show,
-    "tps_csv":      tps.csv_readout,
-    "tps_svg":      tps.svg_readout,
+# The one dispatch: which function answers for which command name.  A new
+# command is a function here and one line, and --help, the parser and the
+# dispatch all read the same declaration.  `client.dic` is imported at
+# module level because client.py no longer imports this module: the call is
+# one command among the readouts, not the other way round.
+COMMANDS = {
+    "call":  client.dic,
+    "log":   log,
+    "stats": stats,
+    "models": models,
+    "cost":  cost,
+    "show":  show,
+    "bps":   bps.bps,
 }

@@ -1,52 +1,51 @@
 """The CLI half of dic: one Flag declaration per knob.
 
-A parameter of `dic()` is annotated with a Flag, and the Flag supplies the
-environment variable, the command-line argument, the --help line and the
---help section the argument lives in, so a new knob is one annotation and
-nothing else.  The dest of every generated argument is the parameter name,
-so argparse and `dic()` cannot drift apart.
+A parameter of a command function is annotated with a Flag, and the Flag
+supplies the environment variable, the command-line argument, the --help
+line and the --help section the argument lives in, so a new knob is one
+annotation and nothing else.  The dest of every generated argument is the
+parameter name, so argparse and the function cannot drift apart.
 
-A Flag that is a *readout* -- a question about the database dic answers
-without calling a model -- says `mode=True`, and that one declaration then
-supplies the exclusive check that refuses two readouts at once and the
---help section where they are visibly a family.  A new readout is a flag
-and a function; nothing here has to be taught about it.
+A Flag names the command it belongs to.  `command=""` is the call, whose
+function is `client.dic`; `command="*"` is a global and goes on the parent
+parser every command shares; any other value names a readout, and argparse
+builds that readout a subparser of its own.  Exclusivity is therefore
+structural: at most one command is parsed, so there is no mode check and no
+"pick one" message.
 
-`client.py` imports `Flag`, `resolve` and `modes` from here, so nothing
-expensive may be imported at module level: `inspect`, which reads the
-signature, is imported inside `flags()`, and `argparse` only by the entry
-point.
+`client.py` imports `Flag` and `resolve` from here, so nothing expensive
+may be imported at module level: `inspect`, which reads a signature, is
+imported inside `flags()`, and `argparse` only by `parser()`.
 """
 import json
 
 from dic.tty import DicError
 
-# The --help sections, and the partition the mode check reads: a call flag
-# belongs to a request, an output flag to the file the answer lands in, a
-# print flag to the request itself, and a readout flag to a question the
-# database answers without a model at all.
+# The --help sections.
 CALL = "the call"
 OUTPUT = "where the answer goes"
 PRINT = "print the request (do not call a model)"
-MODE = "readouts (do not call a model)"
+
+# A flag every command accepts; it lives on the shared parent parser.
+GLOBAL = "*"
 
 
 class Flag:
-    """How one parameter of `dic()` is spelled on the command line and in $ENV.
+    """How one parameter of a command function is spelled on the command line.
 
     The parameter's own default is the not-given value -- None or False --
     and the Flag says how to name it: `short` and `long` are the option
-    strings, `action` is "append", "count", "bool" or "yes/no" when the
+    strings, `action` is "append", "count", "bool", "?" or "yes/no" when the
     argument is not a plain value, and `env` is False for a knob whose
     variable means something other than the argument itself.  `group` is
-    the --help section the option is listed under, and `mode` marks the
-    flag as a readout: a question asked of the database, and never a call.
+    the --help section the option is listed under, and `command` names the
+    command the option belongs to: "" is the call, "*" is every command.
     """
-    __slots__ = ("action", "env", "group", "help", "long", "metavar", "mode",
-                 "short", "type")
+    __slots__ = ("action", "command", "env", "group", "help", "long",
+                 "metavar", "short", "type")
 
     def __init__(self, help="", short="", long="", action="", type=str,  # noqa: A002
-                 metavar="", env="", group=CALL, mode=False):
+                 metavar="", env="", group=CALL, command=""):
         self.help = help
         self.short = short
         self.long = long
@@ -55,7 +54,7 @@ class Flag:
         self.metavar = metavar
         self.env = env
         self.group = group
-        self.mode = mode
+        self.command = command
 
 
 flag = Flag
@@ -96,42 +95,29 @@ def _decode(value):
         return value
 
 
-_FLAGS = None
+_FLAGS = {}
 
 
-def flags():
-    """{parameter: Flag} for every knob of `dic()`, in signature order.
+def flags(func=None):
+    """{parameter: Flag} for one command function's knobs, in signature order.
 
-    `inspect` is imported here and not at module level: this is the CLI's
-    generator, and a library call must not pay for it.  The result is
-    cached because `from_env`, `modes` and `parser` each want it and none
-    of them changes what `dic()`'s signature says.
+    `flags()` with no argument is the call's: `from_env` and `resolve` are
+    about the call, and their declarations do not change with the command.
+    `inspect` is imported here and not at module level, and the result is
+    cached per function because `from_env`, `resolve` and `parser` each
+    want one and none of them changes a signature.
     """
-    global _FLAGS
-    if _FLAGS is None:
-        import inspect
+    if func is None:
         from dic.client import dic
-        _FLAGS = {name: p.annotation
-                  for name, p in inspect.signature(dic).parameters.items()
+        func = dic
+    cached = _FLAGS.get(func)
+    if cached is None:
+        import inspect
+        cached = {name: p.annotation
+                  for name, p in inspect.signature(func).parameters.items()
                   if isinstance(p.annotation, Flag)}
-    return _FLAGS
-
-
-def modes(knobs):
-    """The mode flags that were given, in signature order.
-
-    A mode flag answers without calling a model: a readout asks a question
-    of the database, and --print-curl and --print-body ask what the request
-    would have been.  Modes are mutually exclusive -- the answer to two is
-    not one table -- so this list is at most one long, and `resolve` refuses
-    a longer one.  The readouts are `commands.BY_FLAG`'s keys, so the help,
-    the exclusion and the dispatch cannot disagree about which was asked.
-
-    >>> modes({"stats": True, "models": False, "aliases": None})
-    ['stats']
-    """
-    return [name for name, f in flags().items()
-            if f.mode and knobs.get(name) not in (None, False)]
+        _FLAGS[func] = cached
+    return cached
 
 
 def from_env(mapping):
@@ -158,8 +144,7 @@ def resolve(knobs, mapping):
     This is the whole of `argument > $DIC_<NAME> > model config`: a knob that
     still holds its not-given value is left to from_env(), and one that was
     given is kept.  It is one loop over the declarations, so a new knob needs
-    no new line here.  Two readouts at once is the one combination that has
-    no meaning, so it is refused here, once, with the names of both.
+    no new line here.
 
     >>> k = resolve({"model": None, "extract": False}, {"DIC_MODEL": "x"})
     >>> k["model"], k["extract"], k["system"]
@@ -171,56 +156,70 @@ def resolve(knobs, mapping):
             out[name] = knobs[name]
         else:
             out.setdefault(name, EMPTY[f.action])
-    given = modes(out)
-    if len(given) > 1:
-        raise DicError("pick one: " + ", ".join(
-            "--" + name.replace("_", "-") for name in given))
     return out
 
 
 def parser():
-    """The argparse parser generated from `dic()`'s signature.
+    """The argparse parser generated from the command functions' signatures.
 
-    Defaults are the not-given values and the environment is applied by
-    `dic()` itself, so the command line, the environment and the model config
-    meet in exactly one place.  Each flag is listed under its Flag's `group`,
-    so --help's sections are the same partition the mode check reads and a
-    readout is visibly not a knife to combine with a call.
+    Each command is a subparser and the globals are on a parent parser every
+    subparser shares, so `-v` works wherever it is typed.  The command name
+    must be argv[0]: argparse's subparsers reject an unknown first word,
+    which is why the entry point pre-dispatches and prepends "call" when the
+    first word is not a command name.
     """
     import argparse
-    p = argparse.ArgumentParser(prog="dic", description="talk to a chat model")
-    p.add_argument("prompt", nargs="?", help="the prompt, or stdin")
-    sections = {}
+    from dic import commands
+    from dic.client import dic
 
-    def section(f):
-        if not f.group:
-            return p
-        if f.group not in sections:
-            sections[f.group] = p.add_argument_group(f.group)
-        return sections[f.group]
-
-    for name, f in flags().items():
+    def add(where, name, f):
         options = ([f.short] if f.short else []) + [f.long or _name(name)]
         variable = _variable(name, f)
         help_text = f.help + (f" (env: {variable})" if f.help and variable else "")
         empty = EMPTY[f.action]
         if f.action == "yes/no":
-            section(f).add_argument(*options, dest=name, default=empty,
-                                    help=help_text,
-                                    action=argparse.BooleanOptionalAction)
+            where.add_argument(*options, dest=name, default=empty,
+                               help=help_text,
+                               action=argparse.BooleanOptionalAction)
         elif f.action == "bool":
-            section(f).add_argument(*options, dest=name, default=empty,
-                                    help=help_text, action="store_true")
+            where.add_argument(*options, dest=name, default=empty,
+                               help=help_text, action="store_true")
         elif f.action == "count":
-            section(f).add_argument(*options, dest=name, default=empty,
-                                    help=help_text, action="count")
+            where.add_argument(*options, dest=name, default=empty,
+                               help=help_text, action="count")
         elif f.action == "?":
-            section(f).add_argument(*options, dest=name, default=empty,
-                                    help=help_text,
-                                    nargs="?", const="", metavar=f.metavar or None)
+            where.add_argument(*options, dest=name, default=empty,
+                               help=help_text,
+                               nargs="?", const="", metavar=f.metavar or None)
         else:
-            section(f).add_argument(
+            where.add_argument(
                 *options, dest=name, default=empty, help=help_text,
                 type=f.type, metavar=f.metavar or None,
                 action="append" if f.action == "append" else "store")
+
+    parent = argparse.ArgumentParser(add_help=False)
+    for name, f in flags(dic).items():
+        if f.command == GLOBAL:
+            add(parent, name, f)
+
+    p = argparse.ArgumentParser(prog="dic", description="talk to a chat model",
+                                parents=[parent])
+    sub = p.add_subparsers(dest="command")
+    for command, func in commands.COMMANDS.items():
+        where = sub.add_parser(command, parents=[parent])
+        if command == "call":
+            where.add_argument("prompt", nargs="?",
+                               help="the prompt, or stdin")
+        if command == "show":
+            where.add_argument("ref", nargs="?", help="the message to print")
+        sections = {}
+        for name, f in flags(func).items():
+            if f.command == GLOBAL:
+                continue
+            target = where
+            if f.group:
+                if f.group not in sections:
+                    sections[f.group] = where.add_argument_group(f.group)
+                target = sections[f.group]
+            add(target, name, f)
     return p

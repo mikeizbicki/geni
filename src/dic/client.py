@@ -21,8 +21,8 @@ entry point.
 """
 import http.client, json, os, re, socket, sys, threading, time, urllib.parse
 
-from dic import commands, config, output, price
-from dic.options import MODE, OUTPUT, PRINT, flag, modes, resolve
+from dic import config, output, price
+from dic.options import GLOBAL, OUTPUT, PRINT, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Trace, config_dir, db, file_block,
                        history, normalize, resolve_ref, session_read,
                        session_write, store_attachment, turns_from_rows, ulid)
@@ -35,12 +35,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # that loops is a bug and not a conversation, and a call is not an infinite
 # budget.
 MAX_TOOL_ROUNDS = 16
-
-# The two flags that answer with the request instead of sending it.  They are
-# modes -- exclusive with every readout and with each other -- but their
-# answer needs a body only the adaptor can build, so `dic()` handles them
-# itself rather than dispatching to commands.py.
-PRINT_MODES = ("print_curl", "print_body")
 
 
 class Reply:
@@ -430,18 +424,21 @@ def dic(prompt,
                            help="meter the reasoning instead of printing it") = None,
         pv_response:  flag(action="yes/no",
                            help="meter the answer on stderr as well") = None,
-        trace:        flag(action="bool",
+        record:       flag(long="--record", metavar="KIND",
                            help="record per-round byte-rate samples, for"
-                                " plotting B/s over time") = False,
+                                " plotting B/s over time; the only value is"
+                                " bps") = None,
         clipboard:    flag(action="yes/no",
                            help="copy the answer to the terminal's clipboard"
                                 " (the default on a terminal)") = None,
         verbosity:    flag(short="-v", action="count", env=False,
+                           command=GLOBAL,
                            help="raise stderr verbosity; repeatable"
                                 " (DIC_VERBOSITY sets the base)") = None,
-        quiet:        flag(short="-q", action="bool",
+        quiet:        flag(short="-q", action="bool", command=GLOBAL,
                            help="print nothing to stderr but errors") = False,
-        models_file:  flag(help="a json file of model entries to overlay") = None,
+        models_file:  flag(command=GLOBAL,
+                           help="a json file of model entries to overlay") = None,
         # ----- where the answer goes -----
         path:         flag(long="--path", metavar="FILE", group=OUTPUT,
                            help="write the answer to FILE, atomically") = None,
@@ -449,72 +446,11 @@ def dic(prompt,
                            help="overwrite the file named by --path") = False,
         mime_type:    flag(long="--mime-type", metavar="TYPE", group=OUTPUT,
                            help="the mime type of the answer") = None,
-        # ----- print the request instead of sending it; at most one -----
-        print_curl:   flag(long="--print-curl", action="bool", group=PRINT,
-                           mode=True,
-                           help="print the request as a curl command and exit"
-                           ) = False,
-        print_body:   flag(long="--print-body", action="bool", group=PRINT,
-                           mode=True,
-                           help="print the request body as indented JSON and exit"
-                           ) = False,
-        # ----- readouts; at most one may be given -----
-        aliases:      flag(action="bool", group=MODE, mode=True,
-                           help="print shell alias definitions and exit") = False,
-        models:       flag(action="bool", group=MODE, mode=True,
-                           help="list every configured model id, the key"
-                                " each needs and whether it is set") = False,
-        stats:        flag(action="bool", group=MODE, mode=True,
-                           help="print per-model statistics and exit") = False,
-        providers:    flag(long="--providers", metavar="MODEL", action="?",
-                           env=False, group=MODE, mode=True,
-                           help="print the upstreams a router chose, per model"
-                                " or for MODEL, and exit") = None,
-        cost_session: flag(long="--cost-session", metavar="NAME", action="?",
-                           env=False, group=MODE, mode=True,
-                           help="print a session's spend, its sub-sessions"
-                                " included (default: $DIC_SESSION)") = None,
-        cost_of:      flag(long="--cost-of", metavar="REF", env=False,
-                           group=MODE, mode=True,
-                           help="print the spend of the conversation"
-                                " ending at REF") = None,
-        cost_tree:    flag(long="--cost-tree", metavar="NAME", action="?",
-                           env=False, group=MODE, mode=True,
-                           help="print a per-session cost breakdown"
-                                " (default: $DIC_SESSION)") = None,
-        tps_csv:      flag(long="--tps-csv", action="bool", group=MODE,
-                           mode=True,
-                           help="print per-decile output token rates over"
-                                " time, as TSV; --where narrows the rows"
-                           ) = False,
-        tps_svg:      flag(long="--tps-svg", action="bool", group=MODE,
-                           mode=True,
-                           help="draw those rates as an SVG fan of deciles"
-                                " over elapsed time; --where narrows the rows"
-                           ) = False,
-        where:        flag(long="--where", env=False, group=MODE,
-                           help="a WHERE clause narrowing the rows a --tps"
-                                " readout includes: the columns of messages,"
-                                " plus head") = None,
-        log:          flag(action="bool", env=False, group=MODE, mode=True,
-                           help="list recent messages, newest first, and exit")
-                      = False,
-        graph:        flag(long="--graph", action="bool", env=False, group=MODE,
-                           help="draw --log's forest in a column of its own")
-                      = False,
-        log_session:  flag(long="--session", metavar="NAME", action="?",
-                           env=False, group=MODE,
-                           help="--log a session and its sub-sessions"
-                                " (default: $DIC_SESSION)") = None,
-        show:         flag(metavar="REF", env=False, group=MODE, mode=True,
-                           help="print one message's details and exit") = None,
-        limit:        flag(metavar="N", type=int, env=False, group=MODE,
-                           help="how many rows --log prints (default 200)") = None,
-        all_:         flag(long="--all", action="bool", env=False, group=MODE,
-                           help="--log every message, not just this session") = False,
-        from_:        flag(long="--from", metavar="REF", env=False, group=MODE,
-                           help="--log from REF instead of the session pointer")
-                      = None,
+        # ----- print the request instead of sending it -----
+        print:        flag(long="--print", metavar="WHAT", env=False,
+                           group=PRINT,
+                           help="print the request as curl or indented json"
+                                " and exit") = None,
         t_start=None, env=None, out=None, err=None) -> Reply:
     """Talk to one model once, and record the turn.
 
@@ -562,21 +498,13 @@ def dic(prompt,
     prompt = "\n\n".join(piece for piece in [*prepend, prompt] if piece)
     # a print flag answers with the request dic would send, so it needs the
     # model, the history and the adaptor, and it stops before the network
-    printing = knobs["print_curl"] or knobs["print_body"]
+    printing = knobs["print"]
+    if knobs["record"] not in (None, "bps"):
+        raise DicError(f"--record must be bps, not {knobs['record']!r}")
 
     conn = db(env)
     session = env.get("DIC_SESSION", "global")
     config.sync(conn, env, knobs["models_file"])   # a stat per file; a parse only when one moved
-    # a readout asks the database one question and prints the answer, and it
-    # never reaches the network: options.modes() already refused a second
-    # readout, so this is the whole of the dispatch, and commands.py is the
-    # whole of what any one of them does.
-    given = modes(knobs)
-    if given and given[0] not in PRINT_MODES:
-        text = commands.BY_FLAG[given[0]](conn, env, knobs)
-        out.write(text)
-        out.flush()
-        return Reply(text=text)
 
     # stderr is graded: $DIC_VERBOSITY sets the grade, otherwise 1 on a
     # terminal and 0 on a pipe; -q drops it to 0 and each -v raises it by one
@@ -602,6 +530,11 @@ def dic(prompt,
         if spent >= limit:
             raise DicError(f"{session}: ${spent:.4f} spent,"
                            f" DIC_COST_BUDGET=${limit:.2f}")
+
+    if knobs["cont"] and knobs["mid"]:
+        # -c names this session's pointer and --mid names a ref; both at once
+        # is two answers to one question, so it is refused rather than won.
+        raise DicError("pick one: -c or --mid")
 
     prev_mid = (resolve_ref(conn, knobs["mid"], env) if knobs["mid"]
                 else (session_read(env) if knobs["cont"] else None))
@@ -715,7 +648,7 @@ def dic(prompt,
         # the printer answers with the request, and no request is made: both
         # flags render the same body, so they cannot disagree about it
         text = json.dumps(printable(body), indent=2, ensure_ascii=False) + "\n"
-        if knobs["print_curl"]:
+        if knobs["print"] == "curl":
             text = curl_command(model, adaptor, body, headers, api_key, api_type)
         out.write(text)
         out.flush()
@@ -857,7 +790,7 @@ def dic(prompt,
             wire = {"t_start": stamps.get("t_last") or t_start}
             # a new round is a new request with its own first token, so its
             # byte-rate samples start over at this round's own t_start
-            trace = Trace(wire["t_start"]) if knobs["trace"] else None
+            trace = Trace(wire["t_start"]) if knobs["record"] == "bps" else None
             line.restart()          # this request's clock, not the call's
             pv = {"name": "thinking"} if pv_thinking else None
             pv_resp = {"name": "response"} if pv_response else None

@@ -96,7 +96,7 @@ SELECT r.model_id, r.provider, r.bucket,
     ON b.model_id = r.model_id AND b.provider IS r.provider
  GROUP BY r.model_id, r.provider, r.bucket
  ORDER BY r.model_id, r.provider, r.bucket
-"""
+"""  # noqa: S608
 
 POINTS = SOURCE + """
 SELECT mid, model_id, provider, (think_b + resp_b) AS gen_b,

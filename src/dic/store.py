@@ -26,7 +26,7 @@ from dic.tty import DicError
 # version of dic migrates another one: dic is pre-release, so an older file is
 # not upgraded but reported with the rm that removes it, because a database
 # that is only nearly right fails later as a confusing sqlite error.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -104,10 +104,11 @@ CREATE TABLE IF NOT EXISTS attachments (
     hash TEXT,
     mime_type TEXT);
 -- The byte-rate samples one round's streams produced, one row per round that
--- was traced and none for a round that was not: a plot is a separate read of
--- this table and never a column of `messages`, so an untraced install carries
--- no bytes at all and no reader of the message tree pays for the indirection.
-CREATE TABLE IF NOT EXISTS trace (
+-- was recorded and none for a round that was not: a plot is a separate read
+-- of this table and never a column of `messages`, so an install that does
+-- not record carries no bytes and no reader of the message tree pays for the
+-- indirection.
+CREATE TABLE IF NOT EXISTS record (
     mid TEXT PRIMARY KEY,
     samples TEXT);
 CREATE TABLE IF NOT EXISTS config (
@@ -304,7 +305,7 @@ def ulid():
     return "".join(B32[(n >> (5 * i)) & 31] for i in range(25, -1, -1))
 
 
-class Trace:
+class Recorder:
     """Byte totals of a round's streams, sampled on a 100ms grid.
 
     A sample is `[t_ms, thinking, response]`: how many bytes of reasoning
@@ -313,17 +314,17 @@ class Trace:
     running total -- or of the rate between two grid points -- is a
     subtraction.  Gridded and not one sample per chunk because a long answer
     is thousands of chunks and ten samples a second is the same picture at a
-    hundredth of the bytes.  A round nobody traced has no row, which is not
+    hundredth of the bytes.  A round nobody recorded has no row, which is not
     an empty one.
 
-    >>> t = Trace(0)
+    >>> t = Recorder(0)
     >>> t.add(50 * 10**6, "response", 5)     # grid 0
     >>> t.add(150 * 10**6, "thinking", 3)    # grid 1 opens
     >>> t.add(190 * 10**6, "thinking", 7)    # still grid 1
     >>> t.add(250 * 10**6, "response", 2)    # grid 2 opens
     >>> t.json()
     '[[0, 0, 5], [100, 10, 5], [200, 10, 7]]'
-    >>> Trace(0).json() is None
+    >>> Recorder(0).json() is None
     True
     """
     GRID_NS = 100 * 10**6

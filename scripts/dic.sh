@@ -28,8 +28,8 @@ export DIC_MODEL=groq+qwen
 export DIC_SYSTEM="Keep your response short, between 1-20 lines. Focus on a high signal to noise ratio (audience has strong math/cs background). If the question is about a computer, respond for: $(uname -a)."
 [[ $- == *i* ]] && export DIC_SESSION="$$"
 
-# Record per-round byte-rate samples into dic.db, so that a B/s over time
-# plot is a SQL query.  Off by default in dic; on here
+# Record per-round byte-rate samples into dic.db, so that a plot of B/s over
+# the generation is a SQL query.  Off by default in dic; on here
 export DIC_RECORD=bps
 
 alias qwen='dic -m groq+qwen'

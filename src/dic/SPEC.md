@@ -538,11 +538,12 @@ the conversation is rebuilt.
 A file a turn names that dic can no longer read is an error, never a turn that
 quietly loses it.
 
-A fourth table `trace` holds the byte-rate samples one round's streams
-produced, so that a plot of B/s over time is a query and not only something
-watched on a terminal.  It has one row per round that was traced, keyed by
-`mid`, and none for a round that was not, so an install that does not trace
-carries no bytes and no reader of the message tree pays for the indirection.
+A fourth table `record` holds the byte-rate samples one round's streams
+produced, so that a plot of B/s over the generation is a query and not only
+something watched on a terminal.  It has one row per round that was
+recorded, keyed by `mid`, and none for a round that was not, so an install
+that does not record carries no bytes and no reader of the message tree pays
+for the indirection.
 `samples` is a JSON list of `[t_ms, thinking, response]` on a 100ms grid: how
 many bytes of reasoning and how many bytes of answer had arrived by each
 point, in milliseconds since the round's request went out.  Recording is off

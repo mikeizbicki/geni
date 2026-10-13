@@ -23,9 +23,10 @@ import http.client, json, os, re, socket, sys, threading, time, urllib.parse
 
 from dic import config, output, price
 from dic.options import GLOBAL, OUTPUT, PRINT, flag, resolve
-from dic.store import (INSERT, SESSION_COST, Trace, config_dir, db, file_block,
-                       history, normalize, resolve_ref, session_read,
-                       session_write, store_attachment, turns_from_rows, ulid)
+from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
+                       file_block, history, normalize, resolve_ref,
+                       session_read, session_write, store_attachment,
+                       turns_from_rows, ulid)
 from dic.tty import (BLUE, RESET, THINKING, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
 
@@ -758,12 +759,12 @@ def dic(prompt,
             wire.get("t_start"), wire.get("t_connect"), wire.get("t_request"),
             wire.get("t_headers"), wire.get("t_first"), wire.get("t_last"),
             wire.get("t_done")))
-        if trace is not None:
+        if recorder is not None:
             # one row per round that produced bytes, and none for one that did
-            # not: the plot's x axis is time within a call and not within a row
-            samples = trace.json()
+            # not: a round's samples are measured from that round's own start
+            samples = recorder.json()
             if samples:
-                conn.execute("INSERT INTO trace VALUES (?, ?)", (mid, samples))
+                conn.execute("INSERT INTO record VALUES (?, ?)", (mid, samples))
         return mid
 
     paint = use_color(out, env) and knobs["path"] is None
@@ -775,7 +776,7 @@ def dic(prompt,
     clipboard = paint if knobs["clipboard"] is None else knobs["clipboard"]
 
     acc, chunks, wire, asked, results = {}, [], {}, (), []
-    trace = None
+    recorder = None
     printed, rounds, prev, index, seen = [], [], prev_mid, 0, 0
 
     try:
@@ -790,7 +791,8 @@ def dic(prompt,
             wire = {"t_start": stamps.get("t_last") or t_start}
             # a new round is a new request with its own first token, so its
             # byte-rate samples start over at this round's own t_start
-            trace = Trace(wire["t_start"]) if knobs["record"] == "bps" else None
+            recorder = (Recorder(wire["t_start"])
+                        if knobs["record"] == "bps" else None)
             line.restart()          # this request's clock, not the call's
             pv = {"name": "thinking"} if pv_thinking else None
             pv_resp = {"name": "response"} if pv_response else None
@@ -812,10 +814,10 @@ def dic(prompt,
                     sink.end_blob()     # a blob ends when anything else arrives
                 wire.setdefault("t_first", time.time_ns())
                 line.first_token()      # the wait is over, whatever arrived
-                if trace is not None:
-                    trace.add(time.time_ns(), kind or "response",
-                              len(chunk if isinstance(chunk, bytes)
-                                  else chunk.encode()))
+                if recorder is not None:
+                    recorder.add(time.time_ns(), kind or "response",
+                                 len(chunk if isinstance(chunk, bytes)
+                                     else chunk.encode()))
                 if kind == "thinking":
                     if pv is not None:
                         pv_update(pv, chunk, err=err, env=env)

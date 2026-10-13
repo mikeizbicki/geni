@@ -1,10 +1,9 @@
 # TODO-tps
 
-`--trace` names the flag that *records* the byte-rate samples, and
+`--trace` is the flag that *records* the byte-rate samples, and
 `--tps-csv` / `--tps-svg` name the two readouts that render them.
-"Trace" reads as the flag that renders the plot, which it is not; it
-should be renamed, so that one verb records and another reports.
-`DIC_TRACE` goes with it.
+I don't like the verb "trace" here for byte level records because it is too generic; --trace is often used for adding debug output similar to a --verbose for example.
+So --trace should be renamed and `DIC_TRACE` as well.
 
 A second, smaller question: `--tps-csv` and `--tps-svg` say "and a
 third format might exist".  Every other readout is a bare noun, and a

@@ -73,14 +73,14 @@ def test_continue_replays_the_conversation(streams, env, sse, model, events):
     assert tree(env)[1]["prev_mid"] == first.mid
 
 
-def test_mid_wins_over_continue(streams, env, sse, model, events):
+def test_mid_and_continue_together_are_an_error(streams, env, sse, model):
+    # -c names this session's pointer and --mid names a ref; both at once is
+    # two answers to one question, so it is refused rather than won.
     first = say(streams, env, "one", model=model)
-    say(streams, env, "two", model=model)        # a second, unrelated thread
-    sse.events = events("three")
-    say(streams, env, "three", model=model, cont=True, mid=first.mid)
+    with pytest.raises(DicError, match="pick one"):
+        say(streams, env, "two", model=model, cont=True, mid=first.mid)
 
-    assert [m["content"] for m in sse.received[-1].body["messages"]] == [
-        "one", "hello", "three"]
+    assert len(sse.received) == 1        # refused before the network
 
 
 def test_a_failed_call_is_stored_and_leaves_the_pointer_alone(streams, env, sse, model):

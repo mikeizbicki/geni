@@ -60,7 +60,11 @@ def main():
         # reject an unknown first word: a word that is not a command name is
         # the call's prompt, and "call" is prepended to say so.
         argv = sys.argv[1:]
-        if not argv or argv[0] not in commands.COMMANDS:
+        # --help and -h name the whole tree of commands, so they are the one
+        # exception: left alone, the top-level parser answers with the list
+        # of commands rather than the call's own options
+        if not argv or (argv[0] not in commands.COMMANDS
+                        and argv[0] not in ("-h", "--help")):
             argv = ["call", *argv]
         args = vars(parser().parse_args(argv))
         command = args.pop("command")

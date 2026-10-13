@@ -7,8 +7,8 @@ them over as a table or draws them as a fan chart.
 
     dic --tps-csv                       > rates.tsv
     dic --tps-svg                       > rates.svg
-    dic --tps-svg --filter "provider LIKE 'openrouter/%'"
-    dic --tps-svg --filter "head = 'anthropic' and status = 200"
+    dic --tps-svg --where "provider LIKE 'openrouter/%'"
+    dic --tps-svg --where "head = 'anthropic' and status = 200"
 
 The rate is per decile, not per call.  Every traced round of one model
 and provider is lined up at the same 100ms grid point, and the rates at
@@ -18,13 +18,12 @@ windowed rank and does what a percentile() extension would do without
 one.  When only one call is in the set, there is only ever one decile
 per grid point, and the plot is that call's line.
 
-The filter is the WHERE clause itself, handed to sqlite unparsed.  The
-names it may use are the columns of the messages table plus `head`, the
-first name of the model_id chain, so `head = 'anthropic'` narrows to
-every anthropic+* model without listing them.  A name that is not a
-column is sqlite's own error to give, because the filter is argv and
-not a boundary: the same user could open dic.db and ask the same
-question directly.
+`--where` is handed to sqlite unparsed.  The names it may use are the
+columns of the messages table plus `head`, the first name of the
+model_id chain, so `head = 'anthropic'` narrows to every anthropic+*
+model without listing them.  A name that is not a column is sqlite's own
+error to give, because it is argv and not a boundary: the same user
+could open dic.db and ask the same question directly.
 
 See TODO-tps.md.
 """
@@ -202,9 +201,9 @@ def svg(conn, where, width=720, height=360, margin=48):
 
 def csv_readout(conn, env, knobs):  # noqa: ARG001
     """commands.BY_FLAG's --tps-csv: the rates, as text on stdout."""
-    return csv(conn, knobs.get("filter"))
+    return csv(conn, knobs.get("where"))
 
 
 def svg_readout(conn, env, knobs):  # noqa: ARG001
     """commands.BY_FLAG's --tps-svg: the rates, as SVG on stdout."""
-    return svg(conn, knobs.get("filter"))
+    return svg(conn, knobs.get("where"))

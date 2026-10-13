@@ -485,15 +485,14 @@ def dic(prompt,
         tps_csv:      flag(long="--tps-csv", action="bool", group=MODE,
                            mode=True,
                            help="print per-decile output token rates over"
-                                " time, as TSV; --filter narrows the rows"
+                                " time, as TSV; --where narrows the rows"
                            ) = False,
         tps_svg:      flag(long="--tps-svg", action="bool", group=MODE,
                            mode=True,
                            help="draw those rates as an SVG fan of deciles"
-                                " over elapsed time; --filter narrows the rows"
+                                " over elapsed time; --where narrows the rows"
                            ) = False,
-        filter:       flag(long="--filter", metavar="WHERE", env=False,
-                           group=MODE,
+        where:        flag(long="--where", env=False, group=MODE,
                            help="a WHERE clause narrowing the rows a --tps"
                                 " readout includes: the columns of messages,"
                                 " plus head") = None,

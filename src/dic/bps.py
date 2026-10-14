@@ -153,7 +153,7 @@ def clause(model=None, upstream=None, where=None):
     >>> clause(upstream="")
     ('upstream IS NULL', [])
     >>> clause("a", "b", "status = 200")
-    ("(status = 200) AND (model_id = ? OR head = ?) AND upstream = ?", ['a', 'a', 'b'])
+    ('(status = 200) AND (model_id = ? OR head = ?) AND upstream = ?', ['a', 'a', 'b'])
     """
     parts, params = [], []
     if where:

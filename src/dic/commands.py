@@ -16,14 +16,14 @@ The variants of one question -- "how much", asked of a conversation, of a
 session subtree, or as a breakdown -- are one function with one `if`,
 because they are one query over one index.
 """
-import json, time
+import json, sys, time
 
 from dic import bps, client, config
 from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
                        TOOL_STATS, resolve_ref, session_read)
-from dic.tty import DicError, summary
+from dic.tty import DicError, page, pager_command
 
 
 def table(rows):
@@ -70,6 +70,203 @@ def session_cost_tree(conn, name):
         lines.append("\t".join((session, str(n), f"{own:.4f}",
                                 f"{subtree:.4f}")))
     return "".join(line + "\n" for line in lines)
+
+
+# Every header label is padded to this, so the values line up: the same
+# reason git's own Author: and Date: do.
+LABEL_WIDTH = 10
+
+
+def date_line(ns):
+    """A t_start as a log prints its own date: Tue Jun 02 14:23:04 2026.
+
+    Greenwich and never the local zone, so two people reading one log read
+    one date and a doctest can assert it.
+
+    >>> date_line(0)
+    'Thu Jan 01 00:00:00 1970'
+    """
+    return time.strftime("%a %b %d %H:%M:%S %Y", time.gmtime(ns / 1e9))
+
+
+def indent(text, ctx):
+    """A record's body: four spaces in, elided to its own ends when long.
+
+    A prompt pasted from a heredoc and an answer that reasoned for a page
+    are both common, and either one alone pushes every other record off the
+    screen, so what a log shows of one is its first and last ctx["lines"]
+    lines with a marker where the rest was.  ctx["lines"] of None is --full
+    or a single-row preview and never elides.
+
+    >>> indent("a\\nb", {"lines": 10})
+    ['    a', '    b']
+    >>> indent("a\\nb\\nc\\nd\\ne", {"lines": 1})
+    ['    a', '    <... 3 lines elided ...>', '    e']
+    >>> indent("", {"lines": 10})
+    []
+    """
+    if not text:
+        return []
+    lines = text.rstrip("\n").split("\n")
+    keep = ctx["lines"]
+    if keep and len(lines) > 2 * keep:
+        gone = len(lines) - 2 * keep
+        lines = lines[:keep] + [f"<... {gone} lines elided ...>"] + lines[-keep:]
+    return ["    " + line for line in lines]
+
+
+def stat_line(rounds):
+    """The dollars and tokens a turn was billed, summed over its rounds.
+
+    A tool loop is several paid requests for one answer, so what the header
+    reports is the sum of them and not the last round's.  The cache share is
+    of the input, because a cache read that is not measured against what it
+    saved is not a number anybody can act on.
+
+    >>> a = {"cost": 0.001, "tokens_input": 100, "tokens_output": 50,
+    ...      "tokens_cache_read": 0}
+    >>> b = {"cost": 0.002, "tokens_input": 200, "tokens_output": 100,
+    ...      "tokens_cache_read": 900}
+    >>> stat_line([a, b])
+    '$0.0030  in 300  out 150  cache-read 75%'
+    >>> stat_line([a])
+    '$0.0010  in 100  out 50'
+    """
+    cost = sum(row["cost"] or 0 for row in rounds)
+    tin = sum(row["tokens_input"] or 0 for row in rounds)
+    tout = sum(row["tokens_output"] or 0 for row in rounds)
+    cached = sum(row["tokens_cache_read"] or 0 for row in rounds)
+    line = f"${cost:.4f}  in {tin}  out {tout}"
+    if cached:
+        line += f"  cache-read {100 * cached / (cached + tin):.0f}%"
+    return line
+
+
+def graph_lines(lines, prefix):
+    """Every line of a record under one forest column.
+
+    git prefixes every line of a commit, so a reader following one branch
+    down a long log does not have to skip the bodies of every other commit
+    to do it; the node is on the header and a continuation on the rest.
+
+    >>> graph_lines(["a", "b"], "*")
+    ['* a', '| b']
+    >>> graph_lines(["a", "b"], "| *")
+    ['| * a', '| | b']
+    """
+    pad = prefix[:-1] + "|" if prefix.endswith("*") else prefix
+    return [f"{prefix} {lines[0]}"] + [f"{pad} {line}" for line in lines[1:]]
+
+
+def group_turns(rows):
+    """Rows grouped into whole turns: the round-0 row and what continued it.
+
+    A call that used tools is several rows for one answer, chained by
+    prev_mid with round 0 carrying the prompt, and a log that showed them
+    as separate records would say a conversation had more turns than it
+    did.  A row whose chain does not reach a round-0 row -- a --grep that
+    matched a round's answer and not its prompt -- is shown as the head of
+    its own record, because a row that happened is a row to show.
+
+    The rounds are ordered by their own round number, so a turn reads the
+    way it happened however the query that found it ordered the rows.
+
+    >>> rows = [{"mid": "a", "prev_mid": None, "round": 0, "t_start": 1},
+    ...         {"mid": "b", "prev_mid": "a", "round": 1, "t_start": 2},
+    ...         {"mid": "c", "prev_mid": "b", "round": 2, "t_start": 3}]
+    >>> [(head["mid"], [r["mid"] for r in rounds])
+    ...  for head, rounds in group_turns(rows)]
+    [('a', ['a', 'b', 'c'])]
+    >>> heads = [h["mid"] for h, _ in group_turns(
+    ...     [{"mid": "y", "prev_mid": "x", "round": 1, "t_start": 2}])]
+    >>> heads
+    ['y']
+    """
+    by_mid = {row["mid"]: row for row in rows}
+    groups = {}
+    for row in rows:
+        head = row
+        while head["round"] and head["prev_mid"] in by_mid:
+            head = by_mid[head["prev_mid"]]
+        if head["round"]:           # an orphaned round is its own record
+            head = row
+        groups.setdefault(head["mid"], (head, []))[1].append(row)
+    turns = list(groups.values())
+    turns.sort(key=lambda pair: pair[0]["t_start"], reverse=True)
+    for _, rounds in turns:
+        rounds.sort(key=lambda row: row["round"])
+    return turns
+
+
+def format_turn(head, rounds, ctx):
+    """One turn as the lines of a git-log-like record.
+
+    A header block, a blank line, then the prompt and every answer, each
+    elided by indent().  When the turn made one call there is one answer
+    and it is named `Response:`; when it made several -- one per round of a
+    tool loop -- each is named by its round and by the tools that round
+    called, because that is what a reader needs to see about it.
+    """
+    lines = [f"mid {head['mid']}"
+             + (decorations(head, ctx["head"], ctx["here"])
+                if ctx["decorate"] else "")]
+    lines.append(f"{'Model:':<{LABEL_WIDTH}}{head['model_id']}")
+    lines.append(f"{'Date:':<{LABEL_WIDTH}}{date_line(head['t_start'])}")
+    if head["session"] and head["session"] != ctx["here"]:
+        lines.append(f"{'Session:':<{LABEL_WIDTH}}{head['session']}")
+    if head["upstream"]:
+        lines.append(f"{'Upstream:':<{LABEL_WIDTH}}{head['upstream']}")
+    for name, value in ctx.get("extra") or ():
+        lines.append(f"{name:<{LABEL_WIDTH}}{value}")
+    if len(rounds) > 1:
+        lines.append(f"{'Rounds:':<{LABEL_WIDTH}}{len(rounds)}")
+    if ctx["stat"]:
+        lines.append(f"{'Stats:':<{LABEL_WIDTH}}{stat_line(rounds)}")
+    lines.append("")
+    lines.append("Prompt:")
+    lines.extend(indent(head["user"] or "", ctx))
+    if len(rounds) == 1:
+        lines.append("")
+        lines.append("Response:")
+        lines.extend(indent(rounds[0]["response"] or "", ctx))
+    else:
+        for i, row in enumerate(rounds):
+            lines.append("")
+            label = f"Round {i + 1}/{len(rounds)}"
+            tools = json.loads(row["tool_results"] or "[]")
+            if tools:
+                names = ", ".join(sorted({t["name"] for t in tools}))
+                label += f" (tool: {names})"
+            lines.append(label + ":")
+            lines.extend(indent(row["response"] or "", ctx))
+    return lines
+
+
+def log_long(rows, ctx, graph=False):
+    """The whole log in git log's long shape: one record per turn, newest first.
+
+    The forest is drawn per record and not per row, so a turn that made
+    three calls is one node -- the branch a reader follows is a branch of
+    the conversation, and a tool loop is not three.  A draw that is only
+    the columns meeting carries no record and is a line of its own.
+    """
+    turns = group_turns(rows)
+    if not graph:
+        return "".join("\n".join(format_turn(head, rounds, ctx)) + "\n\n"
+                       for head, rounds in turns).rstrip("\n") + "\n"
+    by_mid = {head["mid"]: (head, rounds) for head, rounds in turns}
+    heads = [dict(head, prev_mid=(turns[i + 1][0]["mid"]
+                                  if i + 1 < len(turns) else None))
+             for i, (head, _) in enumerate(turns)]
+    blocks = []
+    for prefix, row in graph_prefixes(heads):
+        if row is None:
+            blocks.append(prefix)
+            continue
+        head, rounds = by_mid[row["mid"]]
+        blocks.extend(graph_lines(format_turn(head, rounds, ctx), prefix))
+        blocks.append("")
+    return "\n".join(blocks).rstrip("\n") + "\n"
 
 
 def prompt_line(text, width=60):

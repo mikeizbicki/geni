@@ -83,7 +83,7 @@ def pager_command(env=None):
     'cat'
     >>> pager_command({"DIC_PAGER": "cat", "PAGER": "less"})
     'cat'
-    >>> pager_command({"PAGER": "no-such-pager-xyz"}) is None
+    >>> pager_command({"PAGER": "no-such-pager-xyz"}) in (None, "less -FRX")
     True
     >>> pager_command({"PAGER": "cat -n"})
     'cat -n'

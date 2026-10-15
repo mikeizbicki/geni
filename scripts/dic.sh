@@ -277,8 +277,8 @@ _dic_complete() {
                               -m --model -s --system -a --attachment \
                               -x --extract -f --force -c --continue \
                               --mid --from \
-                              --graph --all --session --limit \
-                              --decorate --format --grep -S \
+                              --graph --all --session --limit -n \
+                              --decorate --oneline --format --grep -S \
                               --cache --tools --path --mime-type \
                               --pv-thinking --no-pv-thinking \
                               --clipboard --no-clipboard --record" -- "$cur") )

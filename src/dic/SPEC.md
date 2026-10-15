@@ -53,7 +53,7 @@ call's prompt.
 | command | → library function | options |
 |---|---|---|
 | `dic [PROMPT]` | `client.dic` | `-m/--model` `-s/--system` `--prepend-prompt*` `-a/--attachment*` `-o/--option*` `--cache=off\|TTL` `--tools*` `-x/--extract` `-c/--continue` `--mid REF` `--record=bps` `--pv-thinking/--no-…` `--pv-response/--no-…` `--clipboard/--no-…` `--path FILE` `-f/--force` `--mime-type TYPE` `--print=curl\|json` |
-| `dic log` | `commands.log` | `--limit N` `--all` `--session [NAME]` `--from REF` `--graph` |
+| `dic log` | `commands.log` | `-n N` `--all` `--session [NAME]` `--from REF` `--graph` `--oneline` `--format FMT` `--decorate` `--grep TEXT` `-S TEXT` |
 | `dic stats` | `commands.stats` | `-m/--model PAT` `--upstreams` |
 | `dic models` | `commands.models` | `--aliases` |
 | `dic cost` | `commands.cost` | `--session NAME` `--tree` `--of REF` |
@@ -580,6 +580,11 @@ therefore not pickable.
 
 Anything else is an error, because a specifier that is dropped is a log that
 reads as if nothing happened.  The default is `%h%D %a %m %s`.
+
+`--oneline` is `--format='%h %s'` under the name every git user already
+knows: the short mid and the prompt, with `--decorate`'s mark inline when
+there is one.  Naming both it and `--format` at once is an error, because
+they are two answers to what a row prints.
 
 `--decorate` makes `%D` ` (HEAD)` on the message this session's pointer holds
 -- the one `-c` would resume -- and ` (session:NAME)` on a row another shell

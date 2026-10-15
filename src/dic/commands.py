@@ -212,12 +212,26 @@ def graph_prefixes(rows):
     return out
 
 
+# Git's own --oneline: the short mid and the subject, and --decorate's mark
+# inline when there is one.  %D writes nothing -- not even its space -- when
+# it has nothing to say, so this is git's `%h %s` until a caller asks for a
+# decoration, and a caller who never asks never sees a difference.
+ONELINE = "%h%D %s"
+
 # The default format: git's --oneline, plus the two things a dic row carries
 # that a git commit does not -- the model that answered and how long ago.
 # The leading space of %D is git's own convention: a decoration is written
 # with it and an absent one writes nothing, so a format puts %D next to its
 # neighbour and gets one space when there is something to separate.
 DEFAULT_LOG_FORMAT = "%h%D %a %m %s"
+
+# What column two says, in words, for each format dic ships.  A format the
+# caller wrote is not here, and it does not need to be: the format itself
+# is printed in its place, which is true even when it is not readable, and
+# a header that guessed at a caller's format would be wrong about the one
+# thing a header is for.
+HEADERS = {DEFAULT_LOG_FORMAT: "when model prompt",
+           ONELINE: "subject"}
 
 
 def decorations(row, head, here):
@@ -348,17 +362,23 @@ def log_table(rows, graph=False, fmt=None, decorate=False, head=None,
     than of the line, because the mid is what a caller pastes back and it
     must be reachable however the forest is drawn.
 
-    The header names column two by the format that made it, which is the one
-    reading of the flag that cannot go stale: the header *is* the flag.
+    The header names column two: the words dic wrote for the formats it
+    ships, and the format itself for one the caller wrote, which is true
+    even when it is not readable.  A header that guessed at a caller's
+    format would be wrong about the one thing a header is for.
 
     >>> log_table([])
-    'mid\t%h%D %a %m %s\n'
+    'mid\twhen model prompt\n'
+    >>> log_table([], fmt=ONELINE)
+    'mid\tsubject\n'
+    >>> log_table([], fmt="%H")
+    'mid\t%H\n'
     >>> log_table([], graph=True, fmt="%H %s")
     'mid\tgraph %H %s\n'
     """
     fmt = DEFAULT_LOG_FORMAT if fmt is None else fmt
     ctx = {"head": head, "here": here, "decorate": decorate}
-    lines = ["mid\t" + ("graph " if graph else "") + fmt]
+    lines = ["mid\t" + ("graph " if graph else "") + HEADERS.get(fmt, fmt)]
     for prefix, row in (graph_prefixes(rows) if graph
                         else [(None, row) for row in rows]):
         if row is None:             # a merge line: a graph and nothing else
@@ -488,7 +508,7 @@ def cost(conn, env, *,
 
 
 def log(conn, env, *,
-        limit: flag(metavar="N", type=int, env=False,
+        limit: flag(short="-n", metavar="N", type=int, env=False,
                     help="how many rows --log prints (default 200)") = None,
         all_: flag(long="--all", action="bool", env=False,
                    help="list every message, not just this session") = False,
@@ -499,14 +519,18 @@ def log(conn, env, *,
                     help="list from REF instead of the session pointer") = None,
         graph: flag(long="--graph", action="bool", env=False,
                     help="draw the forest at the head of each row") = False,
+        oneline: flag(long="--oneline", action="bool", env=False,
+                      help="shorthand for --format='%%h %%s': the short"
+                           " mid and the prompt, as `git log --oneline`"
+                           " has it") = False,
         format_: flag(long="--format", metavar="FMT", env=False,
-                      help="what each row says, in git's %-syntax: %H the"
-                           " full mid, %h its prefix, %s the prompt, %b the"
-                           " answer, %a the age, %m the model, %u the"
-                           " upstream, %S the session, %c the cost, %t the"
-                           " tokens, %D the decorations") = None,
+                      help="what each row says, in git's %%-syntax: %%H the"
+                           " full mid, %%h its prefix, %%s the prompt,"
+                           " %%b the answer, %%a the age, %%m the model,"
+                           " %%u the upstream, %%S the session, %%c the"
+                           " cost, %%t the tokens, %%D the decorations") = None,
         decorate: flag(long="--decorate", action="bool", env=False,
-                       help="fill %D with (HEAD) on the message -c would"
+                       help="fill %%D with (HEAD) on the message -c would"
                             " resume and (session:NAME) on any other row") = False,
         grep: flag(long="--grep", metavar="TEXT", env=False,
                    help="only rows whose prompt contains TEXT") = None,
@@ -520,7 +544,9 @@ def log(conn, env, *,
     --all scopes it to the whole database; a bare --session is this shell's
     own session.  --grep and -S narrow either scope rather than replacing
     it, and -S is the one that answers whether a string ever reached the
-    model rather than what was asked for.
+    model rather than what was asked for.  --oneline and --format are the
+    two ways to say what a row prints, and naming both is an error rather
+    than one of them quietly winning.
     """
     mid = (resolve_ref(conn, from_, env) if from_
            else session_read(env))
@@ -528,9 +554,13 @@ def log(conn, env, *,
     if scope == "":
         scope = env.get("DIC_SESSION", "global")
     where, params = log_where(grep, pickaxe)
+    if oneline and format_:
+        raise DicError("pick one: --oneline or --format")
     return log_table(log_rows(conn, mid, limit or 200, all_, scope,
                               where, params),
-                     graph=graph, fmt=format_, decorate=decorate,
+                     graph=graph,
+                     fmt=format_ or (ONELINE if oneline else None),
+                     decorate=decorate,
                      head=session_read(env),
                      here=env.get("DIC_SESSION", "global"))
 

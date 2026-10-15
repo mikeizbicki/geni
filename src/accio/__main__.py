@@ -4,15 +4,17 @@
 The whole CLI: turn argv into one traversal, select from it, and render the
 result to stdout.
 
-    accio/traverse.py   the walk, the ancestor context, the nodes
-    accio/select.py     which of them survive; today all of them
+    accio/traverse.py   the walk, the ancestor context, the chunks
+    accio/select.py     which of them survive -- all, or a rag ranking
     accio/render.py     the one format, and its projections
+    accio/index.py      the sqlite file the ranking reads
     accio/SPEC.md       what the program is for
 """
 import argparse, os, sys
 
+from accio import index
 from accio.traverse import DEFAULT_IGNORES, DEFAULT_READMES, traverse
-from accio.select import select
+from accio.select import select, rag
 from accio.render import FORMATS
 
 
@@ -37,6 +39,18 @@ def parser():
     p.add_argument("--no-gitignore", action="store_true",
                    help="do not consult git: summon what .gitignore"
                         " excludes, and walk into submodules")
+    p.add_argument("--rag", metavar="QUERY", default=None,
+                   help="rank the selection by relevance to QUERY"
+                        " (bm25; free)")
+    p.add_argument("--refresh", action="store_true",
+                   help="rebuild the index from the walk; free")
+    p.add_argument("--prune", action="store_true",
+                   help="delete the index and exit")
+    p.add_argument("--explain", action="store_true",
+                   help="print what would be indexed and what is")
+    p.add_argument("--index-dir", metavar="DIR", default=None,
+                   help="where the index lives; $ACCIO_INDEX_DIR is"
+                        " the default")
     p.add_argument("--format", choices=tuple(FORMATS), default=None,
                    metavar="FMT",
                    help="how to encode the selection:"
@@ -60,19 +74,41 @@ def main(argv=None):
     readmes = () if args.no_readme else tuple(
         DEFAULT_READMES if args.readme is None else args.readme)
     patterns = DEFAULT_IGNORES + tuple(args.ignore or ())
-    fmt = args.format or ("paths" if args.paths_only
-                          else "wc" if args.wc else "prompt")
-    chunks = select(traverse(args.path, readmes, patterns,
-                             not args.no_gitignore))
+    gitignore = not args.no_gitignore
     try:
-        FORMATS[fmt](chunks, sys.stdout)
-        sys.stdout.flush()
+        return run(args, readmes, patterns, gitignore)
     except BrokenPipeError:
         # `accio src/ | head` closes the pipe early, which is the reader's
         # privilege and not a failure to report; stdout is pointed at
         # /dev/null as well, so the interpreter's own flush at exit is quiet
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0
+
+
+def run(args, readmes, patterns, gitignore):
+    """Dispatch: the index verbs first, then the walk or the rag ranking."""
+    if args.prune:
+        index.prune(args.path, args.index_dir)
+        return 0
+    if args.explain:
+        index.explain(args.path, readmes, patterns, gitignore,
+                      args.index_dir, sys.stdout)
+        sys.stdout.flush()
+        return 0
+    if args.refresh and args.rag is None:
+        conn = index.open_(args.path, args.index_dir)
+        index.refresh(conn, args.path, readmes, patterns, gitignore,
+                      force=True)
+        return 0
+    if args.rag is not None:
+        chunks = rag(args.rag, args.path, readmes, patterns, gitignore,
+                     args.index_dir, force=args.refresh)
+    else:
+        chunks = select(traverse(args.path, readmes, patterns, gitignore))
+    fmt = args.format or ("paths" if args.paths_only
+                          else "wc" if args.wc else "prompt")
+    FORMATS[fmt](chunks, sys.stdout)
+    sys.stdout.flush()
     return 0
 
 

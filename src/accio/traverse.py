@@ -285,6 +285,41 @@ def ancestors(path, readmes=DEFAULT_READMES):
     return out
 
 
+def canvassed(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
+              gitignore=True):
+    """Every path the walk reads, in walk order, deduped, context included.
+
+    `traverse` reads and chunks these; the index stat()s them instead,
+    because re-chunking a file whose (mtime, size) has not changed is
+    wall clock spent for nothing.  Same walk, same dedup, same order --
+    the two are the same list of files, and this is where it is written
+    down so both can see it.
+
+    >>> import tempfile
+    >>> d = tempfile.mkdtemp()
+    >>> os.makedirs(d + "/a")
+    >>> for name in ("README.md", "a/README.md", "a/x.py"):
+    ...     open(os.path.join(d, name), "w").close()
+    >>> [os.path.relpath(p, d) for p in canvassed([d + "/a"])
+    ...  if p.startswith(d)]
+    ['README.md', 'a/README.md', 'a/x.py']
+    >>> import shutil; shutil.rmtree(d)
+    """
+    seen = set()
+    for path in files(paths, patterns, gitignore):
+        for context in ancestors(path, readmes):
+            key = os.path.normpath(context)
+            if key in seen or not kept(context, patterns, gitignore):
+                continue
+            seen.add(key)
+            yield key
+        key = os.path.normpath(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield key
+
+
 def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
              gitignore=True):
     """Yields the chunks of all that is to be rendered, context once.
@@ -315,20 +350,7 @@ def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> import shutil; shutil.rmtree(d)
     """
-    seen = set()
-    for path in files(paths, patterns, gitignore):
-        for context in ancestors(path, readmes):
-            key = os.path.normpath(context)
-            if key in seen or not kept(context, patterns, gitignore):
-                continue
-            seen.add(key)
-            text = read(context)
-            if text is not None:
-                yield from lines(key, text)
-        key = os.path.normpath(path)
-        if key in seen:
-            continue
-        seen.add(key)
+    for path in canvassed(paths, readmes, patterns, gitignore):
         text = read(path)
         if text is not None:
-            yield from lines(key, text)
+            yield from lines(path, text)

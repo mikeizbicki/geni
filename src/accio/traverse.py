@@ -305,6 +305,12 @@ def canvassed(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     ['README.md', 'a/README.md', 'a/x.py']
     >>> import shutil; shutil.rmtree(d)
     """
+    # A fresh answer per call: the two caches below are for the walk
+    # that is about to happen and not for the process that happened to
+    # run first, so a file written between two walks is seen by the
+    # second one.
+    _ROOTS.clear()
+    _ALLOWED.clear()
     seen = set()
     for path in files(paths, patterns, gitignore):
         for context in ancestors(path, readmes):

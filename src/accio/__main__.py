@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """accio - summon the contents of files into one prompt.  See SPEC.md.
 
-The whole CLI: turn argv into one bundle() call and write it to stdout.
+The whole CLI: turn argv into one traversal, select from it, and render the
+result to stdout.
 
-    accio/gather.py     the walk, the ancestor context, the format
+    accio/traverse.py   the walk, the ancestor context, the nodes
+    accio/select.py     which of them survive; today all of them
+    accio/render.py     the one format, and its projections
     accio/SPEC.md       what the program is for
 """
 import argparse, os, sys
 
-from accio.gather import (DEFAULT_IGNORES, DEFAULT_READMES, bundle,
-                          bundle_paths, render, wc)
+from accio.traverse import DEFAULT_IGNORES, DEFAULT_READMES, traverse
+from accio.select import select
+from accio.render import paths, render, wc
 
 
 def parser():
@@ -52,17 +56,15 @@ def main(argv=None):
     readmes = () if args.no_readme else tuple(
         DEFAULT_READMES if args.readme is None else args.readme)
     patterns = DEFAULT_IGNORES + tuple(args.ignore or ())
+    nodes = select(traverse(args.path, readmes, patterns,
+                            not args.no_gitignore))
     try:
         if args.paths_only:
-            for path in bundle_paths(args.path, readmes, patterns,
-                                     not args.no_gitignore):
-                sys.stdout.write(f"{path}\n")
+            paths(nodes, sys.stdout)
         elif args.wc:
-            wc(bundle(args.path, readmes, patterns, not args.no_gitignore),
-               sys.stdout)
+            wc(nodes, sys.stdout)
         else:
-            render(bundle(args.path, readmes, patterns, not args.no_gitignore),
-                   sys.stdout)
+            render(nodes, sys.stdout)
         sys.stdout.flush()
     except BrokenPipeError:
         # `accio src/ | head` closes the pipe early, which is the reader's

@@ -1,7 +1,7 @@
-"""Selection: which of the traversed nodes survive.
+"""Selection: which of the traversed chunks survive.
 
-Today it is the identity -- every node the walk yields is a node that is
-rendered, which is why `accio src/` feels like no flag at all.  The
+Today it is the identity -- every chunk the walk yields is a chunk that
+is rendered, which is why `accio src/` feels like no flag at all.  The
 shapes this module will hold are the lenses the SPEC names, and the seam
 is here so that each one is additive rather than a second pipeline.
 """

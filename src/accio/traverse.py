@@ -1,4 +1,4 @@
-"""Traversal: the files, the context above them, and the nodes they make.
+"""Traversal: the files, the context above them, and the chunks they make.
 
 `accio` walks the paths it is given, skips what cannot be a prompt, and
 yields each file under its own path so that whoever reads the result can
@@ -18,7 +18,8 @@ See SPEC.md.
     accio a.py b.py           two files, plus the READMEs above them
 """
 import fnmatch, os, subprocess
-from typing import NamedTuple
+
+from accio.extract import lines
 
 # The names looked for in every directory above a summoned file, in the
 # order they are tried.  A README states what a subtree is and an AGENTS
@@ -42,17 +43,6 @@ SNIFF = 8192
 # tree and neither should cost a subprocess for every file in it.
 _ROOTS = {}
 _ALLOWED = {}
-
-
-class Node(NamedTuple):
-    """One thing to be rendered: a file, or a context file above one.
-
-    `path` is the normalized key a run deduplicates on, not the spelling
-    the walk happened to build, so `accio .` and `accio ./` print one tree
-    and a path named twice is summoned once.
-    """
-    path: str
-    text: str
 
 
 def ignored(name, patterns=DEFAULT_IGNORES):
@@ -297,11 +287,11 @@ def ancestors(path, readmes=DEFAULT_READMES):
 
 def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
              gitignore=True):
-    """Yields a Node for all that is to be rendered, context once.
+    """Yields the chunks of all that is to be rendered, context once.
 
-    The path on a node is the normalized key the run deduplicates on, not
-    the spelling the walk happened to build, so `accio .` and `accio ./`
-    print one tree and a path named twice is summoned once.
+    The path on a chunk is the normalized key the run deduplicates on,
+    not the spelling the walk happened to build, so `accio .` and
+    `accio ./` print one tree and a path named twice is summoned once.
 
     A context file is yielded the first time some file needs it and never
     again, so the root README arrives with the first file beneath it and
@@ -315,13 +305,13 @@ def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     >>> for name, text in (("README.md", "root\\n"), ("a/README.md", "sub\\n"),
     ...                    ("a/x.py", "x = 1\\n"), ("a/y.py", "y = 2\\n")):
     ...     _ = open(os.path.join(d, name), "w").write(text)
-    >>> [(os.path.relpath(n.path, d), n.text) for n in traverse([d + "/a"])
-    ...  if n.path.startswith(d)]
+    >>> [(os.path.relpath(c.path, d), c.text) for c in traverse([d + "/a"])
+    ...  if c.path.startswith(d)]
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> # the same path named twice is still one entry:
-    >>> [(os.path.relpath(n.path, d), n.text)
-    ...  for n in traverse([d + "/a", d + "/README.md"])
-    ...  if n.path.startswith(d)]
+    >>> [(os.path.relpath(c.path, d), c.text)
+    ...  for c in traverse([d + "/a", d + "/README.md"])
+    ...  if c.path.startswith(d)]
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> import shutil; shutil.rmtree(d)
     """
@@ -334,11 +324,11 @@ def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
             seen.add(key)
             text = read(context)
             if text is not None:
-                yield Node(key, text)
+                yield from lines(key, text)
         key = os.path.normpath(path)
         if key in seen:
             continue
         seen.add(key)
         text = read(path)
         if text is not None:
-            yield Node(key, text)
+            yield from lines(key, text)

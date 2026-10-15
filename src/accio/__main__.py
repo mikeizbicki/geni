@@ -56,15 +56,15 @@ def main(argv=None):
     readmes = () if args.no_readme else tuple(
         DEFAULT_READMES if args.readme is None else args.readme)
     patterns = DEFAULT_IGNORES + tuple(args.ignore or ())
-    nodes = select(traverse(args.path, readmes, patterns,
-                            not args.no_gitignore))
+    chunks = select(traverse(args.path, readmes, patterns,
+                             not args.no_gitignore))
     try:
         if args.paths_only:
-            paths(nodes, sys.stdout)
+            paths(chunks, sys.stdout)
         elif args.wc:
-            wc(nodes, sys.stdout)
+            wc(chunks, sys.stdout)
         else:
-            render(nodes, sys.stdout)
+            render(chunks, sys.stdout)
         sys.stdout.flush()
     except BrokenPipeError:
         # `accio src/ | head` closes the pipe early, which is the reader's

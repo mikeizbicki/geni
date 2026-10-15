@@ -20,6 +20,9 @@ imported inside `flags()`, and `argparse` only by `parser()`.
 import json
 
 # The --help sections.
+# CALL is the default group of every flag and the heading the call itself
+# uses; a readout's flags are not API options, and are listed under the
+# command's own name instead.
 CALL = "API request options"
 OUTPUT = "output postprocessing"
 DEBUG = "debug"
@@ -161,7 +164,10 @@ def parser():
     """The argparse parser generated from the command functions' signatures.
 
     Each command is a subparser and the globals are on a parent parser every
-    subparser shares, so `-v` works wherever it is typed.  The command name
+    subparser shares, so `-v` works wherever it is typed.  The --help
+    sections are made there too, in the order they are to print, because a
+    subparser takes its parent's groups during the parents= merge and
+    anything it makes afterwards is listed below them.  The command name
     must be argv[0]: argparse's subparsers reject an unknown first word,
     which is why the entry point pre-dispatches and prepends "call" when the
     first word is not a command name.
@@ -195,10 +201,16 @@ def parser():
                 type=f.type, metavar=f.metavar or None,
                 action="append" if f.action == "append" else "store")
 
+    # Every heading is made on the parent, in the order it is to print: a
+    # subparser takes its parent's groups during the parents= merge, which
+    # runs before its own loop can make anything, so the order here is the
+    # order everywhere.  A group nothing is added to prints nothing at all.
     parent = argparse.ArgumentParser(add_help=False)
+    groups = {title: parent.add_argument_group(title)
+              for title in (CALL, OUTPUT, DEBUG)}
     for name, f in flags(dic).items():
         if f.command == GLOBAL:
-            add(parent, name, f)
+            add(groups[f.group], name, f)
 
     p = argparse.ArgumentParser(prog="dic", description="talk to a chat model",
                                 parents=[parent])
@@ -210,14 +222,22 @@ def parser():
                                help="the prompt, or stdin")
         if command == "show":
             where.add_argument("ref", nargs="?", help="the message to print")
-        sections = {}
+        # the merge above already made the parent's groups here, so they are
+        # found by title: a second group of the same name would print the
+        # heading twice, because argparse does not look before it appends
+        sections = {group.title: group for group in where._action_groups}
+        # CALL is the default group of every flag, so a flag that still names
+        # it belongs under this command's own heading rather than under the
+        # API call's
+        own = CALL if command == "call" else command
         for name, f in flags(func).items():
             if f.command == GLOBAL:
                 continue
-            target = where
-            if f.group:
-                if f.group not in sections:
-                    sections[f.group] = where.add_argument_group(f.group)
-                target = sections[f.group]
-            add(target, name, f)
+            heading = own if f.group == CALL else f.group
+            if not heading:     # group="" is a flag with no section of its own
+                add(where, name, f)
+                continue
+            if heading not in sections:
+                sections[heading] = where.add_argument_group(heading)
+            add(sections[heading], name, f)
     return p

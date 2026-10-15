@@ -35,7 +35,7 @@ embedding cost, and a query plan a human can read.
 import array, contextlib, hashlib, json, math, os, sqlite3, subprocess
 
 from accio.extract import Chunk, by_extension
-from accio.traverse import canvassed, read
+from accio.traverse import _readme_ancestor, canvassed, read
 
 
 SCHEMA = """
@@ -178,6 +178,7 @@ def refresh(conn, paths, readmes, patterns, gitignore, force=False):
         wanted[path] = (st.st_mtime, st.st_size)
     known = {row["path"]: (row["mtime"], row["size"])
              for row in conn.execute("SELECT path, mtime, size FROM files")}
+    readme_names = frozenset(readmes)
     for path, stamp in wanted.items():
         if not force and known.get(path) == stamp:
             continue
@@ -185,7 +186,9 @@ def refresh(conn, paths, readmes, patterns, gitignore, force=False):
         if text is None:
             continue
         drop_file(conn, path)
-        for chunk in by_extension(path, text):
+        chunks = list(by_extension(path, text))
+        _stamp_parent(chunks, path, readme_names, readmes)
+        for chunk in chunks:
             add_chunk(conn, chunk)
         conn.execute(
             "INSERT INTO files(path, mtime, size) VALUES(?,?,?)"
@@ -197,6 +200,45 @@ def refresh(conn, paths, readmes, patterns, gitignore, force=False):
             drop_file(conn, path)
             conn.execute("DELETE FROM files WHERE path=?", (path,))
     conn.commit()
+
+
+def _stamp_parent(chunks, path, readme_names, readmes):
+    """Record the innermost ancestor README on a file's root chunk.
+
+    The path is stored and not the chunk id, so a README whose own text
+    changes does not need every file beneath it re-chunked for the edge
+    to survive: pagerank resolves the path to whichever chunk id the
+    README has now, and a README that is gone is simply no edge.  A
+    README is not stamped with itself.
+    """
+    if not chunks or os.path.basename(path) in readme_names:
+        return
+    parent = _readme_ancestor(path, readmes)
+    if parent is None:
+        return
+    meta = dict(chunks[0].meta)
+    meta["parent_path"] = parent
+    chunks[0] = chunks[0]._replace(meta=meta)
+
+
+def all_chunks(conn):
+    """Every chunk in the index, in (path, chunk_id) order.
+
+    The pagerank graph needs the parents as much as the children, and a
+    parent can be a chunk no query matched -- a README with no BM25
+    hit is still a source of relevance for the files beneath it -- so
+    the graph is drawn over the whole index and not the fused list.
+    """
+    for row in conn.execute(
+            "SELECT id, path, breadcrumb, text, meta FROM chunks"
+            " ORDER BY path, id"):
+        meta = json.loads(row["meta"])
+        yield Chunk(path=row["path"], chunk_id=row["id"],
+                    breadcrumb=row["breadcrumb"], text=row["text"],
+                    kind=meta.pop("kind", "file"),
+                    ord=meta.pop("ord", 0),
+                    parent=meta.pop("parent", None),
+                    meta=meta)
 
 
 def add_chunk(conn, chunk):

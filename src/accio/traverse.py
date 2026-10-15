@@ -285,6 +285,23 @@ def ancestors(path, readmes=DEFAULT_READMES):
     return out
 
 
+def _readme_ancestor(path, readmes):
+    """The innermost ancestor README of a path, or None.
+
+    The walk that a file is written for the tree it lives in, and this
+    is the file the SPEC calls `the file it was summoned above`: the
+    README of `a/b/` before the README of `a/` before the README of
+    `.`, with the file itself never counted as its own ancestor.
+    """
+    here = os.path.normpath(path)
+    for directory in reversed(ancestor_dirs(path)):
+        for name in readmes:
+            candidate = os.path.normpath(os.path.join(directory, name))
+            if candidate != here and os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def canvassed(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
               gitignore=True):
     """Every path the walk reads, in walk order, deduped, context included.
@@ -356,7 +373,18 @@ def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> import shutil; shutil.rmtree(d)
     """
+    readme_names = frozenset(readmes)
     for path in canvassed(paths, readmes, patterns, gitignore):
         text = read(path)
-        if text is not None:
-            yield from by_extension(path, text)
+        if text is None:
+            continue
+        chunks = list(by_extension(path, text))
+        if not chunks:
+            continue
+        if os.path.basename(path) not in readme_names:
+            parent = _readme_ancestor(path, readmes)
+            if parent is not None:
+                meta = dict(chunks[0].meta)
+                meta["parent_path"] = parent
+                chunks[0] = chunks[0]._replace(meta=meta)
+        yield from chunks

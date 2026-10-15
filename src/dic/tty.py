@@ -13,6 +13,8 @@ import base64, os, shlex, shutil, subprocess, sys, time
 BLUE = "\033[38;5;39m"       # model output
 ORANGE = "\033[38;5;208m"    # the cost summary
 RED = "\033[31m"             # errors
+YELLOW = "\033[33m"          # a message id, as git colors a commit hash
+GREEN = "\033[32m"           # a decoration, as git colors a ref
 THINKING = "\033[38;5;245m"             # reasoning: faded gray on the usual background
 RESET = "\033[0m"
 

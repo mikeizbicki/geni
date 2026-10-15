@@ -23,7 +23,8 @@ from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
                        TOOL_STATS, resolve_ref, session_read)
-from dic.tty import DicError, page, pager_command
+from dic.tty import (GREEN, RESET, YELLOW, DicError, page, pager_command,
+                     use_color)
 
 
 def table(rows):
@@ -113,6 +114,23 @@ def indent(text, ctx):
         gone = len(lines) - 2 * keep
         lines = [*lines[:keep], f"<... {gone} lines elided ...>", *lines[-keep:]]
     return ["    " + line for line in lines]
+
+
+def paint(text, color, ctx):
+    """text in color, when the caller's stream has one.
+
+    The same renderer draws a log on a terminal and a log into a picker,
+    so colour is conditional here for the same reason it is in the client:
+    a piped row is clean text and a terminal row is coloured.
+
+    >>> paint("abc", YELLOW, {"color": True})
+    '\x1b[33mabc\x1b[0m'
+    >>> paint("abc", YELLOW, {})
+    'abc'
+    >>> paint("", YELLOW, {"color": True})
+    ''
+    """
+    return f"{color}{text}{RESET}" if ctx.get("color") and text else text
 
 
 def stat_line(rounds):
@@ -207,8 +225,8 @@ def format_turn(head, rounds, ctx):
     tool loop -- each is named by its round and by the tools that round
     called, because that is what a reader needs to see about it.
     """
-    lines = [f"mid {head['mid']}"
-             + (decorations(head, ctx["head"], ctx["here"])
+    lines = [f"mid {paint(head['mid'], YELLOW, ctx)}"
+             + (paint(decorations(head, ctx["head"], ctx["here"]), GREEN, ctx)
                 if ctx["decorate"] else "")]
     lines.append(f"{'Model:':<{LABEL_WIDTH}}{head['model_id']}")
     lines.append(f"{'Date:':<{LABEL_WIDTH}}{date_line(head['t_start'])}")
@@ -460,8 +478,8 @@ def decorations(row, head, here):
 # format string with a typo in it must not read as a quiet log: the reader
 # would be reading the wrong day's work and would never see that they were.
 SPECIFIERS = {
-    "H": lambda row, _: row["mid"],
-    "h": lambda row, _: row["mid"][:10],
+    "H": lambda row, ctx: paint(row["mid"], YELLOW, ctx),
+    "h": lambda row, ctx: paint(row["mid"][:10], YELLOW, ctx),
     "s": lambda row, _: prompt_line(row["user"]),
     "b": lambda row, _: prompt_line(row["response"]),
     "a": lambda row, _: ago(row["t_start"]),
@@ -470,7 +488,8 @@ SPECIFIERS = {
     "S": lambda row, _: row["session"] or "",
     "c": lambda row, _: "" if row["cost"] is None else f"${row['cost']:.4f}",
     "t": lambda row, _: str(row["tokens"] or 0),
-    "D": lambda row, ctx: (decorations(row, ctx["head"], ctx["here"])
+    "D": lambda row, ctx: (paint(decorations(row, ctx["head"], ctx["here"]),
+                                 GREEN, ctx)
                            if ctx["decorate"] else ""),
 }
 
@@ -549,7 +568,7 @@ def log_where(grep=None, pickaxe=None):
 
 
 def log_table(rows, graph=False, fmt=None, decorate=False, head=None,
-              here="global"):
+              here="global", color=False):
     r"""The rows of --log: each row's mid, a tab, then the format expanded.
 
     Column one is the mid, so a picker hides it with --with-nth=2.. and
@@ -574,7 +593,7 @@ def log_table(rows, graph=False, fmt=None, decorate=False, head=None,
     'mid\tgraph %H %s\n'
     """
     fmt = DEFAULT_LOG_FORMAT if fmt is None else fmt
-    ctx = {"head": head, "here": here, "decorate": decorate}
+    ctx = {"head": head, "here": here, "decorate": decorate, "color": color}
     lines = ["mid\t" + ("graph " if graph else "") + HEADERS.get(fmt, fmt)]
     for prefix, row in (graph_prefixes(rows) if graph
                         else [(None, row) for row in rows]):
@@ -728,12 +747,15 @@ def log(conn, env, *,
         raise DicError("pick one: --oneline or --format")
     rows = log_rows(conn, mid, limit or 200, all_, scope, where, params)
     here, head = env.get("DIC_SESSION", "global"), session_read(env)
+    color = use_color(sys.stdout, env)
     if format_ is not None or oneline:
         return log_table(rows, graph=graph,
                          fmt=format_ or (ONELINE if oneline else None),
-                         decorate=decorate, head=head, here=here)
+                         decorate=decorate, head=head, here=here,
+                         color=color)
     ctx = {"head": head, "here": here, "decorate": decorate, "stat": stat,
-           "full": full, "lines": None if full else (lines or 10)}
+           "full": full, "lines": None if full else (lines or 10),
+           "color": color}
     text = log_long(rows, ctx, graph=graph)
     command = None if no_pager or not sys.stdout.isatty() else pager_command(env)
     if command:
@@ -775,7 +797,7 @@ def show(conn, env, ref=None):
     ctx = {"head": session_read(env),
            "here": env.get("DIC_SESSION", "global"),
            "decorate": True, "stat": True, "full": True, "lines": None,
-           "extra": extra}
+           "extra": extra, "color": use_color(sys.stdout, env)}
     return "\n".join(format_turn(row, [row], ctx)) + "\n"
 
 

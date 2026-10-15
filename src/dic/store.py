@@ -209,25 +209,33 @@ SELECT model_id, upstream, count(*) AS n, sum(status <> 200) AS errors,
 # `{where}` is spliced by log_rows and holds only its two bound filters, and
 # it is AND-ed with the scope rather than replacing it, so -S can never widen
 # what --all or --session narrowed.
+# `round` and `tool_results` are what let the long format show a turn that
+# called tools as one record with a block per round, and the three token
+# columns are what --stat sums, so the renderer never reads a row twice.
 LOG = """
-WITH RECURSIVE chain(mid, prev_mid, t_start, model_id, user, status, usage,
-                     response, session, upstream, cost, error) AS (
-    SELECT mid, prev_mid, t_start, model_id, user, status, usage,
-           response, session, upstream, cost, error
+WITH RECURSIVE chain(mid, prev_mid, round, t_start, model_id, user, status,
+                     usage, response, session, upstream, cost, error,
+                     tool_results, tokens_input, tokens_output,
+                     tokens_cache_read) AS (
+    SELECT mid, prev_mid, round, t_start, model_id, user, status, usage,
+           response, session, upstream, cost, error, tool_results,
+           tokens_input, tokens_output, tokens_cache_read
       FROM messages WHERE mid = ?
   UNION ALL
-    SELECT m.mid, m.prev_mid, m.t_start, m.model_id, m.user, m.status, m.usage,
-           m.response, m.session, m.upstream, m.cost, m.error
+    SELECT m.mid, m.prev_mid, m.round, m.t_start, m.model_id, m.user, m.status,
+           m.usage, m.response, m.session, m.upstream, m.cost, m.error,
+           m.tool_results, m.tokens_input, m.tokens_output,
+           m.tokens_cache_read
       FROM messages m JOIN chain c ON m.mid = c.prev_mid)
-SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
-       upstream, cost, error,
+SELECT *, 
        coalesce((SELECT sum(value) FROM json_each(usage)), 0) AS tokens
   FROM chain WHERE {where} ORDER BY t_start DESC LIMIT ?
 """
 
 LOG_ALL = """
-SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
-       upstream, cost, error,
+SELECT mid, prev_mid, round, t_start, model_id, user, status, response,
+       session, upstream, cost, error, tool_results,
+       tokens_input, tokens_output, tokens_cache_read,
        coalesce((SELECT sum(value) FROM json_each(usage)), 0) AS tokens
   FROM messages WHERE {where} ORDER BY t_start DESC LIMIT ?
 """
@@ -237,8 +245,9 @@ SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
 # DIC_SESSION=parent/scruta-N therefore lists one run here, and not only the
 # one conversation its pointer holds.
 LOG_SESSION = """
-SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
-       upstream, cost, error,
+SELECT mid, prev_mid, round, t_start, model_id, user, status, response,
+       session, upstream, cost, error, tool_results,
+       tokens_input, tokens_output, tokens_cache_read,
        coalesce((SELECT sum(value) FROM json_each(usage)), 0) AS tokens
   FROM messages WHERE (session = ? OR session LIKE ? || '/%') AND {where}
  ORDER BY t_start DESC LIMIT ?

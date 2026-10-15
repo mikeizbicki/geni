@@ -187,11 +187,17 @@ unset _dic_src _dic_dir _dic_s
 # them, so those two scopes turn --graph on and `chain` does not.
 # Every scope decorates, because (HEAD) is what says which row -c would
 # resume and it costs one word per row.
+# Every scope names a format too: the picker reads a tab-separated table
+# and dic log's default is now the long shape, so the one that says "one
+# row, one line" has to be asked for.  %H is column one and %x09 is the
+# tab between it and the display, which is the field fzf hides with
+# --with-nth=2..
 _dic_log_flags() {
+  local fmt='%H%x09%h %D %a %m %s'
   case ${DIC_LOG_SCOPE:-all} in
-    all)     printf '%s\n' --decorate --graph --all ;;
-    session) printf '%s\n' --decorate --graph --session ;;
-    chain)   printf '%s\n' --decorate ;;
+    all)     printf '%s\n' --format "$fmt" --decorate --graph --all ;;
+    session) printf '%s\n' --format "$fmt" --decorate --graph --session ;;
+    chain)   printf '%s\n' --format "$fmt" --decorate ;;
     *)       printf 'dic.sh: bad DIC_LOG_SCOPE: %s\n' "$DIC_LOG_SCOPE" >&2 ;;
   esac
 }
@@ -279,6 +285,7 @@ _dic_complete() {
                               --mid --from \
                               --graph --all --session --limit -n \
                               --decorate --oneline --format --grep -S \
+                              --stat --full --lines --no-pager \
                               --cache --tools --path --mime-type \
                               --pv-thinking --no-pv-thinking \
                               --clipboard --no-clipboard --record" -- "$cur") )

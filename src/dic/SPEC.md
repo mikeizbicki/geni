@@ -53,7 +53,7 @@ call's prompt.
 | command | → library function | options |
 |---|---|---|
 | `dic [PROMPT]` | `client.dic` | `-m/--model` `-s/--system` `--prepend-prompt*` `-a/--attachment*` `-o/--option*` `--cache=off\|TTL` `--tools*` `-x/--extract` `-c/--continue` `--mid REF` `--record=bps` `--pv-thinking/--no-…` `--pv-response/--no-…` `--clipboard/--no-…` `--path FILE` `-f/--force` `--mime-type TYPE` `--print=curl\|json` |
-| `dic log` | `commands.log` | `-n N` `--all` `--session [NAME]` `--from REF` `--graph` `--oneline` `--format FMT` `--decorate` `--grep TEXT` `-S TEXT` |
+| `dic log` | `commands.log` | `-n N` `--all` `--session [NAME]` `--from REF` `--graph` `--oneline` `--format FMT` `--decorate` `--grep TEXT` `-S TEXT` `--stat` `--full` `--lines N` `--no-pager` |
 | `dic stats` | `commands.stats` | `-m/--model PAT` `--upstreams` |
 | `dic models` | `commands.models` | `--aliases` |
 | `dic cost` | `commands.cost` | `--session NAME` `--tree` `--of REF` |
@@ -599,6 +599,44 @@ the rows whose prompt or answer contains it, which is the one that answers
 whether a string ever reached the model.  Both are bound values, neither is
 SQL, and both narrow whatever scope `--all` or `--session` chose rather than
 replacing it.
+
+### The long format
+
+A `dic log` with no `--format` and no `--oneline` prints git log's own long
+shape: a header block, a blank line, then the turn's parts.
+
+    mid 01M50TPQ2J6PHW2KK5D8KKMSTS (HEAD)
+    Model:    openrouter+deepseek
+    Date:     Tue Jun 02 14:23:04 2026
+
+    Prompt:
+        $ accio src/dic scripts
+
+    Response:
+        You are a coding agent.
+
+A turn that called tools is one record, not several: the header block is the
+round-0 row's, which is the one carrying the prompt, and the rounds after it
+are a block each, numbered and named for the tools they called, because the
+rounds are one answer and a log that showed them apart would say a
+conversation had more turns than it did.  A round whose own head was filtered
+out of the query -- a `--grep` that matched the answer and not the prompt --
+is shown as a record of its own rather than dropped.
+
+The prompt and every answer keep their first and last ten lines, with
+`<... N lines elided ...>` between, because either can be a pasted file or a
+model's essay and a log is for finding a turn and not for reading it.
+`--full` prints the whole of both and `--lines N` retunes the ends.  `--stat`
+adds the dollars and tokens the turn was billed, summed over its rounds, so
+the default header stays three lines.
+
+Output that is longer than a screen is piped through `$DIC_PAGER`, then
+`$PAGER`, then `less -FRX`, but only when stdout is a terminal, so a pipe is
+never handed a pager it did not ask for.  `--no-pager` prints straight
+through.  `dic show` renders with the same code, plus the details a log of
+many rows leaves out -- the system prompt, the files the turn named, the
+tools it called, the wire protocol -- so a row's preview and its record
+cannot disagree.
 
 ## Model configuration
 

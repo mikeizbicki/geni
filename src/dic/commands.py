@@ -390,47 +390,6 @@ def log_table(rows, graph=False, fmt=None, decorate=False, head=None,
     return "".join(line + "\n" for line in lines)
 
 
-def message_text(conn, mid):
-    """One message as label/value lines: what --show prints in a preview.
-
-    Fixed labels, so a picker's pane does not jump as the selection moves,
-    and `response` and not `response_raw`, because what a human decides from
-    is the answer and not the wire.
-    """
-    row = conn.execute("SELECT * FROM messages WHERE mid = ?", (mid,)).fetchone()
-    if not row:
-        raise DicError(f"no such mid: {mid}")
-    lines = []
-
-    def put(label, value):
-        lines.append(f"{label + ':':<10}{'' if value is None else value}")
-
-    put("mid", row["mid"])
-    put("when", time.strftime("%Y-%m-%d %H:%M:%S",
-                              time.localtime(row["t_start"] / 1e9))
-        if row["t_start"] else "")
-    put("model", f"{row['model_id']} ({row['api_type']})")
-    put("status", row["status"])
-    _, _, cost = summary(json.loads(row["usage"] or "{}"),
-                         json.loads(row["cost_items"] or "[]"),
-                         None, {}, 1,
-                         partial=row["cost"] is None).partition(": ")
-    put("cost", cost.split(" --mid=")[0])
-    put("system", prompt_line(row["system"]))
-    attached = [att["path"] for att in (
-        conn.execute("SELECT path FROM attachments WHERE aid = ?", (aid,))
-        .fetchone() for aid in json.loads(row["attachments"] or "[]")) if att]
-    put("attached", ", ".join(attached))
-    put("outputs", ", ".join(o["path"]
-                             for o in json.loads(row["outputs"] or "[]")))
-    put("tools", ", ".join(f"{t['name']} {'ok' if t['ok'] else 'error'}"
-                           for t in json.loads(row["tool_results"] or "[]")))
-    put("prompt", " ".join((row["user"] or "").split()))
-    lines.append("---")
-    lines.append(row["response"] or "")
-    return "\n".join(lines) + "\n"
-
-
 # ------------------------------------------------------------------ readouts
 
 def models(conn, env, *,
@@ -535,7 +494,17 @@ def log(conn, env, *,
         grep: flag(long="--grep", metavar="TEXT", env=False,
                    help="only rows whose prompt contains TEXT") = None,
         pickaxe: flag(short="-S", metavar="TEXT", env=False,
-                      help="only rows whose prompt or answer contains TEXT") = None):
+                      help="only rows whose prompt or answer contains TEXT") = None,
+        stat: flag(long="--stat", action="bool", env=False,
+                   help="add the dollars and tokens the turn was billed") = False,
+        full: flag(long="--full", action="bool", env=False,
+                   help="print every line of every prompt and answer, not"
+                        " just their ends") = False,
+        lines: flag(long="--lines", metavar="N", type=int, env=False,
+                    help="lines to keep at each end of a long prompt or"
+                         " answer (default 10)") = None,
+        no_pager: flag(long="--no-pager", action="bool", env=False,
+                       help="write straight to stdout, even on a terminal") = False):
     """Recent messages: this session's subtree, --all, or a chain from --from.
 
     The two commands a completion picker is built from: the list it reads,
@@ -547,6 +516,10 @@ def log(conn, env, *,
     model rather than what was asked for.  --oneline and --format are the
     two ways to say what a row prints, and naming both is an error rather
     than one of them quietly winning.
+
+    With neither, the log is git's long shape and goes through a pager when
+    it has a terminal to go through it on; --format and --oneline are the
+    flat shape the picker reads, and are never paged.
     """
     mid = (resolve_ref(conn, from_, env) if from_
            else session_read(env))
@@ -556,20 +529,57 @@ def log(conn, env, *,
     where, params = log_where(grep, pickaxe)
     if oneline and format_:
         raise DicError("pick one: --oneline or --format")
-    return log_table(log_rows(conn, mid, limit or 200, all_, scope,
-                              where, params),
-                     graph=graph,
-                     fmt=format_ or (ONELINE if oneline else None),
-                     decorate=decorate,
-                     head=session_read(env),
-                     here=env.get("DIC_SESSION", "global"))
+    rows = log_rows(conn, mid, limit or 200, all_, scope, where, params)
+    here, head = env.get("DIC_SESSION", "global"), session_read(env)
+    if format_ is not None or oneline:
+        return log_table(rows, graph=graph,
+                         fmt=format_ or (ONELINE if oneline else None),
+                         decorate=decorate, head=head, here=here)
+    ctx = {"head": head, "here": here, "decorate": decorate, "stat": stat,
+           "full": full, "lines": None if full else (lines or 10)}
+    text = log_long(rows, ctx, graph=graph)
+    command = None if no_pager or not sys.stdout.isatty() else pager_command(env)
+    if command:
+        page(text, command)
+        return ""
+    return text
 
 
 def show(conn, env, ref=None):
-    """One message's details: the preview --log's picker draws for its row."""
+    """One message's details: the preview --log's picker draws for its row.
+
+    The same renderer --log uses, so a row read in the log and the same row
+    previewed cannot disagree, plus the details a log of many rows leaves
+    out: the system prompt, the files the turn named, the tools it called,
+    and the wire protocol.  Nothing is elided, because a preview is read one
+    turn at a time and the whole of it is what a preview is for.
+    """
     if not ref:
         raise DicError("show needs a message ref")
-    return message_text(conn, resolve_ref(conn, ref, env))
+    mid = resolve_ref(conn, ref, env)
+    row = conn.execute("SELECT * FROM messages WHERE mid = ?", (mid,)).fetchone()
+    if not row:
+        raise DicError(f"no such mid: {mid}")
+    extra = [("API:", row["api_type"])]
+    if row["system"]:
+        extra.append(("System:", prompt_line(row["system"])))
+    attached = [a[0] for a in (
+        conn.execute("SELECT path FROM attachments WHERE aid = ?", (aid,))
+        .fetchone() for aid in json.loads(row["attachments"] or "[]")) if a]
+    if attached:
+        extra.append(("Attached:", ", ".join(attached)))
+    outputs = [o["path"] for o in json.loads(row["outputs"] or "[]")]
+    if outputs:
+        extra.append(("Outputs:", ", ".join(outputs)))
+    tools = json.loads(row["tool_results"] or "[]")
+    if tools:
+        extra.append(("Tools:", ", ".join(
+            f"{t['name']} {'ok' if t['ok'] else 'error'}" for t in tools)))
+    ctx = {"head": session_read(env),
+           "here": env.get("DIC_SESSION", "global"),
+           "decorate": True, "stat": True, "full": True, "lines": None,
+           "extra": extra}
+    return "\n".join(format_turn(row, [row], ctx)) + "\n"
 
 
 # The one dispatch: which function answers for which command name.  A new

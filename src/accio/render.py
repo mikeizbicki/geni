@@ -1,11 +1,13 @@
-"""Rendering: the selected chunks, as the one format accio has.
+"""Rendering: the selected chunks, in the encoding the caller asked for.
 
-A chunk is a breadcrumb, a `---` fence, its text and a closing fence, so
-a reader -- a model, a human, `less` -- can see where one chunk stops,
-and so that the output is the encoding files-to-prompt already produces.
-`paths` and `wc` are projections of the same selection: the selection
-decides what, and this module decides only how.
+The default is the one format accio has always had: a chunk's breadcrumb,
+a `---` fence, its text and a closing fence, so a reader -- a model, a
+human, `less` -- can see where one chunk stops, and so that the output is
+the encoding files-to-prompt already produces.  `paths`, `objects` and
+`wc` are projections of the same selection, and `FORMATS` is their
+catalog: the selection decides what, and this module decides only how.
 """
+import json
 
 
 def render(chunks, out):
@@ -53,6 +55,39 @@ def paths(chunks, out):
         out.write(f"{chunk.breadcrumb}\n")
 
 
+def objects(chunks, out):
+    """Write one JSON object per selected chunk, one to a line.
+
+    The record an object carries is the chunk's own fields, so a caller
+    that wants `(path, chunk_id)` pairs reads them as data and not by
+    parsing fences.  One line per chunk keeps the stream a stream: the
+    objects arrive as the walk proceeds, and a reader that closes the
+    pipe early still has a prefix that parses on its own.
+
+    The keys are written in this order and the escaping is ASCII, so the
+    same tree prints the same bytes and two runs can still be diffed.
+
+    >>> import io, json
+    >>> from accio.extract import lines
+    >>> stream = io.StringIO()
+    >>> objects(lines("a.py", "x = 1\\n"), stream)
+    >>> parsed = json.loads(stream.getvalue())
+    >>> (parsed["path"], parsed["breadcrumb"], parsed["kind"], parsed["ord"])
+    ('a.py', 'a.py', 'file', 0)
+    >>> parsed["text"]
+    'x = 1\\n'
+    >>> len(parsed["chunk_id"])
+    16
+    """
+    for chunk in chunks:
+        out.write(json.dumps({"path": chunk.path,
+                              "chunk_id": chunk.chunk_id,
+                              "breadcrumb": chunk.breadcrumb,
+                              "kind": chunk.kind,
+                              "ord": chunk.ord,
+                              "text": chunk.text}) + "\n")
+
+
 def wc(chunks, out):
     """Write selected chunks as `wc` does, and one token estimate.
 
@@ -89,3 +124,9 @@ def wc(chunks, out):
         size += b
     out.write(f"{lines:7d} {words:7d} {size:7d} total\n")
     out.write(f"~{size // 4} tokens (bytes/4)\n")
+
+
+# What `--format` can name, and the only place the encodings are listed:
+# a new projection is a new function and a key here, and nothing in the
+# CLI changes to make it reachable.
+FORMATS = {"prompt": render, "paths": paths, "json": objects, "wc": wc}

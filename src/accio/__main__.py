@@ -13,7 +13,7 @@ import argparse, os, sys
 
 from accio.traverse import DEFAULT_IGNORES, DEFAULT_READMES, traverse
 from accio.select import select
-from accio.render import paths, render, wc
+from accio.render import FORMATS
 
 
 def parser():
@@ -37,13 +37,17 @@ def parser():
     p.add_argument("--no-gitignore", action="store_true",
                    help="do not consult git: summon what .gitignore"
                         " excludes, and walk into submodules")
+    p.add_argument("--format", choices=tuple(FORMATS), default=None,
+                   metavar="FMT",
+                   help="how to encode the selection:"
+                        " " + ", ".join(FORMATS))
     p.add_argument("-l", "--paths-only", action="store_true",
                    help="print only the paths that would be gathered,"
-                        " one per line, and no contents")
+                        " and no contents; same as --format paths")
     p.add_argument("-w", "--wc", action="store_true",
                    help="print line, word and byte counts per path and an"
                         " estimated token count for the whole prompt,"
-                        " and no contents")
+                        " and no contents; same as --format wc")
     return p
 
 
@@ -56,15 +60,12 @@ def main(argv=None):
     readmes = () if args.no_readme else tuple(
         DEFAULT_READMES if args.readme is None else args.readme)
     patterns = DEFAULT_IGNORES + tuple(args.ignore or ())
+    fmt = args.format or ("paths" if args.paths_only
+                          else "wc" if args.wc else "prompt")
     chunks = select(traverse(args.path, readmes, patterns,
                              not args.no_gitignore))
     try:
-        if args.paths_only:
-            paths(chunks, sys.stdout)
-        elif args.wc:
-            wc(chunks, sys.stdout)
-        else:
-            render(chunks, sys.stdout)
+        FORMATS[fmt](chunks, sys.stdout)
         sys.stdout.flush()
     except BrokenPipeError:
         # `accio src/ | head` closes the pipe early, which is the reader's

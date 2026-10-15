@@ -286,7 +286,7 @@ def ancestors(path, readmes=DEFAULT_READMES):
 
 def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
            gitignore=True):
-    """(path, text) pairs for all that is to be printed, context included once.
+    """Yields (path, text) for all that is to be printed, context once.
 
     A context file is printed the first time some file needs it and never
     again, so the root README arrives with the first file beneath it and
@@ -310,7 +310,7 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> import shutil; shutil.rmtree(d)
     """
-    seen, out = set(), []
+    seen = set()
     for path in files(paths, patterns, gitignore):
         for context in ancestors(path, readmes):
             key = os.path.normpath(context)
@@ -319,15 +319,36 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
             seen.add(key)
             text = read(context)
             if text is not None:
-                out.append((context, text))
+                yield context, text
         key = os.path.normpath(path)
         if key in seen:
             continue
         seen.add(key)
         text = read(path)
         if text is not None:
-            out.append((path, text))
-    return out
+            yield path, text
+
+
+def bundle_paths(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
+                 gitignore=True):
+    """The paths bundle() would emit, in the order it would emit them.
+
+    Same traversal, same ancestor walk, same dedup -- a projection of
+    bundle() and not a second implementation of it.
+
+    >>> import tempfile
+    >>> d = tempfile.mkdtemp()
+    >>> os.makedirs(d + "/a")
+    >>> for name, text in (("README.md", "root\\n"), ("a/README.md", "sub\\n"),
+    ...                    ("a/x.py", "x = 1\\n"), ("a/y.py", "y = 2\\n")):
+    ...     _ = open(os.path.join(d, name), "w").write(text)
+    >>> [os.path.relpath(p, d) for p in bundle_paths([d + "/a"])
+    ...  if p.startswith(d)]
+    ['README.md', 'a/README.md', 'a/x.py', 'a/y.py']
+    >>> import shutil; shutil.rmtree(d)
+    """
+    for path, _ in bundle(paths, readmes, patterns, gitignore):
+        yield path
 
 
 def render(pairs, out):

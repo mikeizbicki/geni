@@ -80,6 +80,7 @@ A file that cannot be read -- permissions, a dangling symlink, a race -- is skip
 | | `--no-readme` | summon no file above the ones named |
 | `-i` | `--ignore PATTERN` | walk past a name matching this shell pattern; repeatable, on top of the defaults |
 | | `--no-gitignore` | do not consult git at all: summon what `.gitignore` excludes, and walk into submodules |
+| `-l` | `--paths-only` | print the paths that would be summoned, one per line, and no contents |
 
 A missing path is an error naming it, and exits nonzero; everything else is a walk that prints what it finds.
 

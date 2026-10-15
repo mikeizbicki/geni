@@ -8,7 +8,8 @@ The whole CLI: turn argv into one bundle() call and write it to stdout.
 """
 import argparse, os, sys
 
-from accio.gather import DEFAULT_IGNORES, DEFAULT_READMES, bundle, render
+from accio.gather import (DEFAULT_IGNORES, DEFAULT_READMES, bundle,
+                          bundle_paths, render)
 
 
 def parser():
@@ -32,6 +33,9 @@ def parser():
     p.add_argument("--no-gitignore", action="store_true",
                    help="do not consult git: summon what .gitignore"
                         " excludes, and walk into submodules")
+    p.add_argument("-l", "--paths-only", action="store_true",
+                   help="print only the paths that would be gathered,"
+                        " one per line, and no contents")
     return p
 
 
@@ -45,8 +49,13 @@ def main(argv=None):
         DEFAULT_READMES if args.readme is None else args.readme)
     patterns = DEFAULT_IGNORES + tuple(args.ignore or ())
     try:
-        render(bundle(args.path, readmes, patterns, not args.no_gitignore),
-               sys.stdout)
+        if args.paths_only:
+            for path in bundle_paths(args.path, readmes, patterns,
+                                     not args.no_gitignore):
+                sys.stdout.write(f"{path}\n")
+        else:
+            render(bundle(args.path, readmes, patterns, not args.no_gitignore),
+                   sys.stdout)
         sys.stdout.flush()
     except BrokenPipeError:
         # `accio src/ | head` closes the pipe early, which is the reader's

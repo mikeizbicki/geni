@@ -185,11 +185,13 @@ unset _dic_src _dic_dir _dic_s
 # `all` and `session` are what the graph is for: the rows of several
 # conversations at once only mean something with the forest drawn beside
 # them, so those two scopes turn --graph on and `chain` does not.
+# Every scope decorates, because (HEAD) is what says which row -c would
+# resume and it costs one word per row.
 _dic_log_flags() {
   case ${DIC_LOG_SCOPE:-all} in
-    all)     printf '%s\n' --graph --all ;;
-    session) printf '%s\n' --graph --session ;;
-    chain)   : ;;
+    all)     printf '%s\n' --decorate --graph --all ;;
+    session) printf '%s\n' --decorate --graph --session ;;
+    chain)   printf '%s\n' --decorate ;;
     *)       printf 'dic.sh: bad DIC_LOG_SCOPE: %s\n' "$DIC_LOG_SCOPE" >&2 ;;
   esac
 }
@@ -275,6 +277,8 @@ _dic_complete() {
                               -m --model -s --system -a --attachment \
                               -x --extract -f --force -c --continue \
                               --mid --from \
+                              --graph --all --session --limit \
+                              --decorate --format --grep -S \
                               --cache --tools --path --mime-type \
                               --pv-thinking --no-pv-thinking \
                               --clipboard --no-clipboard --record" -- "$cur") )

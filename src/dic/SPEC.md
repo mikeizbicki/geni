@@ -553,6 +553,48 @@ by default -- `--record=bps` / `DIC_RECORD` -- because it is a diagnostic and no
 a fact a conversation needs, and a round it skips is a missing row rather
 than a null.
 
+## Reading a log
+
+`dic log` is the readout a person reads and the one a completion picker is
+built from, and it is git's own log over a message tree.
+
+A row is the mid, a tab, and then `--format` expanded, so column one is the
+full mid and column two is what a person reads.  A picker therefore hides the
+first with `--with-nth=2..`, previews a row with `dic show {1}`, and reads
+back the mid it was given without a second query.  `--graph` draws the forest
+at the head of column two and not of the line, so the mid stays column one
+however the forest looks, and the lines a merge draws carry no mid and are
+therefore not pickable.
+
+`--format FMT` is git's %-syntax over a row:
+
+| specifier | value |
+| --------- | ----- |
+| `%H` `%h` | the mid, and its ten-character prefix |
+| `%s` `%b` | the prompt, and the first line of the answer |
+| `%a` | how long ago, as `5m ago` |
+| `%m` `%u` `%S` | the model, the upstream a router chose, the session |
+| `%c` `%t` | the dollars the call was billed, and its token count |
+| `%D` | the decorations, which `--decorate` turns on |
+| `%n` `%xNN` `%%` | a newline, one byte named by its hex, a literal percent |
+
+Anything else is an error, because a specifier that is dropped is a log that
+reads as if nothing happened.  The default is `%h%D %a %m %s`.
+
+`--decorate` makes `%D` ` (HEAD)` on the message this session's pointer holds
+-- the one `-c` would resume -- and ` (session:NAME)` on a row another shell
+wrote, so a row read out of `--all` is attributable and the conversation a
+bare `-c` would continue is visible in the list rather than only in the
+picker.  `%D` writes its own leading space and nothing at all when it has
+nothing to say, which is git's convention and what lets a format put it
+beside its neighbour.
+
+`--grep TEXT` keeps the rows whose prompt contains TEXT, and `-S TEXT` keeps
+the rows whose prompt or answer contains it, which is the one that answers
+whether a string ever reached the model.  Both are bound values, neither is
+SQL, and both narrow whatever scope `--all` or `--session` chose rather than
+replacing it.
+
 ## Model configuration
 
 Models are configured in JSON, not YAML.

@@ -203,22 +203,33 @@ SELECT model_id, upstream, count(*) AS n, sum(status <> 200) AS errors,
 # the order `git log` uses, so fzf reads top-down.  The mid is column one, so
 # the picker hides it with --with-nth=2.. and still hands {1} to --show.
 # prev_mid comes with each row, because --graph draws the forest from it.
+#
+# Every column a format can name is selected here rather than looked up per
+# row, so `dic log --format='%c %s'` is one query and not one query per line.
+# `{where}` is spliced by log_rows and holds only its two bound filters, and
+# it is AND-ed with the scope rather than replacing it, so -S can never widen
+# what --all or --session narrowed.
 LOG = """
-WITH RECURSIVE chain(mid, prev_mid, model_id, usage, user, t_start, status) AS (
-    SELECT mid, prev_mid, model_id, usage, user, t_start, status
+WITH RECURSIVE chain(mid, prev_mid, t_start, model_id, user, status, usage,
+                     response, session, upstream, cost, error) AS (
+    SELECT mid, prev_mid, t_start, model_id, user, status, usage,
+           response, session, upstream, cost, error
       FROM messages WHERE mid = ?
   UNION ALL
-    SELECT m.mid, m.prev_mid, m.model_id, m.usage, m.user, m.t_start, m.status
+    SELECT m.mid, m.prev_mid, m.t_start, m.model_id, m.user, m.status, m.usage,
+           m.response, m.session, m.upstream, m.cost, m.error
       FROM messages m JOIN chain c ON m.mid = c.prev_mid)
-SELECT mid, prev_mid, t_start, model_id, user, status,
+SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
+       upstream, cost, error,
        coalesce((SELECT sum(value) FROM json_each(usage)), 0) AS tokens
-  FROM chain ORDER BY t_start DESC LIMIT ?
+  FROM chain WHERE {where} ORDER BY t_start DESC LIMIT ?
 """
 
 LOG_ALL = """
-SELECT mid, prev_mid, t_start, model_id, user, status,
+SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
+       upstream, cost, error,
        coalesce((SELECT sum(value) FROM json_each(usage)), 0) AS tokens
-  FROM messages ORDER BY t_start DESC LIMIT ?
+  FROM messages WHERE {where} ORDER BY t_start DESC LIMIT ?
 """
 
 # Every message written under a session and its sub-sessions: the same subtree
@@ -226,9 +237,10 @@ SELECT mid, prev_mid, t_start, model_id, user, status,
 # DIC_SESSION=parent/scruta-N therefore lists one run here, and not only the
 # one conversation its pointer holds.
 LOG_SESSION = """
-SELECT mid, prev_mid, t_start, model_id, user, status,
+SELECT mid, prev_mid, t_start, model_id, user, status, response, session,
+       upstream, cost, error,
        coalesce((SELECT sum(value) FROM json_each(usage)), 0) AS tokens
-  FROM messages WHERE session = ? OR session LIKE ? || '/%'
+  FROM messages WHERE (session = ? OR session LIKE ? || '/%') AND {where}
  ORDER BY t_start DESC LIMIT ?
 """
 

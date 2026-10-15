@@ -137,9 +137,10 @@ def gitallow(root):
     if root not in _ALLOWED:
         listing = None
         try:
-            done = subprocess.run(
-                ["git", "-C", root, "ls-files", "-co", "--exclude-standard",
-                 "-z"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            done = subprocess.run(  # noqa: S603
+                ["git", "-C", root, "ls-files", "-co",  # noqa: S607
+                 "--exclude-standard", "-z"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError:
             done = None
         if done is not None and done.returncode == 0:

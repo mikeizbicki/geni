@@ -20,9 +20,9 @@ imported inside `flags()`, and `argparse` only by `parser()`.
 import json
 
 # The --help sections.
-CALL = "the call"
-OUTPUT = "where the answer goes"
-PRINT = "print the request (do not call a model)"
+CALL = "API request options"
+OUTPUT = "output postprocessing"
+DEBUG = "debug"
 
 # A flag every command accepts; it lives on the shared parent parser.
 GLOBAL = "*"

@@ -22,7 +22,7 @@ entry point.
 import http.client, json, os, re, socket, sys, threading, time, urllib.parse
 
 from dic import config, output, price
-from dic.options import GLOBAL, OUTPUT, PRINT, flag, resolve
+from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
                        session_read, session_write, store_attachment,
@@ -396,7 +396,7 @@ def curl_command(model, adaptor, body, headers, api_key, api_type):
 
 
 def dic(prompt,
-        # ----- the call -----
+        # ----- directly affect API call -----
         model:        flag(short="-m", help="which model") = None,
         system:       flag(short="-s", help="system prompt") = None,
         prepend_prompt: flag(long="--prepend-prompt", action="append",
@@ -414,44 +414,45 @@ def dic(prompt,
         tools:        flag(long="--tools", action="append",
                            metavar="MODULE:FUNC",
                            help="offer a python function as a tool; repeatable") = None,
-        extract:      flag(short="-x", action="bool",
-                           help="print only the first fenced code block") = False,
         cont:         flag(short="-c", long="--continue", action="bool",
                            help="continue this session's last conversation") = False,
         mid:          flag(long="--mid", metavar="REF",
                            help="continue from a message: a mid, its prefix,"
                                 " or a ref like HEAD~3") = None,
-        pv_thinking:  flag(action="yes/no",
-                           help="meter the reasoning instead of printing it") = None,
-        pv_response:  flag(action="yes/no",
-                           help="meter the answer on stderr as well") = None,
-        record:       flag(long="--record", metavar="KIND",
-                           help="record per-round byte-rate samples, for"
-                                " plotting B/s over time; the only value is"
-                                " bps") = None,
-        clipboard:    flag(action="yes/no",
-                           help="copy the answer to the terminal's clipboard"
-                                " (the default on a terminal)") = None,
-        verbosity:    flag(short="-v", action="count", env=False,
-                           command=GLOBAL,
-                           help="raise stderr verbosity; repeatable"
-                                " (DIC_VERBOSITY sets the base)") = None,
-        quiet:        flag(short="-q", action="bool", command=GLOBAL,
-                           help="print nothing to stderr but errors") = False,
-        models_file:  flag(command=GLOBAL,
-                           help="a json file of model entries to overlay") = None,
-        # ----- where the answer goes -----
+        mime_type:    flag(long="--mime-type", metavar="TYPE",
+                           help="the mime type of the answer") = None,
+        # ----- post-process the output -----
         path:         flag(long="--path", metavar="FILE", group=OUTPUT,
                            help="write the answer to FILE, atomically") = None,
         force:        flag(short="-f", action="bool", group=OUTPUT,
                            help="overwrite the file named by --path") = False,
-        mime_type:    flag(long="--mime-type", metavar="TYPE", group=OUTPUT,
-                           help="the mime type of the answer") = None,
-        # ----- print the request instead of sending it -----
+        clipboard:    flag(action="yes/no", group=OUTPUT,
+                           help="copy the answer to the terminal's clipboard"
+                                " (the default on a terminal)") = None,
+        extract:      flag(short="-x", action="bool", group=OUTPUT,
+                           help="print only the first fenced code block") = False,
+        # ----- debugging -----
         print_:       flag(long="--print", metavar="WHAT", env=False,
-                           group=PRINT,
+                           group=DEBUG,
                            help="print the request as curl or indented json"
                                 " and exit") = None,
+        pv_thinking:  flag(action="yes/no", group=DEBUG,
+                           help="meter the reasoning instead of printing it") = None,
+        pv_response:  flag(action="yes/no", group=DEBUG,
+                           help="meter the answer on stderr as well") = None,
+        record:       flag(long="--record", metavar="KIND", group=DEBUG,
+                           help="record per-round byte-rate samples, for"
+                                " plotting B/s over time; the only value is"
+                                " bps") = None,
+        verbosity:    flag(short="-v", action="count", env=False,
+                           command=GLOBAL, group=DEBUG,
+                           help="raise stderr verbosity; repeatable"
+                                " (DIC_VERBOSITY sets the base)") = None,
+        quiet:        flag(short="-q", action="bool", command=GLOBAL,
+                           group=DEBUG,
+                           help="print nothing to stderr but errors") = False,
+        models_file:  flag(command=GLOBAL, group=DEBUG,
+                           help="a json file of model entries to overlay") = None,
         t_start=None, env=None, out=None, err=None) -> Reply:
     """Talk to one model once, and record the turn.
 

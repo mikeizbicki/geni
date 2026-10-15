@@ -32,7 +32,7 @@ Nothing here calls a model.  The BM25 query is answered by sqlite, in
 the binary `dic` already depends on: no imports, no API key, no
 embedding cost, and a query plan a human can read.
 """
-import hashlib, json, os, sqlite3, subprocess
+import contextlib, hashlib, json, os, sqlite3, subprocess
 
 from accio.extract import Chunk, lines
 from accio.traverse import canvassed, read
@@ -244,10 +244,8 @@ def prune(paths, index_dir=None):
     """Delete the index and exit.  Nothing here is not regenerable."""
     p = db_path(paths, index_dir)
     for suffix in ("", "-wal", "-shm"):
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(p + suffix)
-        except FileNotFoundError:
-            pass
 
 
 def explain(paths, readmes, patterns, gitignore, index_dir, out):

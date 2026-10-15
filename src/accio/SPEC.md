@@ -64,9 +64,11 @@ There is no escaping and no quoting.  A file whose content contains a line that 
 
 1. **Binary files**, recognised by a NUL byte in the first 8 KiB -- the test `git`, `grep(1)` and `file(1)` all begin with, and the one that needs no table of extensions, because a text file of any language has none.  A skipped file is skipped in **silence**: a warning about a file the caller never named is noise, and `accio` prints the prompt and nothing else.  It must never warn into the stream the prompt is on.
 1. **The default ignores**: `.git`, `__pycache__`, the caches, `.venv`, `venv`, `node_modules`, `*.pyc`, `*.egg-info`, `.DS_Store`.
+1. **Whatever git ignores.**  The rules are git's and are asked of git -- `git ls-files -co --exclude-standard`, one subprocess per repository -- rather than reimplemented, because a hand-written matcher gets `/`-anchoring and `!` negation wrong in exactly the cases nobody notices until a secret file is inside a prompt.  The repository consulted is the one containing the *path* and not the one containing the working directory, so `..` out of a tree means the rules of wherever it lands, and a path with no repository above it is filtered by the defaults alone.
+1. **Submodules, and checkouts nested inside a checkout.**  A directory that is itself a repository is not entered: it is a different tree with different rules.  Naming it is how the caller asks for it, and the walk that starts there starts at its own root and obeys its own ignores.
 1. **Whatever the caller added with `--ignore`**, on top of those.
 
-A file named outright on the command line is summoned whatever it is called: ignoring is about what a walk stumbles into, and not about what the caller asked for.
+A file named outright on the command line is summoned whatever it is called: ignoring is about what a walk stumbles into, and not about what the caller asked for.  A directory named outright is walked, and what the walk finds under it is filtered like anything else, so naming `build/` does not open the files that `.gitignore` closed.
 
 A file that cannot be read -- permissions, a dangling symlink, a race -- is skipped in the same silence, because a prompt is better for what it has than absent for what it has not.  Saying so is what `-v` is for (TODO).
 
@@ -77,6 +79,7 @@ A file that cannot be read -- permissions, a dangling symlink, a race -- is skip
 | `-r` | `--readme NAME` | a file to summon from every directory above a summoned file; repeatable.  The default is `README README.md AGENTS.md` |
 | | `--no-readme` | summon no file above the ones named |
 | `-i` | `--ignore PATTERN` | walk past a name matching this shell pattern; repeatable, on top of the defaults |
+| | `--no-gitignore` | do not consult git at all: summon what `.gitignore` excludes, and walk into submodules |
 
 A missing path is an error naming it, and exits nonzero; everything else is a walk that prints what it finds.
 
@@ -86,7 +89,16 @@ There is no config file.  A shell startup file already is one, and `accio` is a 
 
 ### 1. .gitignore
 
-Respect `.gitignore`, nested ones included, with their negation and anchoring rules.  The rules should not be reimplemented: `git ls-files -co --exclude-standard` (one subprocess) or `git check-ignore --stdin -v`, for provenance, already answers exactly this question, and a hand-written matcher gets the `/`-anchoring and `!` cases wrong in ways nobody notices until a secret file is inside a prompt.  Working without git present must stay possible; the fallback is the default ignore list.
+The rules are git's and not ours: `git ls-files -co --exclude-standard` is
+the only matcher that gets nested files, `!` negation and `/` anchoring
+right, so it is what the walk asks.  Three things are left.  The listing
+is proportional to the repository and is held in memory for the run.  An
+ignored *directory* is still walked and its files rejected one at a time,
+which is the wrong cost for a `dist/` with a hundred thousand entries and
+whose proper answer is `git check-ignore`, a subprocess per directory.
+And a working tree is found by looking for `.git` upward, which is what
+git does and is not what `GIT_DIR` or `GIT_WORK_TREE` says.
+`--no-gitignore` is the way out of all three.
 
 ### 2. Search
 

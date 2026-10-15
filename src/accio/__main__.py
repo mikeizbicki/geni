@@ -29,6 +29,9 @@ def parser():
                    help="walk past a name matching this shell pattern;"
                         " repeatable, on top of the defaults"
                         f" ({' '.join(DEFAULT_IGNORES)})")
+    p.add_argument("--no-gitignore", action="store_true",
+                   help="do not consult git: summon what .gitignore"
+                        " excludes, and walk into submodules")
     return p
 
 
@@ -42,7 +45,8 @@ def main(argv=None):
         DEFAULT_READMES if args.readme is None else args.readme)
     patterns = DEFAULT_IGNORES + tuple(args.ignore or ())
     try:
-        render(bundle(args.path, readmes, patterns), sys.stdout)
+        render(bundle(args.path, readmes, patterns, not args.no_gitignore),
+               sys.stdout)
         sys.stdout.flush()
     except BrokenPipeError:
         # `accio src/ | head` closes the pipe early, which is the reader's

@@ -8,12 +8,17 @@ of every directory above it are printed first, once, so that a subtree's
 conventions arrive before the code that obeys them.
 
 Nothing here reads the network or calls a model, so importing it costs
-one file of pure stdlib.  See SPEC.md.
+What a walk skips is decided by the repository the path is in: git is
+asked which files it ignores rather than being second-guessed, so nested
+`.gitignore` files, `!` negation and `/` anchoring are git's rules and
+not a matcher here that gets them subtly wrong.  Nothing here reads the
+network or calls a model, so importing it costs one file of pure stdlib.
+See SPEC.md.
 
     accio src/                every file under src, plus its READMEs
     accio a.py b.py           two files, plus the READMEs above them
 """
-import fnmatch, os
+import fnmatch, os, subprocess
 
 # The names looked for in every directory above a summoned file, in the
 # order they are tried.  A README states what a subtree is and an AGENTS
@@ -31,6 +36,12 @@ DEFAULT_IGNORES = (".git", "__pycache__", ".mypy_cache", ".pytest_cache",
 
 # How much of a file is sniffed for the NUL byte that says it is not text.
 SNIFF = 8192
+
+# Where a path sits and what its repository ignores: one answer per
+# directory and one per repository, because both are facts about a whole
+# tree and neither should cost a subprocess for every file in it.
+_ROOTS = {}
+_ALLOWED = {}
 
 
 def ignored(name, patterns=DEFAULT_IGNORES):
@@ -73,14 +84,135 @@ def read(path):
     return data.decode("utf-8", "replace")
 
 
-def files(paths, patterns=DEFAULT_IGNORES):
+def gitroot(directory):
+    """The toplevel of the git repository that contains a directory.
+
+    Git marks a working tree with a `.git` entry -- a directory in an
+    ordinary clone, a file in a submodule or a linked worktree -- so the
+    search is for that one name in each directory upward.  Stopping at the
+    first one found is what makes a submodule its own root, and therefore
+    what makes the enclosing repository's rules stop at it.
+
+    >>> import tempfile, shutil
+    >>> d = tempfile.mkdtemp(); os.makedirs(d + "/a/b"); os.mkdir(d + "/.git")
+    >>> gitroot(d + "/a/b") == d
+    True
+    >>> shutil.rmtree(d)
+    """
+    directory = os.path.abspath(directory)
+    if directory not in _ROOTS:
+        _ROOTS[directory] = _search(directory)
+    return _ROOTS[directory]
+
+
+def _search(directory):
+    """The nearest `.git` above a directory, or None at the filesystem root."""
+    while True:
+        if os.path.exists(os.path.join(directory, ".git")):
+            return directory
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return None
+        directory = parent
+
+
+def gitallow(root):
+    """What git does not ignore inside a repository, or None if it cannot say.
+
+    One subprocess answers for the whole tree.  Nested `.gitignore` files,
+    `!` negation and `/` anchoring are git's rules and are not
+    reimplemented here, because a matcher that gets them subtly wrong is
+    one that puts a file into a prompt that nobody meant to send.
+    `ls-files` also stops at a submodule, listing the gitlink and nothing
+    beneath it, so a submodule is skipped by the same command that skips
+    an ignored file.  A repository git cannot read is no repository, which
+    is also what a machine without git gets: the default patterns, and
+    nothing else.
+
+    >>> gitallow(None) is None
+    True
+    """
+    if root is None:
+        return None
+    if root not in _ALLOWED:
+        listing = None
+        try:
+            done = subprocess.run(
+                ["git", "-C", root, "ls-files", "-co", "--exclude-standard",
+                 "-z"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            done = None
+        if done is not None and done.returncode == 0:
+            listing = done.stdout.decode("utf-8", "surrogateescape")
+        _ALLOWED[root] = None if listing is None else set(listing.split("\0"))
+    return _ALLOWED[root]
+
+
+def kept(path, patterns=DEFAULT_IGNORES, gitignore=True):
+    """Whether a path a walk found, rather than one named outright, survives.
+
+    The repository asked about a path is the one that contains that path
+    and not the one that contains the working directory, so a walk that
+    steps outside its tree -- `accio ../other/` -- is governed by whatever
+    is above where it lands, and a path with no repository above it is
+    filtered by the default patterns alone.
+
+    >>> import tempfile, shutil
+    >>> d = tempfile.mkdtemp()
+    >>> kept(d + "/x.py"), kept(d + "/x.pyc")
+    (True, False)
+    >>> shutil.rmtree(d)
+    """
+    if ignored(os.path.basename(path), patterns):
+        return False
+    if not gitignore:
+        return True
+    root = gitroot(os.path.dirname(path) or ".")
+    allowed = gitallow(root)
+    return allowed is None or os.path.relpath(path, root) in allowed
+
+
+def walk(top, patterns=DEFAULT_IGNORES, gitignore=True):
+    """Every file under one directory, sorted at each level, depth-first.
+
+    Files come before subdirectories at each level and each level is
+    sorted, so the same tree prints the same bytes in the same order and
+    the output is still a prefix `dic --cache` may already have paid for.
+    A directory that is itself a repository -- a submodule, or a checkout
+    someone nested inside a checkout -- is not entered, because it is a
+    different tree with different rules.  Naming it is how the caller asks
+    for it, and the walk that starts there starts at its own root and
+    obeys its own ignores.
+
+    An unreadable directory holds nothing, and a link to a directory is
+    walked past rather than followed.
+    """
+    try:
+        entries = sorted(os.listdir(top))
+    except OSError:
+        return
+    dirs, names = [], []
+    for name in entries:
+        path = os.path.join(top, name)
+        (dirs if os.path.isdir(path) else names).append(path)
+    for path in names:
+        if kept(path, patterns, gitignore):
+            yield path
+    for path in dirs:
+        if ignored(os.path.basename(path), patterns) or os.path.islink(path):
+            continue
+        if gitignore and os.path.exists(os.path.join(path, ".git")):
+            continue
+        yield from walk(path, patterns, gitignore)
+
+
+def files(paths, patterns=DEFAULT_IGNORES, gitignore=True):
     """Every file the given paths name, in a stable order.
 
-    A directory is walked with its entries sorted at each level, so the
-    same tree prints the same bytes in the same order, and a prompt built
-    from it can be cached, diffed and compared.  A file named outright is
-    taken whatever it is called: ignoring is about what a walk stumbles
-    into, and not about what the caller asked for.
+    A directory is walked and a file is summoned as itself, ignoring and
+    all: the rules are about what a walk stumbles into, and not about what
+    the caller asked for by name.  Naming a directory therefore does not
+    open the files inside it that git closed; naming a file does.
 
     >>> files([]), files([], ())
     ([], [])
@@ -89,11 +221,8 @@ def files(paths, patterns=DEFAULT_IGNORES):
     for path in paths:
         if os.path.isfile(path):
             out.append(path)
-            continue
-        for root, dirs, names in os.walk(path):
-            dirs[:] = sorted(d for d in dirs if not ignored(d, patterns))
-            out.extend(os.path.join(root, name) for name in sorted(names)
-                       if not ignored(name, patterns))
+        else:
+            out.extend(walk(path, patterns, gitignore))
     return out
 
 
@@ -154,12 +283,15 @@ def ancestors(path, readmes=DEFAULT_READMES):
     return out
 
 
-def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES):
+def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
+           gitignore=True):
     """(path, text) pairs for all that is to be printed, context included once.
 
     A context file is printed the first time some file needs it and never
     again, so the root README arrives with the first file beneath it and
-    the thousandth file of the tree does not repeat it.
+    the thousandth file of the tree does not repeat it.  Context is
+    filtered like everything else, so an ignored README is not a way to
+    smuggle back a file the walk just refused.
 
     >>> import tempfile
     >>> d = tempfile.mkdtemp()
@@ -178,14 +310,15 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES):
     >>> import shutil; shutil.rmtree(d)
     """
     seen, out = set(), []
-    for path in files(paths, patterns):
+    for path in files(paths, patterns, gitignore):
         for context in ancestors(path, readmes):
             key = os.path.normpath(context)
-            if key not in seen:
-                seen.add(key)
-                text = read(context)
-                if text is not None:
-                    out.append((context, text))
+            if key in seen or not kept(context, patterns, gitignore):
+                continue
+            seen.add(key)
+            text = read(context)
+            if text is not None:
+                out.append((context, text))
         key = os.path.normpath(path)
         if key in seen:
             continue

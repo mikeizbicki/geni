@@ -19,7 +19,7 @@ See SPEC.md.
 """
 import fnmatch, os, subprocess
 
-from accio.extract import lines
+from accio.extract import by_extension
 
 # The names looked for in every directory above a summoned file, in the
 # order they are tried.  A README states what a subtree is and an AGENTS
@@ -359,4 +359,4 @@ def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     for path in canvassed(paths, readmes, patterns, gitignore):
         text = read(path)
         if text is not None:
-            yield from lines(path, text)
+            yield from by_extension(path, text)

@@ -8,7 +8,8 @@ and a selection can name a piece of a file and not only the whole of it.
 An extractor is a function `(path, text) -> [Chunk]` returning the tree
 as a flat list in tree order: the root first, then each child by `ord`.
 There is no registry; importing is the registration.  The default is
-`lines`, the universal fallback, which makes a file one chunk and nothing
+chosen by extension -- `.py` gets the Python tree, everything else the
+universal fallback `lines`, which makes a file one chunk and nothing
 else -- a format with no extractor of its own is still a tree, just a
 tree with only a root.
 
@@ -23,7 +24,7 @@ for prose, `path::Name` for code -- and stands in for the path wherever a
 chunk is printed, so a citation a model makes is still a path with a name
 inside it.
 """
-import hashlib
+import ast, hashlib
 from typing import NamedTuple
 
 
@@ -78,3 +79,155 @@ def lines(path, text):
     return [Chunk(path=path, chunk_id=identify(path, text),
                   breadcrumb=path, text=text, kind="file", ord=0,
                   parent=None, meta={})]
+
+
+def _source(text, node, src):
+    """The source of an AST node, sliced by its own line numbers.
+
+    `ast.get_source_segment` needs a `col_offset` on every node, which
+    the outer node of a decorator and some synthesized nodes do not
+    carry; the line numbers always are there, and a chunk is a region of
+    lines and not of columns.
+    """
+    return "".join(src[node.lineno - 1:node.end_lineno])
+
+
+def _kind_of(node):
+    """The chunk kind an AST node makes, or None if it makes no chunk.
+
+    A module-level `if` or `try` is not a section of the tree; a class
+    and a function are the two the SPEC's `file -> class -> def` names,
+    and everything else stays where it is.
+    """
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return "def"
+    if isinstance(node, ast.ClassDef):
+        return "class"
+    return None
+
+
+def _docstring_node(node):
+    """The docstring expression of a def, class or module, or None.
+
+    Python says a docstring is the first statement of the body when that
+    statement is a bare string literal; the AST says that is an `Expr`
+    wrapping a `Constant` wrapping a `str`, and all three are needed to
+    tell it from `"".join([])` handing a string to a call.
+    """
+    if not node.body:
+        return None
+    first = node.body[0]
+    if not isinstance(first, ast.Expr):
+        return None
+    value = first.value
+    if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+        return None
+    return first
+
+
+def _head(text, node, src):
+    """A def's signature and docstring, without the statements below them.
+
+    That is what `--elide kind=body` leaves behind: a signature says how
+    to call it and a docstring says what it does, and the statements
+    between them are the implementation a summary does not need.  A def
+    with no code body has no body to drop, so its head is its whole
+    source and the elision is a no-op.
+    """
+    body = node.body
+    if not body:
+        return _source(text, node, src)
+    i = 1 if _docstring_node(node) is not None else 0
+    if i >= len(body):
+        return _source(text, node, src)
+    cut = body[i].lineno - 1
+    if cut <= node.lineno - 1:
+        return _source(text, node, src)
+    return "".join(src[node.lineno - 1:cut])
+
+
+def _tail(text, module, src):
+    """The file's own lines: everything no def or class covers.
+
+    Module a file is a root and the defs it holds are its children, so
+    the root cannot be the whole text -- that would say every definition
+    twice.  What is left after the definitions are lifted out is the
+    imports, the module docstring and the top-level code, which is what
+    a reader of the file wants above the definitions anyway.
+    """
+    covered = set()
+    for node in module.body:
+        if _kind_of(node) is not None:
+            covered.update(range(node.lineno - 1, node.end_lineno))
+    return "".join(line for i, line in enumerate(src) if i not in covered)
+
+
+def _gather(out, path, text, src, nodes, prefix, parent):
+    """Walk one body and append a chunk for every class or def it holds."""
+    for nth, node in enumerate(nodes):
+        kind = _kind_of(node)
+        if kind is None:
+            continue
+        body = _source(text, node, src)
+        crumb = f"{prefix}::{node.name}"
+        cid = identify(crumb, body)
+        meta = {"name": node.name, "line": node.lineno}
+        head = _head(text, node, src)
+        if head != body:
+            meta["head"] = head
+        out.append(Chunk(path=path, chunk_id=cid, breadcrumb=crumb,
+                         text=body, kind=kind, ord=nth, parent=parent,
+                         meta=meta))
+        doc = _docstring_node(node)
+        if doc is not None:
+            doc_body = _source(text, doc, src)
+            doc_crumb = f"{crumb}#doc"
+            out.append(Chunk(path=path,
+                             chunk_id=identify(doc_crumb, doc_body),
+                             breadcrumb=doc_crumb, text=doc_body,
+                             kind="docstring", ord=nth, parent=cid,
+                             meta={}))
+        _gather(out, path, text, src, node.body, crumb, cid)
+
+
+def python(path, text):
+    """The Python tree: file -> class and def -> docstring.
+
+    A syntax error falls back to `lines`, because a file Python cannot
+    parse is a file the walk still has to render, and a tree with only a
+    root is a better answer than no answer.
+
+    >>> [c.kind for c in python("a.py", "def f():\\n    pass\\n")]
+    ['file', 'def']
+    >>> [c.breadcrumb for c in python("a.py",
+    ...     "class C:\\n    def m(self):\\n        pass\\n")]
+    ['a.py', 'a.py::C', 'a.py::C::m']
+    """
+    try:
+        module = ast.parse(text)
+    except SyntaxError:
+        return lines(path, text)
+    src = text.splitlines(keepends=True)
+    tail = _tail(text, module, src)
+    root = Chunk(path=path, chunk_id=identify(path, tail),
+                 breadcrumb=path, text=tail, kind="file", ord=0,
+                 parent=None, meta={})
+    out = [root]
+    _gather(out, path, text, src, module.body, path, root.chunk_id)
+    return out
+
+
+# What a path chooses for itself: `.py` gets the Python tree, everything
+# else the universal fallback, which is always a tree, just a root and
+# no children.
+def by_extension(path, text):
+    """The extractor an extension chooses, or `lines` for a stranger.
+
+    >>> [c.kind for c in by_extension("a.py", "x = 1\\n")]
+    ['file']
+    >>> [c.kind for c in by_extension("a.txt", "hello\\n")]
+    ['file']
+    """
+    if path.endswith(".py") or path.endswith(".pyi"):
+        return python(path, text)
+    return lines(path, text)

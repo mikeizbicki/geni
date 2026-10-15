@@ -39,3 +39,24 @@ def test_fudge_widens_the_cap(repo, mk, capsys, monkeypatch):
     assert capsys.readouterr().out.count("---\n") == 4
     assert main(["--target", "35", "--fudge", "0", "."]) == 0
     assert capsys.readouterr().out.count("---\n") == 2
+
+
+def test_elide_body_at_the_cli(repo, mk, capsys, monkeypatch):
+    mk("a.py", "def f(a):\n    '''doc.'''\n    return a\n")
+    monkeypatch.chdir(repo)
+    assert main(["--elide", "kind=body", "a.py"]) == 0
+    out = capsys.readouterr().out
+    assert "def f(a):" in out
+    assert "'''doc.'''" in out
+    # the def chunk's body is gone; the file chunk is empty here
+    assert "return a" not in out
+
+
+def test_elide_body_without_body_kind_is_a_noop(repo, mk, capsys, monkeypatch):
+    mk("a.py", "def f(a):\n    return a\n")
+    monkeypatch.chdir(repo)
+    assert main(["a.py"]) == 0
+    before = capsys.readouterr().out
+    assert main(["--elide", "somethingelse", "a.py"]) == 0
+    after = capsys.readouterr().out
+    assert before == after

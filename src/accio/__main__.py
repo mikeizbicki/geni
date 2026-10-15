@@ -15,7 +15,7 @@ import argparse, os, sys
 from accio import index
 from accio.traverse import DEFAULT_IGNORES, DEFAULT_READMES, traverse
 from accio.select import select, rag
-from accio.render import FORMATS, budget, parse_target
+from accio.render import FORMATS, budget, elide, parse_target
 
 
 def parser():
@@ -59,6 +59,10 @@ def parser():
     p.add_argument("--fudge", metavar="F", type=float, default=0.25,
                    help="how much the last chunk may overshoot"
                         " --target (default: 1/4)")
+    p.add_argument("--elide", action="append", metavar="KIND", default=None,
+                   help="drop the named part of each chunk and keep the"
+                        " node; `kind=body` drops the body of a Python"
+                        " def or class; repeatable")
     p.add_argument("--format", choices=tuple(FORMATS), default=None,
                    metavar="FMT",
                    help="how to encode the selection:"
@@ -121,6 +125,8 @@ def run(args, readmes, patterns, gitignore):
                      args.index_dir, force=args.refresh)
     else:
         chunks = select(traverse(args.path, readmes, patterns, gitignore))
+    for what in [a.split("=")[-1] for a in (args.elide or ())]:
+        chunks = elide(chunks, what)
     if size is not None:
         chunks = budget(chunks, size[0], size[1], args.fudge)
     fmt = args.format or ("paths" if args.paths_only

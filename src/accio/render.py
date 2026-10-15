@@ -47,6 +47,31 @@ def render(chunks, out):
         out.write(_one(chunk))
 
 
+def elide(chunks, what):
+    """A rewrite: drop the named part of each chunk and keep the node.
+
+    `what="body"` drops the body of any chunk that carries a head -- a
+    def or a class -- so a Python file renders as an API summary: the
+    signature, the docstring, and none of the statements below them.  A
+    chunk with no head renders as itself.  A rewrite decides what text
+    each chunk shows, so the node, its chunk_id, its order and its count
+    are untouched, and the elided stream is the same selection rendered
+    differently and not a new one.
+
+    >>> from accio.extract import python
+    >>> src = "def f(a):\\n    '''doc.'''\\n    return a\\n"
+    >>> [(c.breadcrumb, c.text) for c in elide(python("a.py", src), "body")]
+    [('a.py', ''), ('a.py::f', "def f(a):\\n    '''doc.'''\\n"), ('a.py::f#doc', "    '''doc.'''\\n")]
+    """
+    for chunk in chunks:
+        if what == "body":
+            head = chunk.meta.get("head")
+            if head is not None:
+                yield chunk._replace(text=head)
+                continue
+        yield chunk
+
+
 def paths(chunks, out):
     """Write the breadcrumb of each selected chunk, and no contents.
 

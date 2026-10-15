@@ -9,7 +9,7 @@ The whole CLI: turn argv into one bundle() call and write it to stdout.
 import argparse, os, sys
 
 from accio.gather import (DEFAULT_IGNORES, DEFAULT_READMES, bundle,
-                          bundle_paths, render)
+                          bundle_paths, render, wc)
 
 
 def parser():
@@ -36,6 +36,10 @@ def parser():
     p.add_argument("-l", "--paths-only", action="store_true",
                    help="print only the paths that would be gathered,"
                         " one per line, and no contents")
+    p.add_argument("-w", "--wc", action="store_true",
+                   help="print line, word and byte counts per path and an"
+                        " estimated token count for the whole prompt,"
+                        " and no contents")
     return p
 
 
@@ -53,6 +57,9 @@ def main(argv=None):
             for path in bundle_paths(args.path, readmes, patterns,
                                      not args.no_gitignore):
                 sys.stdout.write(f"{path}\n")
+        elif args.wc:
+            wc(bundle(args.path, readmes, patterns, not args.no_gitignore),
+               sys.stdout)
         else:
             render(bundle(args.path, readmes, patterns, not args.no_gitignore),
                    sys.stdout)

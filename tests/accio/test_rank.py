@@ -80,9 +80,6 @@ def test_pagerank_follows_the_parent_path_edge():
 def test_traverse_records_the_parent_path(repo, mk):
     mk("README.md", "root")
     mk("a/x.py", "x = 1\n")
-    chunks = [c for c in select.rag.__globals__["traverse"](
-        [str(repo) + "/a"])] if False else None
-    # direct through traverse for clarity
     from accio.traverse import traverse as t
     got = {c.path: c for c in t([str(repo) + "/a"])}
     import os

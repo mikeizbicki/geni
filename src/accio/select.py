@@ -41,16 +41,20 @@ def rewrite(query, model=None, times=1):
     """Ask dic for a second phrasing of the query.  Paid.
 
     `--expand 1` is one rewrite and `--expand 3` is three; here they
-    are joined with the original by whitespace, which is a bag of words
-    bm25 can rank over and not a fusion.  Step 11 fuses the resulting
-    lists with RRF, which is already there by then, and this is the
-    stub that proves the boundary works.
+    are joined with the original by an explicit OR, which is what
+    expansion means at the FTS5 grammar: whitespace-separated terms are
+    read as an implicit AND, so a rewrite sharing no token with the
+    original would narrow the search instead of widening it.  Step 11
+    fuses the resulting lists with RRF, which is already there by then,
+    and this is the stub that proves the boundary works.
     """
     import dic  # the deliberate exception to the zero-dependency rule
     parts = [query]
     for _ in range(times):
         parts.append(dic.chat(model, REWRITE.format(q=query)))
-    return " ".join(parts)
+    # An OR and not a space: FTS5 ANDs the whitespace-separated terms,
+    # so a space here would *restrict* the search and not expand it.
+    return " OR ".join(p.strip() for p in parts if p.strip())
 
 
 def rag(query, paths, readmes, patterns, gitignore, index_dir=None,

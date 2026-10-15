@@ -74,7 +74,10 @@ def test_bad_expand_names_the_flag(repo, mk, capsys):
 
 
 def test_expand_only_asks_the_model(repo, mk, capsys, fake_dic):
-    mk("a.py", "x = 1\n")
+    # the fake's chat returns "rewritten"; the file must contain it,
+    # or the rewrite is invisible to the ranking and the test asserts
+    # on an empty prompt that would pass with the bug and fail without.
+    mk("a.py", "rewritten x = 1\n")
     assert main(["--rag", "q", "--expand", "1", str(repo)]) == 0
     assert capsys.readouterr().out
 

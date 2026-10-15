@@ -133,5 +133,7 @@ def test_rag_with_expand_rewrites_before_searching(repo, mk, fake_dic):
                             DEFAULT_IGNORES, True, expand=1))
     assert fake_dic.calls["chat"]
     # the rewrite is part of the query, so bm25 can find the answer
-    # whatever the original asked for.
+    # whatever the original asked for: the join is an OR and not an
+    # implicit AND, so "anything" and "xyzzy" are alternatives and not
+    # both required.
     assert any(c.path.endswith("a.py") for c in found)

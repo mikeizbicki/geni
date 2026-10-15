@@ -15,7 +15,7 @@ import argparse, os, sys
 from accio import index
 from accio.traverse import DEFAULT_IGNORES, DEFAULT_READMES, traverse
 from accio.select import select, rag
-from accio.render import FORMATS
+from accio.render import FORMATS, budget, parse_target
 
 
 def parser():
@@ -51,6 +51,14 @@ def parser():
     p.add_argument("--index-dir", metavar="DIR", default=None,
                    help="where the index lives; $ACCIO_INDEX_DIR is"
                         " the default")
+    p.add_argument("--target", metavar="SIZE[UNIT]", default=None,
+                   help="truncate the rendered prompt to about SIZE;"
+                        " bytes by default, k and m for kibibytes and"
+                        " mebibytes, and T, W, L, C for tokens, words,"
+                        " lines and chunks")
+    p.add_argument("--fudge", metavar="F", type=float, default=0.25,
+                   help="how much the last chunk may overshoot"
+                        " --target (default: 1/4)")
     p.add_argument("--format", choices=tuple(FORMATS), default=None,
                    metavar="FMT",
                    help="how to encode the selection:"
@@ -100,11 +108,21 @@ def run(args, readmes, patterns, gitignore):
         index.refresh(conn, args.path, readmes, patterns, gitignore,
                       force=True)
         return 0
+    size = None
+    if args.target is not None:
+        try:
+            size = parse_target(args.target)
+        except ValueError:
+            sys.stderr.write(
+                f"accio: --target: not a size: {args.target}\n")
+            return 1
     if args.rag is not None:
         chunks = rag(args.rag, args.path, readmes, patterns, gitignore,
                      args.index_dir, force=args.refresh)
     else:
         chunks = select(traverse(args.path, readmes, patterns, gitignore))
+    if size is not None:
+        chunks = budget(chunks, size[0], size[1], args.fudge)
     fmt = args.format or ("paths" if args.paths_only
                           else "wc" if args.wc else "prompt")
     FORMATS[fmt](chunks, sys.stdout)

@@ -81,7 +81,7 @@ def lines(path, text):
                   parent=None, meta={})]
 
 
-def _source(text, node, src):
+def _source(node, src):
     """The source of an AST node, sliced by its own line numbers.
 
     `ast.get_source_segment` needs a `col_offset` on every node, which
@@ -136,17 +136,17 @@ def _head(text, node, src):
     """
     body = node.body
     if not body:
-        return _source(text, node, src)
+        return _source(node, src)
     i = 1 if _docstring_node(node) is not None else 0
     if i >= len(body):
-        return _source(text, node, src)
+        return _source(node, src)
     cut = body[i].lineno - 1
     if cut <= node.lineno - 1:
-        return _source(text, node, src)
+        return _source(node, src)
     return "".join(src[node.lineno - 1:cut])
 
 
-def _tail(text, module, src):
+def _tail(module, src):
     """The file's own lines: everything no def or class covers.
 
     Module a file is a root and the defs it holds are its children, so
@@ -168,7 +168,7 @@ def _gather(out, path, text, src, nodes, prefix, parent):
         kind = _kind_of(node)
         if kind is None:
             continue
-        body = _source(text, node, src)
+        body = _source(node, src)
         crumb = f"{prefix}::{node.name}"
         cid = identify(crumb, body)
         meta = {"name": node.name, "line": node.lineno}
@@ -180,7 +180,7 @@ def _gather(out, path, text, src, nodes, prefix, parent):
                          meta=meta))
         doc = _docstring_node(node)
         if doc is not None:
-            doc_body = _source(text, doc, src)
+            doc_body = _source(doc, src)
             doc_crumb = f"{crumb}#doc"
             out.append(Chunk(path=path,
                              chunk_id=identify(doc_crumb, doc_body),
@@ -208,7 +208,7 @@ def python(path, text):
     except SyntaxError:
         return lines(path, text)
     src = text.splitlines(keepends=True)
-    tail = _tail(text, module, src)
+    tail = _tail(module, src)
     root = Chunk(path=path, chunk_id=identify(path, tail),
                  breadcrumb=path, text=tail, kind="file", ord=0,
                  parent=None, meta={})

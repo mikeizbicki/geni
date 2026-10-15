@@ -111,7 +111,7 @@ def indent(text, ctx):
     keep = ctx["lines"]
     if keep and len(lines) > 2 * keep:
         gone = len(lines) - 2 * keep
-        lines = lines[:keep] + [f"<... {gone} lines elided ...>"] + lines[-keep:]
+        lines = [*lines[:keep], f"<... {gone} lines elided ...>", *lines[-keep:]]
     return ["    " + line for line in lines]
 
 

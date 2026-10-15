@@ -111,50 +111,6 @@ def page(text, command):
         sys.stdout.write(text)
 
 
-
-
-def pager_command(env=None):
-    """The pager to pipe through, or None: $DIC_PAGER, then $PAGER, then less.
-
-    A pager is only offered when the program it names is installed, because
-    a command that turned out not to be would lose the log rather than print
-    it.  The default flags are git's own: -F quits at once when the whole log
-    fits one screen, -R keeps whatever colour the caller saw, and -X leaves
-    the screen's contents alone, so a reader who quit the pager to read the
-    shell underneath does not find it cleared.
-
-    >>> pager_command({"PAGER": "cat"})
-    'cat'
-    >>> pager_command({"DIC_PAGER": "cat", "PAGER": "less"})
-    'cat'
-    >>> pager_command({"PAGER": "no-such-pager-xyz"}) is None
-    True
-    >>> pager_command({"PAGER": "cat -n"})
-    'cat -n'
-    """
-    env = os.environ if env is None else env
-    for variable in ("DIC_PAGER", "PAGER"):
-        command = env.get(variable)
-        if command and shutil.which(shlex.split(command)[0]):
-            return command
-    return "less -FRX" if shutil.which("less") else None
-
-
-def page(text, command):
-    """Write text through a pager, falling back to stdout when it will not run.
-
-    A pager that exits first -- a reader who quit three lines in -- is not a
-    failure to report, and a pager that was never there is the log arriving
-    all at once, which is worse than the log.
-    """
-    sys.stdout.flush()
-    try:
-        subprocess.run(shlex.split(command), input=text.encode("utf-8"),  # noqa: S603
-                       check=False)
-    except OSError:
-        sys.stdout.write(text)
-
-
 def osc52(text, out=None):
     """Copy text to the terminal's own clipboard with one OSC 52 sequence.
 

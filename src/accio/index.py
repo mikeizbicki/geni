@@ -34,7 +34,7 @@ embedding cost, and a query plan a human can read.
 """
 import contextlib, hashlib, json, os, sqlite3, subprocess
 
-from accio.extract import Chunk, lines
+from accio.extract import Chunk, by_extension
 from accio.traverse import canvassed, read
 
 
@@ -173,7 +173,7 @@ def refresh(conn, paths, readmes, patterns, gitignore, force=False):
         if text is None:
             continue
         drop_file(conn, path)
-        for chunk in lines(path, text):
+        for chunk in by_extension(path, text):
             add_chunk(conn, chunk)
         conn.execute(
             "INSERT INTO files(path, mtime, size) VALUES(?,?,?)"

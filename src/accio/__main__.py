@@ -51,6 +51,14 @@ def parser():
     p.add_argument("--index-dir", metavar="DIR", default=None,
                    help="where the index lives; $ACCIO_INDEX_DIR is"
                         " the default")
+    p.add_argument("--embed", nargs="?", const="", default=None,
+                   metavar="MODEL",
+                   help="build the vector index and rank with it;"
+                        " the only paid path")
+    p.add_argument("--expand", nargs="?", const="1", default=None,
+                   metavar="N",
+                   help="rewrite the QUERY with the generation model,"
+                        " N times (default: 1); paid")
     p.add_argument("--target", metavar="SIZE[UNIT]", default=None,
                    help="truncate the rendered prompt to about SIZE;"
                         " bytes by default, k and m for kibibytes and"
@@ -107,11 +115,33 @@ def run(args, readmes, patterns, gitignore):
                       args.index_dir, sys.stdout)
         sys.stdout.flush()
         return 0
+    embed_model = None
+    if args.embed is not None:
+        embed_model = args.embed or index.DEFAULT_EMBED_MODEL
+    if args.rag is None and embed_model is not None:
+        # The SPEC's `accio --embed src/`: build the index and print
+        # what it embedded, and no prompt.  The cost of the dic call is
+        # in dic's ledger; the count is what this line reports.
+        conn = index.open_(args.path, args.index_dir)
+        index.refresh(conn, args.path, readmes, patterns, gitignore,
+                      force=args.refresh)
+        n = index.embed(conn, embed_model)
+        sys.stdout.write(f"embedded {n} chunks with {embed_model}\n")
+        sys.stdout.flush()
+        return 0
     if args.refresh and args.rag is None:
         conn = index.open_(args.path, args.index_dir)
         index.refresh(conn, args.path, readmes, patterns, gitignore,
                       force=True)
         return 0
+    expand = 0
+    if args.expand is not None:
+        try:
+            expand = int(args.expand)
+        except ValueError:
+            sys.stderr.write(
+                f"accio: --expand: not a number: {args.expand}\n")
+            return 1
     size = None
     if args.target is not None:
         try:
@@ -122,7 +152,8 @@ def run(args, readmes, patterns, gitignore):
             return 1
     if args.rag is not None:
         chunks = rag(args.rag, args.path, readmes, patterns, gitignore,
-                     args.index_dir, force=args.refresh)
+                     args.index_dir, force=args.refresh,
+                     embed_model=embed_model, expand=expand)
     else:
         chunks = select(traverse(args.path, readmes, patterns, gitignore))
     for what in [a.split("=")[-1] for a in (args.elide or ())]:

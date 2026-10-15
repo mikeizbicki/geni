@@ -1,5 +1,19 @@
 """The CLI: a flag reaches the pipeline it names."""
+import sys, types
+
+import pytest
+
 from accio.__main__ import main
+
+
+@pytest.fixture
+def fake_dic(monkeypatch):
+    """A free, offline `dic`, so a paid flag can be tested in pytest."""
+    mod = types.ModuleType("dic")
+    mod.embed = lambda model, texts: [[1.0, 0.0] for _ in texts]
+    mod.chat = lambda model, prompt: "rewritten"
+    monkeypatch.setitem(sys.modules, "dic", mod)
+    return mod
 
 
 def test_target_truncates_the_prompt(repo, mk, capsys):
@@ -39,6 +53,30 @@ def test_fudge_widens_the_cap(repo, mk, capsys, monkeypatch):
     assert capsys.readouterr().out.count("---\n") == 4
     assert main(["--target", "35", "--fudge", "0", "."]) == 0
     assert capsys.readouterr().out.count("---\n") == 2
+
+
+def test_embed_alone_builds_and_exits(repo, mk, capsys, monkeypatch,
+                                      fake_dic):
+    mk("a.py", "x = 1\n")
+    monkeypatch.chdir(repo)
+    assert main(["--embed", "m", "."]) == 0
+    out = capsys.readouterr().out
+    assert "embedded" in out
+    assert "---\n" not in out       # no prompt
+
+
+def test_bad_expand_names_the_flag(repo, mk, capsys):
+    mk("a.py", "x = 1\n")
+    assert main(["--rag", "q", "--expand", "three", str(repo)]) == 1
+    err = capsys.readouterr().err
+    assert "--expand" in err
+    assert "three" in err
+
+
+def test_expand_only_asks_the_model(repo, mk, capsys, fake_dic):
+    mk("a.py", "x = 1\n")
+    assert main(["--rag", "q", "--expand", "1", str(repo)]) == 0
+    assert capsys.readouterr().out
 
 
 def test_elide_body_at_the_cli(repo, mk, capsys, monkeypatch):

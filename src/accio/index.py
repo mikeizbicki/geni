@@ -32,7 +32,7 @@ Nothing here calls a model.  The BM25 query is answered by sqlite, in
 the binary `dic` already depends on: no imports, no API key, no
 embedding cost, and a query plan a human can read.
 """
-import contextlib, hashlib, json, os, sqlite3, subprocess
+import array, contextlib, hashlib, json, math, os, sqlite3, subprocess
 
 from accio.extract import Chunk, by_extension
 from accio.traverse import canvassed, read
@@ -63,6 +63,18 @@ CREATE TABLE IF NOT EXISTS files(
     size  INTEGER NOT NULL
 );
 """
+
+
+# What --embed uses when no model is named, and the size of one
+# request.  A model default is a stability default: every vector row
+# carries the embedder that made it, so naming a different one is an
+# explicit rebuild and not a silent one.
+DEFAULT_EMBED_MODEL = "text-embedding-3-small"
+
+# 128 chunks a request is about a hundred times cheaper per chunk than
+# one request per chunk; the SPEC calls this the dominant cost decision
+# and it is, so it is one constant in one place.
+BATCH = 128
 
 
 def home(paths, override=None):
@@ -231,6 +243,105 @@ def search(conn, query):
            " WHERE docs MATCH ?"
            " ORDER BY bm25(docs), c.path, c.id")
     for row in conn.execute(sql, (query,)):
+        meta = json.loads(row["meta"])
+        yield Chunk(path=row["path"], chunk_id=row["id"],
+                    breadcrumb=row["breadcrumb"], text=row["text"],
+                    kind=meta.pop("kind", "file"),
+                    ord=meta.pop("ord", 0),
+                    parent=meta.pop("parent", None),
+                    meta=meta)
+
+
+def _normalize(vec):
+    """Scale a vector to unit length, so cosine is a dot product.
+
+    Normalizing at embed time and not at query time means a row's cost
+    is paid once, when the model was asked for it, and every query
+    afterwards is a plain dot product -- the SPEC's fifteen-millisecond
+    brute force over a hundred thousand rows, which is why there is no
+    ANN index and no sqlite-vec until a corpus is in the millions.
+    """
+    length = math.sqrt(sum(x * x for x in vec)) or 1.0
+    return [x / length for x in vec]
+
+
+def _pack(vec):
+    """A vector as a sqlite blob: float32 in the machine's byte order.
+
+    Four bytes an element is the SPEC's schema's row.  fp16 and int8
+    are cheaper and lossy and are the SPEC's step 12, and this is not
+    that step.
+    """
+    return array.array("f", vec).tobytes()
+
+
+def _unpack(blob):
+    """The vector a blob holds."""
+    a = array.array("f")
+    a.frombytes(blob)
+    return a
+
+
+def embed(conn, model=DEFAULT_EMBED_MODEL, force=False):
+    """Fill the vector column for the chunks that need one.  Paid.
+
+    The call is `dic.embed` imported as a library and never as a
+    subprocess, so dic records it in its ledger and this is not a
+    second ledger -- the SPEC's one rule at the dic boundary.  The
+    import is inside the function so that a walk that never asks for
+    a model never pays for it.
+
+    A chunk whose embedder is not `model` is re-embedded: the SPEC
+    says an embedder change is a background rebuild and not downtime,
+    and this is the rebuild.  `force` re-embeds every chunk even when
+    the embedder already matches, which is what a corpus embedded
+    with a buggy client -- and not a buggy model -- would need.
+
+    Returns the number of chunks embedded, which is what `--embed`
+    alone prints instead of a prompt.
+    """
+    import dic  # the deliberate exception to the zero-dependency rule
+    rows = list(conn.execute(
+        "SELECT id, breadcrumb, text, embedder, vector FROM chunks"))
+    if force:
+        pending = rows
+    else:
+        pending = [r for r in rows
+                   if r["vector"] is None or r["embedder"] != model]
+    total = 0
+    for start in range(0, len(pending), BATCH):
+        batch = pending[start:start + BATCH]
+        texts = [r["breadcrumb"] + "\n" + r["text"] for r in batch]
+        vecs = dic.embed(model, texts)
+        for row, vec in zip(batch, vecs):
+            conn.execute(
+                "UPDATE chunks SET embedder=?, vector=? WHERE id=?",
+                (model, _pack(_normalize(vec)), row["id"]))
+        conn.commit()
+        total += len(batch)
+    return total
+
+
+def veclist(conn, model, query):
+    """Rank chunks by cosine similarity to the query vector.  Paid.
+
+    One `dic.embed` call for the query; the rows are scored by a plain
+    dot product because their vectors are unit length, and the tie is
+    broken on `(path, chunk_id)` for the same reason `search` breaks it
+    there: the same tree and the same query must print the same bytes
+    in the same order, or two runs cannot be diffed and the output is
+    not a prompt prefix `dic --cache` can reuse.
+    """
+    import dic
+    (qvec,) = dic.embed(model, [query])
+    q = array.array("f", _normalize(qvec))
+    scored = [
+        (sum(a * b for a, b in zip(_unpack(row["vector"]), q)), row)
+        for row in conn.execute(
+            "SELECT id, path, breadcrumb, text, meta, vector FROM chunks"
+            " WHERE vector IS NOT NULL AND embedder=?", (model,))]
+    scored.sort(key=lambda p: (-p[0], p[1]["path"], p[1]["id"]))
+    for _, row in scored:
         meta = json.loads(row["meta"])
         yield Chunk(path=row["path"], chunk_id=row["id"],
                     breadcrumb=row["breadcrumb"], text=row["text"],

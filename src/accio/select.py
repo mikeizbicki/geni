@@ -7,8 +7,25 @@ relevance to a query through the index `accio.index` keeps.  Both
 produce chunks, so everything after them -- the renderer, the
 projections -- is unchanged, and a later lens is a new function and
 not a new pipeline.
+
+Two of the flags that tune the ranking cost money.  `--embed` fills
+the vector column the index keeps and ranks by it; `--expand` asks the
+generation model for a second phrasing of the query.  Both speak to
+`dic` imported as a library and never as a subprocess, so there is one
+ledger -- dic's -- and this is not a second one.
 """
 from accio import index
+
+
+# The prompt `--expand` sends.  A model told to explain its reasoning
+# would spend the ask and not the answer, and the answer is the ask:
+# one line, no preamble, the rewritten query alone.
+REWRITE = (
+    "Rewrite the following search query so it matches the way a"
+    " programmer would have written the code it is looking for."
+    " Reply with the rewritten query alone and nothing else.\n\n"
+    "{q}\n"
+)
 
 
 def select(chunks):
@@ -20,8 +37,24 @@ def select(chunks):
     return chunks
 
 
+def rewrite(query, model=None, times=1):
+    """Ask dic for a second phrasing of the query.  Paid.
+
+    `--expand 1` is one rewrite and `--expand 3` is three; here they
+    are joined with the original by whitespace, which is a bag of words
+    bm25 can rank over and not a fusion.  Step 11 fuses the resulting
+    lists with RRF, which is already there by then, and this is the
+    stub that proves the boundary works.
+    """
+    import dic  # the deliberate exception to the zero-dependency rule
+    parts = [query]
+    for _ in range(times):
+        parts.append(dic.chat(model, REWRITE.format(q=query)))
+    return " ".join(parts)
+
+
 def rag(query, paths, readmes, patterns, gitignore, index_dir=None,
-        force=False):
+        force=False, embed_model=None, expand=0, expand_model=None):
     """Rank the chunks of the given paths by BM25 relevance to query.
 
     The index is opened and refreshed from the same walk that plain
@@ -31,9 +64,21 @@ def rag(query, paths, readmes, patterns, gitignore, index_dir=None,
     already depends on -- so there is no import, no API key and no
     embedding cost; a typo in a flag cannot make this spend.
 
+    Two things can make it spend.  `embed_model` fills the vector
+    column (what `--embed` paid for) and ranks with it, one `dic.embed`
+    call for the query and a dot product per row.  `expand` rewrites
+    the query `dic.chat` many times before either ranking runs; the
+    rewrite is a lens of its own, and step 11 fuses the two lists with
+    RRF rather than joining the text here.
+
     A tie in BM25 is broken on `(path, chunk_id)`, which is what keeps
     the output byte-identical between two runs over the same tree.
     """
     conn = index.open_(paths, index_dir)
     index.refresh(conn, paths, readmes, patterns, gitignore, force=force)
+    if expand:
+        query = rewrite(query, model=expand_model, times=expand)
+    if embed_model is not None:
+        index.embed(conn, embed_model)
+        return index.veclist(conn, embed_model, query)
     return index.search(conn, query)

@@ -27,19 +27,15 @@ def test_bad_target_names_the_flag(repo, mk, capsys):
     assert "eight" in err
 
 
-def test_fudge_widens_the_cap(repo, mk, capsys):
+def test_fudge_widens_the_cap(repo, mk, capsys, monkeypatch):
     mk("a.py", "x = 1\n")
     mk("b.py", "y = 2\n")
     # an absolute path makes the breadcrumb the whole /tmp path, which
     # dwarfs the target; chdir first so the arithmetic is a.py's.
     # "a.py\n---\nx = 1\n---\n" is 19 bytes: 19 + 19 = 38 against 35,
     # three over, inside a quarter.
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.chdir(repo)
-    try:
-        assert main(["--target", "35", "."]) == 0
-        assert capsys.readouterr().out.count("---\n") == 4
-        assert main(["--target", "35", "--fudge", "0", "."]) == 0
-        assert capsys.readouterr().out.count("---\n") == 2
-    finally:
-        monkeypatch.undo()
+    assert main(["--target", "35", "."]) == 0
+    assert capsys.readouterr().out.count("---\n") == 4
+    assert main(["--target", "35", "--fudge", "0", "."]) == 0
+    assert capsys.readouterr().out.count("---\n") == 2

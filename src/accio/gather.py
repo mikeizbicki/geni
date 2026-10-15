@@ -288,6 +288,10 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
            gitignore=True):
     """Yields (path, text) for all that is to be printed, context once.
 
+    The path yielded is the normalized key the run deduplicates on, not
+    the spelling the walk happened to build, so `accio .` and `accio ./`
+    print one tree and a path named twice is summoned once.
+
     A context file is printed the first time some file needs it and never
     again, so the root README arrives with the first file beneath it and
     the thousandth file of the tree does not repeat it.  Context is
@@ -319,22 +323,23 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
             seen.add(key)
             text = read(context)
             if text is not None:
-                yield context, text
+                yield key, text
         key = os.path.normpath(path)
         if key in seen:
             continue
         seen.add(key)
         text = read(path)
         if text is not None:
-            yield path, text
+            yield key, text
 
 
 def bundle_paths(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
                  gitignore=True):
     """The paths bundle() would emit, in the order it would emit them.
 
-    Same traversal, same ancestor walk, same dedup -- a projection of
-    bundle() and not a second implementation of it.
+    Same traversal, same ancestor walk, same dedup, same normalized
+    spelling -- a projection of bundle() and not a second implementation
+    of it.
 
     >>> import tempfile
     >>> d = tempfile.mkdtemp()

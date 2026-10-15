@@ -125,7 +125,7 @@ def _docstring_node(node):
     return first
 
 
-def _head(text, node, src):
+def _head(node, src):
     """A def's signature and docstring, without the statements below them.
 
     That is what `--elide kind=body` leaves behind: a signature says how
@@ -172,7 +172,7 @@ def _gather(out, path, text, src, nodes, prefix, parent):
         crumb = f"{prefix}::{node.name}"
         cid = identify(crumb, body)
         meta = {"name": node.name, "line": node.lineno}
-        head = _head(text, node, src)
+        head = _head(node, src)
         if head != body:
             meta["head"] = head
         out.append(Chunk(path=path, chunk_id=cid, breadcrumb=crumb,

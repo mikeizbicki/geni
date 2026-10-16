@@ -137,7 +137,10 @@ function committe-prepare() {
     # bare dic all resolve in the child exactly as they did in the
     # parent, and the parent's own ref is not touched at all.
     COMMITTE_PARENT="${DIC_SESSION:-global}"
-    COMMITTE_CHILD="$COMMITTE_PARENT/committe-$(worktree-token "$COMMITTE_PARENT")"
+    # The parent is already the path prefix, so the token carries none of
+    # it: feeding the parent's own name in would make each level of
+    # nesting cost the whole name again.
+    COMMITTE_CHILD="$COMMITTE_PARENT/committe-$(worktree-token)"
 
     local headfile; headfile=$(committe-headfile)
     mkdir -p "$(dirname "$headfile")"
@@ -151,7 +154,6 @@ function committe-prepare() {
         : > "$headfile"
     fi
 
-    export DIC_SESSION="$COMMITTE_CHILD"
     return 0
 }
 
@@ -198,8 +200,15 @@ function committe-run() {
     # response: a second sample of a prompt is a second patch.  A
     # provider that made the call deterministic would need `-o seed=N`,
     # at the cost of the prompt cache.
-    dic-run "$llm_command" --prepend-prompt "$(committe-prompt)" \
-        "${COMMITTE_ARGS[@]}" > "$(committe-patchfile)"
+    #
+    # The child session is set on this one call and never exported: an
+    # export would replace the caller's session for the rest of the
+    # shell, so each later fork would nest under the last and the name
+    # -- a single filename, with the '/' of the hierarchy escaped --
+    # would grow past NAME_MAX.
+    DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" --prepend-prompt \
+        "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
+        > "$(committe-patchfile)"
 }
 
 function committe-has-patch() {

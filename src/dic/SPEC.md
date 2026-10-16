@@ -44,9 +44,10 @@ each other by their full package name.
 Whenever possible, names and semantics remain the same as simonw's `llm`.
 
 The command line is a tree of commands: the call is the default, and every
-other command is a readout that answers a question about the database and
-never calls a model.  Each command takes the options of its own row, plus
-the globals `-v`, `-q` and `--models-file`, which every command accepts.
+other command answers from the local state -- the database, or a session's
+ref -- and never calls a model.  Each command takes the options of its own
+row, plus the globals `-v`, `-q` and `--models-file`, which every command
+accepts.
 The command name must be `argv[0]`: a word that is not a command name is the
 call's prompt.
 
@@ -59,6 +60,9 @@ call's prompt.
 | `dic cost` | `commands.cost` | `--session NAME` `--tree` `--of REF` |
 | `dic show` | `commands.show` | `REF` |
 | `dic bps` | `bps.bps` | `-m/--model PAT` `--upstream PAT` `--format=csv\|svg` `--where SQL` |
+| `dic rev-parse` | `commands.rev_parse` | `[NAME]` |
+| `dic branch` | `commands.branch` | `[NAME [START]]` `-d` `-D` |
+| `dic update-ref` | `commands.update_ref` | `NAME [NEW [OLD]]` `-d` |
 
 | short form | long form      | meaning |
 | ---------- | -------------- | ------- |
@@ -514,6 +518,15 @@ same level, and neither is in the way of the other.
 This location is a tmpfs, so the pointers are wiped on logout and reboot with no garbage collection,
 no liveness checking, and no locking beyond an atomic rename.
 The file's mtime serves as the "last used" time for free.
+The file is a ref and is read and written as one: `dic rev-parse NAME` is
+its value, `dic branch` draws the sessions as the tree their names spell,
+`dic branch NAME START` forks one, `dic update-ref NAME NEW [OLD]` moves
+one, and `dic branch -d NAME` or `dic update-ref -d NAME` removes one.
+OLD is `git update-ref`'s own compare-and-swap -- the move fails unless the
+ref still holds it -- and it is what lets a harness merge a forked branch
+back without clobbering a parent that moved meanwhile.  No wrapper derives
+the name-to-file rule for itself: the escaping lives in one function, and
+these verbs are how anything else reaches it.
 There is deliberately no `sessions` table in sqlite:
 session state is ephemeral, and the message tree in sqlite is immutable and append-only.
 What a row stores instead is the *name* of the session that wrote it -- one

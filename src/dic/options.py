@@ -222,6 +222,30 @@ def parser():
                                help="the prompt, or stdin")
         if command == "show":
             where.add_argument("ref", nargs="?", help="the message to print")
+        if command == "rev-parse":
+            where.add_argument("name", nargs="?",
+                               help="the session to resolve; the default is"
+                                    " this shell's $DIC_SESSION")
+        if command == "branch":
+            where.add_argument("name", nargs="?",
+                               help="the session to create or delete; with no"
+                                    " name, list every session as a tree")
+            where.add_argument("start", nargs="?",
+                               help="what the new session starts from; the"
+                                    " default is this shell's $DIC_SESSION")
+            where.add_argument("-d", dest="delete", action="store_true",
+                               help="delete the session, refusing this shell's"
+                                    " own and one with sub-sessions")
+            where.add_argument("-D", dest="force", action="store_true",
+                               help="delete the session regardless")
+        if command == "update-ref":
+            where.add_argument("name", help="the session to move")
+            where.add_argument("new", nargs="?",
+                               help="the mid to point it at")
+            where.add_argument("old", nargs="?",
+                               help="fail unless it currently points here")
+            where.add_argument("-d", dest="delete", action="store_true",
+                               help="delete the session instead of moving it")
         # the merge above already made the parent's groups here, so they are
         # found by title: a second group of the same name would print the
         # heading twice, because argparse does not look before it appends

@@ -25,7 +25,7 @@ from dic import config, output, price
 from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
-                       session_read, session_write, store_attachment,
+                       session_head, session_move, store_attachment,
                        turns_from_rows, ulid)
 from dic.tty import (INFO, PAYLOAD, RESET, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
@@ -539,7 +539,7 @@ def dic(prompt,
         raise DicError("pick one: -c or --mid")
 
     prev_mid = (resolve_ref(conn, knobs["mid"], env) if knobs["mid"]
-                else (session_read(env) if knobs["cont"] else None))
+                else (session_head(env) if knobs["cont"] else None))
     if knobs["cont"] and not prev_mid:
         # -c with no pointer is an error: never a new conversation, and never
         # somebody else's
@@ -989,7 +989,7 @@ def dic(prompt,
     # is left alone, so the row is always a leaf and never replayed
     if wire["status"] != 200:
         raise DicError(f"{wire['status']} {wire.get('error')}")
-    session_write(mid, env)
+    session_move(env, mid)
 
     out.flush()
 

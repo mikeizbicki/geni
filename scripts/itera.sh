@@ -5,7 +5,30 @@
 # budget caps the asking.  committe is what talks to the model, so this file
 # never reaches a provider itself.
 #
-#     itera [--max N] [--test CMD] 'request'
+#     itera [--max N] [--test CMD] [--allow-red] 'request'
+#     itera --continue
+#     itera --abort
+#     itera --skip
+#
+# itera is a four-step harness (see scripts/AGENTS.md):
+#
+#   itera-validate   pure: is this run possible at all
+#   itera-prepare    branch and record where the run started
+#   itera-run        the round loop
+#   itera-record     checkout the original and merge the loop branch, on success
+#
+# and itera-fail, which is not a step: it prints the resume line.
+#
+# The loop branch is what isolates a run.  HEAD moves to geni/itera-<token>
+# at prepare, the rounds commit there, and itera-record moves HEAD back to
+# the original and merges.  A failure leaves the user on the loop branch
+# with the commits still there -- nothing is cleaned up on a failure path --
+# and --continue and --abort are how they carry on or get back.
+#
+# itera does not fork DIC_SESSION: each round's committe does that itself,
+# and it does it at its own prepare, so round 1's -c reads the session the
+# user was already in.  A forked session at itera-prepare time would be a
+# second ref that nothing here needs.
 #
 # itera's own flags are parsed first; the first `--` ends them, and
 # everything after -- including a flag itera does not know, such as -c --
@@ -28,8 +51,7 @@
 # point, _DIC_LOADED is already set and this line does nothing.
 [[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
 
-# The test command when the caller names none, and the git-state check a
-# round must pass.  Both are pure functions of the tree.
+# The round budget when the caller names none.
 ITERA_MAX=${ITERA_MAX:-5}
 
 # Where a finished run leaves its elapsed seconds, one per line, so the next
@@ -48,10 +70,10 @@ ITERA_MAX=${ITERA_MAX:-5}
 # so it is close enough for a progress label.  The honest fix -- record
 # the commit each sample was taken on and only weight the ancestors of
 # HEAD -- is not worth it for that edge case.  Left for later.
-itera-ema-file() {
+itera-times-file() {
     local dir
     dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-    printf '%s\n' "${ITERA_EMA:-$dir/geni/itera/test-times}"
+    printf '%s\n' "${ITERA_TIMES:-$dir/geni/itera/test-times}"
 }
 
 # The mean of the last 20 runs, in seconds, or empty when there is no
@@ -62,7 +84,7 @@ itera-ema-file() {
 # directions on a tree that reconfigures its test output.
 itera-estimate() {
     local file
-    file=$(itera-ema-file) || return 0
+    file=$(itera-times-file) || return 0
     [[ -s $file ]] || return 0
     tail -n 20 "$file" | awk '{s += $1} END {printf "%.1f", s / NR}'
 }
@@ -70,19 +92,66 @@ itera-estimate() {
 # Record one elapsed time, given as $1 seconds.  Called only after a test
 # that passed: a timeout or an interrupted run is not a completion time and
 # would drag the next estimate with it.
-itera-record-test() {
+itera-record-time() {
     local file
-    file=$(itera-ema-file) || return 0
+    file=$(itera-times-file) || return 0
     # the times file lives under .git/geni/itera/, which a fresh
     # checkout does not have yet
     mkdir -p "$(dirname "$file")"
     printf '%.3f\n' "$1" >> "$file"
 }
 
-# Whether the tree is clean enough for a round to commit into.  Printed and
-# refused, because committe commits, and a dirty tree makes its diff
-# something other than the round's.
-itera-require-clean-tree() {
+# ---------------------------------------------------------------- state
+
+# Where a run keeps the facts about itself.  Worktree-local and not
+# repo-shared, because the original branch and the original head are facts
+# about this checkout and not about the project.  One directory and not one
+# per token: a second itera in the same worktree would be a second HEAD,
+# which git does not allow, so the directory names the worktree.
+itera-state-dir() {
+    local dir
+    dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+    printf '%s\n' "$dir/geni/itera"
+}
+
+# Record what a later --continue or --abort needs.  One file per fact, so a
+# half-written state is a missing file and not a malformed one.
+itera-state-write() {
+    mkdir -p "$ITERA_STATE" || return 1
+    printf '%s\n' "$ITERA_ORIGINAL_BRANCH" > "$ITERA_STATE/original-branch"
+    printf '%s\n' "$ITERA_ORIGINAL_HEAD" > "$ITERA_STATE/original-head"
+    printf '%s\n' "$ITERA_BRANCH" > "$ITERA_STATE/branch"
+    printf '%s\n' "$test_cmd" > "$ITERA_STATE/test-cmd"
+    printf '%s\n' "$ITERA_REQUEST" > "$ITERA_STATE/request"
+}
+
+# Read what itera-prepare recorded, or refuse.  $1 names what the caller
+# wanted to do, so the message says which command has nothing to work on.
+itera-state-read() {
+    ITERA_STATE=$(itera-state-dir) || return 1
+    local f
+    for f in original-branch original-head branch test-cmd; do
+        if [[ ! -f "$ITERA_STATE/$f" ]]; then
+            dic-error "itera-error: no itera state; nothing to $1"
+            return 1
+        fi
+    done
+    ITERA_ORIGINAL_BRANCH=$(cat "$ITERA_STATE/original-branch")
+    ITERA_ORIGINAL_HEAD=$(cat "$ITERA_STATE/original-head")
+    ITERA_BRANCH=$(cat "$ITERA_STATE/branch")
+    test_cmd=$(cat "$ITERA_STATE/test-cmd")
+    ITERA_REQUEST=$(cat "$ITERA_STATE/request" 2>/dev/null || echo "")
+}
+
+# -------------------------------------------------------------- validate
+
+# Pure: no model call, no ref moved.  Detects the test command, refuses a
+# dirty tree, and runs the pre-flight unless --allow-red.  The clean-tree
+# check is here and not in committe because itera commits every round, and
+# a dirty tree would make the round's commit something other than the
+# round's patch.
+itera-validate() {
+    test_cmd=$(itera-detect-test) || return 1
     if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
         dic-error 'itera-error: working tree has uncommitted changes'
         return 1
@@ -91,6 +160,157 @@ itera-require-clean-tree() {
         dic-error 'itera-error: staging area is non-empty'
         return 1
     fi
+    if (( ! ITERA_ALLOW_RED )); then
+        if ! itera-run-tests; then
+            dic-error 'itera-error: tests do not pass before starting'
+            dic-hint 'itera-hint: pass --allow-red to start anyway'
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# --------------------------------------------------------------- prepare
+
+# Branch and record.  The loop branch is what isolates a run: the original
+# stays where it is, the rounds commit on the branch, and itera-record
+# moves HEAD back and merges.  Nothing is forked in DIC_SESSION -- each
+# round's committe does that itself -- so round 1's -c reads the session
+# the user was already in.
+itera-prepare() {
+    local branch
+    branch=$(git symbolic-ref --quiet --short HEAD) || {
+        dic-error 'itera-error: detached HEAD; check out a branch first'
+        return 1
+    }
+    ITERA_ORIGINAL_BRANCH=$branch
+    ITERA_ORIGINAL_HEAD=$(git rev-parse HEAD) || return 1
+    ITERA_BRANCH="geni/itera-$(worktree-token "$branch")"
+    ITERA_STATE=$(itera-state-dir) || return 1
+
+    itera-state-write || return 1
+
+    dic-run git checkout --quiet -b "$ITERA_BRANCH" || {
+        dic-error "itera-error: could not create branch $ITERA_BRANCH"
+        return 1
+    }
+    return 0
+}
+
+# ------------------------------------------------------------------- run
+
+# The loop: pre-flight is already done, so round 1 asks the model and a
+# later round continues the conversation with the failing output.  The
+# starting round is $1, so --continue can re-enter at round 2 without
+# re-asking the request.  committe's own exit status is the loop's, so a
+# question the model asked reaches the caller as 2 and not as a failure.
+itera-run() {
+    local round=${1:-1}
+    local status
+    while (( round <= ITERA_MAX )); do
+        if (( round == 1 )); then
+            committe "${ITERA_ARGS[@]}"
+        else
+            # -c continues the round-1 conversation, and the failed
+            # round's output is the request for this one: dic appends a
+            # non-tty stdin after a blank line, so the model reads what
+            # went red beside the code it wrote.  A herestring is one
+            # pipe and no subshell, so committe's fd 0 is stdin exactly
+            # as a heredoc would make it.
+            committe -c <<< "$itera_test_output"
+        fi
+        status=$?
+        if (( status != 0 )); then
+            return "$status"
+        fi
+        if itera-run-tests; then
+            dic-info "itera: green after $round round(s)"
+            return 0
+        fi
+        round=$((round + 1))
+    done
+    dic-error "itera-error: hit ITERA_MAX=$ITERA_MAX without green"
+    return 1
+}
+
+# ---------------------------------------------------------------- record
+
+# On success, go back to the original branch and merge the loop branch
+# into it.  A fast-forward is the usual case -- no other commit has landed
+# meanwhile -- and --no-edit keeps a true merge from opening an editor.
+itera-record() {
+    dic-run git checkout --quiet "$ITERA_ORIGINAL_BRANCH" || return 1
+    if ! dic-run git merge --no-edit "$ITERA_BRANCH"; then
+        dic-error "itera-error: merge into $ITERA_ORIGINAL_BRANCH failed"
+        dic-hint "itera-hint: the loop branch is $ITERA_BRANCH"
+        return 1
+    fi
+    git branch -D "$ITERA_BRANCH" >/dev/null 2>&1 || true
+    rm -rf "$ITERA_STATE" 2>/dev/null || true
+    return 0
+}
+
+# ------------------------------------------------------------------ fail
+
+# Not a step: the resume line, and the one place the loop branch is named.
+# Nothing is cleaned up here -- the loop branch already holds the work, and
+# the user is standing on it.
+itera-fail() {
+    dic-error "itera-error: $1"
+    if [[ -n ${ITERA_BRANCH:-} ]]; then
+        dic-hint "itera-hint: the loop branch is $ITERA_BRANCH"
+        dic-hint "itera-hint: 'itera --continue' to keep going, 'itera --abort' to go back"
+    fi
+}
+
+# ------------------------------------------------------ resume and abort
+
+# Back to the original branch, with the loop branch left as it is.  A
+# failure leaves the work on the loop branch and the user standing on it;
+# this is how they get back without losing it.
+itera-abort() {
+    itera-state-read abort || return 1
+    dic-run git checkout --quiet "$ITERA_ORIGINAL_BRANCH" || return 1
+    dic-info "itera-info: back on $ITERA_ORIGINAL_BRANCH"
+    dic-hint "itera-hint: the loop branch $ITERA_BRANCH is still there"
+    dic-hint "itera-hint: remove it with: git branch -D $ITERA_BRANCH"
+    return 0
+}
+
+# Re-enter the loop from where the last run stopped.  The tests are run
+# once here, so a tree that has since gone green is recorded without asking
+# the model anything; a tree that is still red enters the loop at round 2,
+# which is the round that says `committe -c`.
+itera-continue() {
+    itera-state-read continue || return 1
+    if itera-run-tests; then
+        itera-record
+        return $?
+    fi
+    if itera-run 2; then
+        itera-record
+        return $?
+    fi
+    itera-fail "the loop did not go green"
+    return 1
+}
+
+# Commit the working tree and continue.  A manual checkpoint: the user
+# knows better than the tests whether the tree is worth saving, and this is
+# how a round the model left half-done becomes a commit the next round can
+# build on.
+itera-skip() {
+    itera-state-read skip || return 1
+    dic-run git add -A || return 1
+    if ! dic-run git commit --quiet -m '[geni] itera: manual checkpoint'; then
+        dic-info "itera-info: nothing to commit"
+    fi
+    if itera-run 2; then
+        itera-record
+        return $?
+    fi
+    itera-fail "the loop did not go green"
+    return 1
 }
 
 # Guess the test command from the tree: ./test.sh wins because a project
@@ -167,7 +387,7 @@ itera-run-tests() {
         # also a data point and there is only one place a run is timed.
         elapsed=$(awk -v s="$start" -v e="$(date +%s.%N)" \
             'BEGIN { printf "%.3f", e - s }')
-        itera-record-test "$elapsed"
+        itera-record-time "$elapsed"
         return 0
     fi
     printf '\n' >&2                    # close pv's line before the dump
@@ -175,60 +395,51 @@ itera-run-tests() {
     return "$status"
 }
 
-# The loop: pre-flight, then rounds until green or the budget runs out.
+# ----------------------------------------------------------------- entry
+
+# itera's own flags are parsed first; the first `--` ends them, and
+# everything after is passed to committe, which passes it on to dic.
 itera() {
-    local max=${ITERA_MAX}
+    ITERA_ALLOW_RED=0
+    local mode=run
     local -a llm_args=()
     while (( $# )); do
         case $1 in
-            --max) max=$2; shift 2 ;;
-            --test) ITERA_TEST=$2; shift 2 ;;
-            --) shift; llm_args+=("$@"); break ;;
-            *) llm_args+=("$1"); shift ;;
+            --max)       ITERA_MAX=$2; shift 2 ;;
+            --test)      ITERA_TEST=$2; shift 2 ;;
+            --allow-red) ITERA_ALLOW_RED=1; shift ;;
+            --continue)  mode=continue; shift ;;
+            --abort)     mode=abort; shift ;;
+            --skip)      mode=skip; shift ;;
+            --)          shift; llm_args+=("$@"); break ;;
+            *)           llm_args+=("$1"); shift ;;
         esac
     done
-    if (( ${#llm_args[@]} == 0 )) && [[ -t 0 ]]; then
+    ITERA_ARGS=("${llm_args[@]}")
+    ITERA_REQUEST="${ITERA_ARGS[*]}"
+
+    case $mode in
+        abort)    itera-abort;    return $? ;;
+        continue) itera-continue; return $? ;;
+        skip)     itera-skip;     return $? ;;
+    esac
+
+    if (( ${#ITERA_ARGS[@]} == 0 )) && [[ -t 0 ]]; then
         dic-error 'itera-error: no request'
         return 64
     fi
 
-    test_cmd=$(itera-detect-test) || return 1
+    itera-validate || return $?
+    itera-prepare  || return $?
 
-    # Pre-flight: the tree must be green before anyone touches it, or a red
-    # round says nothing about the model's change.
-    if ! itera-run-tests; then
-        dic-error 'itera-error: tests do not pass before starting'
-        return 1
+    itera-run
+    local status=$?
+    if (( status == 0 )); then
+        itera-record
+        return $?
     fi
-    itera-require-clean-tree || return 1
-
-    local round=1
-    while (( round <= max )); do
-        if (( round == 1 )); then
-            if ! committe "${llm_args[@]}"; then
-                dic-error 'itera-error: committe failed'
-                return 1
-            fi
-        else
-            # -c continues the round-1 conversation, and the failed
-            # round's output is the request for this one: dic appends a
-            # non-tty stdin after a blank line, so the model reads what
-            # went red beside the code it wrote.  A herestring is one
-            # pipe and no subshell, so committe's fd 0 is stdin exactly
-            # as a heredoc would make it.
-            if ! committe -c <<< "$itera_test_output"; then
-                dic-error 'itera-error: committe failed'
-                return 1
-            fi
-        fi
-        if itera-run-tests; then
-            dic-info "itera: green after $round round(s)"
-            return 0
-        fi
-        round=$((round + 1))
-    done
-    dic-error "itera-error: hit ITERA_MAX=$max without green"
-    return 1
+    itera-fail "the loop did not go green"
+    return "$status"
 }
 
 # Run itera when sourced by a shell that called it, and leave the functions

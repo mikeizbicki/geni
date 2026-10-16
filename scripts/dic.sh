@@ -173,20 +173,18 @@ _dic_quote() {
     fi
 }
 
-# these scripts do not get from `set -x`: xtrace is a shell-wide flag
-# that would print the wrappers' own internals, and several call sites
-# here -- git apply in committe's retry, itera's pre-check test -- are
-# calls that are allowed to fail, so a shell option that aborts on a
-# nonzero status would abort them too.  dic-run prints only the calls a
-# caller names.
+# Which commands are traced, and why not set -x, is in AGENTS.md.  What is
+# local to this function: several call sites here -- git apply in
+# committe's retry, itera's pre-check test -- are calls that are allowed to
+# fail, so a shell option that aborts on a nonzero status would abort them
+# too.
 #
 # fd 2 and not fd 1: fd 1 is the payload's channel and it varies per
 # call site (dic's reply, itera's tee of the tests), so a trace written
-# there would be read back by the pipe's next stage.  The '+' is fixed
-# output and is never coloured -- the palette reserves no code for it,
-# and the reset around it is what makes it the terminal's own
-# foreground -- so the same function fills an interactive terminal and,
-# one `2>log` away, the file a background geni will log to.
+# there would be read back by the pipe's next stage.  The reset around
+# the '+' is what makes it the terminal's own foreground, so the same
+# function fills an interactive terminal and, one `2>log` away, the file
+# a background geni will log to.
 dic-run() {
     local a reset=
     dic-use-color && reset=$'\e[0m'

@@ -20,6 +20,50 @@ Output formatting:
       (nothing else should be output)
     - we should be able to copy/paste transcript into llm for debugging
       and it will include all needed context
-- only "major" commands get traced via dic-run
-    - standard set -x is too noisy
-    - we don't want conditional branches, variable declarations, etc in the trace
+
+Colour:
+- every line belongs to a role, and the role is what is coloured, never the
+  code path that wrote it
+- colour amplifies; it never carries information the text does not already
+  have
+- the palette is GENI_COLORS, and the roles are:
+
+      error    a failure
+      warning  a recoverable one
+      hint     an aside, fainter than what it follows
+      info     progress: reasoning, a pv meter
+      payload  the model's own output
+      cost     the cost summary
+      id       a message id, as git colours a hash
+      ref      a decoration, as git colours a ref
+      trace    reserved by the transcript rule, below
+
+- `+` is reserved: it is the transcript's fixed output, so it carries no
+  role and is never coloured.  The reset around it is what makes it the
+  terminal's own default foreground, so a transcript reads the same in a
+  terminal and in a file
+
+Severity prefixes:
+- `prog-error:` a failure, `prog-warning:` a recoverable one, `prog-hint:`
+  an aside -- where `prog` names the command that printed it
+- one function per prefix (dic-error, dic-warn, dic-hint), so the wording
+  and the colour are each stated once
+
+Tracing:
+- only a "major" command is traced with dic-run.  A command is major when
+  it invokes a model, mutates the git tree visibly, or runs user-supplied
+  code
+- set -x is not this: it prints a wrapper's conditional branches, variable
+  declarations and other internals, which are not part of what it did
+- a fallback or retry is one logical step: trace the step, not each attempt
+- a subshell inside an argument is never traced
+
+The four-step harness pattern:
+- NAME-validate   pure: is this run possible at all
+- NAME-prepare    writes only under .git/geni/NAME/
+- NAME-run        calls dic
+- NAME-record     the only step that moves a ref or the session pointer
+- a fifth function, NAME-fail, is not a step: it prints the resume line
+- committe is the worked example: validate is the clean-tree check, prepare
+  writes the patchfile and records the session head, run is the dic call,
+  and record applies the patch and commits

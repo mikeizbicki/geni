@@ -124,7 +124,7 @@ def paint(text, color, ctx):
     a piped row is clean text and a terminal row is coloured.
 
     >>> paint("abc", YELLOW, {"color": True})
-    '\x1b[33mabc\x1b[0m'
+    '\\x1b[33mabc\\x1b[0m'
     >>> paint("abc", YELLOW, {})
     'abc'
     >>> paint("", YELLOW, {"color": True})

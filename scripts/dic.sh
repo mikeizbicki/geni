@@ -12,6 +12,11 @@
 # in the shell that asks, so the reload reaches the functions and the
 # bindings the first source installed.  Any other argument is refused,
 # so a typo does not read as a reload that happened.
+#
+# The guard's own messages are the one place a bare echo stands: they
+# run before dic-colors-load has read GENI_COLORS, so dic-error is not
+# yet defined.  A second source and a bad argument are the shell
+# telling you about itself, which is bare text by construction.
 if [[ -n ${_DIC_LOADED:-} ]]; then
     case ${1:-} in
         -f)  unset _DIC_LOADED ;;
@@ -228,15 +233,15 @@ dic-run() {
 dic-git-clean() {
     local who=$1
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
-        echo "$who-error: not inside a git repository" >&2
+        dic-error "$who-error: not inside a git repository"
         return 1
     fi
     if ! git diff --quiet --cached; then
-        echo "$who-error: staging area is non-empty" >&2
+        dic-error "$who-error: staging area is non-empty"
         return 1
     fi
     if ! git diff --quiet; then
-        echo "$who-error: working tree has uncommitted changes" >&2
+        dic-error "$who-error: working tree has uncommitted changes"
         return 1
     fi
 }
@@ -252,7 +257,7 @@ dic-llm() {
     elif command -v llm >/dev/null 2>&1; then
         echo llm
     else
-        echo "dic-error: neither dic nor llm installed" >&2
+        dic-error "dic-error: neither dic nor llm installed"
         return 1
     fi
 }

@@ -219,7 +219,7 @@ itera() {
             fi
         fi
         if itera-run-tests; then
-            echo "itera: green after $round round(s)"
+            dic-info "itera: green after $round round(s)"
             return 0
         fi
         round=$((round + 1))

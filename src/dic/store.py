@@ -496,19 +496,38 @@ def http_url(url):
 # ---------------------------------------------------------------- sqlite
 
 def config_dir(env):
-    """The directory holding dic's database and the user's configuration.
+    """The directory holding the user's configuration: ~/.config/geni.
 
     >>> config_dir({"HOME": "/home/u"})
-    '/home/u/.config/fac'
+    '/home/u/.config/geni'
     """
     home = env.get("HOME")
-    return (os.path.join(home, ".config", "fac") if home
-            else os.path.expanduser("~/.config/fac"))
+    return (os.path.join(home, ".config", "geni") if home
+            else os.path.expanduser("~/.config/geni"))
+
+
+def state_dir(env):
+    """The directory holding dic's database: $XDG_STATE_HOME/geni.
+
+    State and not config, because the message tree is dic's own durable
+    output and not a file the user edits; ~/.local/state is where XDG
+    puts that, and $XDG_STATE_HOME moves it.
+
+    >>> state_dir({"HOME": "/home/u"})
+    '/home/u/.local/state/geni'
+    >>> state_dir({"XDG_STATE_HOME": "/s"})
+    '/s/geni'
+    """
+    base = env.get("XDG_STATE_HOME")
+    if not base:
+        home = env.get("HOME") or os.path.expanduser("~")
+        base = os.path.join(home, ".local", "state")
+    return os.path.join(base, "geni")
 
 
 def db_path(env):
     """The sqlite file holding the message tree and the parsed config cache."""
-    return os.path.join(config_dir(env), "dic.db")
+    return os.path.join(state_dir(env), "dic.db")
 
 
 def db(env):
@@ -729,8 +748,8 @@ def session_path(env):
     garbage collection, no locking, and the mtime is "last used" for free.
     """
     runtime = env.get("XDG_RUNTIME_DIR")
-    base = (os.path.join(runtime, "fac", "dic") if runtime
-            else f"/tmp/fac-{os.getuid()}/dic")  # noqa: S108
+    base = (os.path.join(runtime, "geni") if runtime
+            else f"/tmp/geni-{os.getuid()}")  # noqa: S108
     return os.path.join(base, session_filename(env.get("DIC_SESSION", "global")))
 
 

@@ -51,7 +51,7 @@ ITERA_MAX=${ITERA_MAX:-5}
 itera-ema-file() {
     local dir
     dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-    printf '%s\n' "${ITERA_EMA:-$dir/itera-test-times}"
+    printf '%s\n' "${ITERA_EMA:-$dir/geni/itera/test-times}"
 }
 
 # The mean of the last 20 runs, in seconds, or empty when there is no
@@ -73,6 +73,9 @@ itera-estimate() {
 itera-record-test() {
     local file
     file=$(itera-ema-file) || return 0
+    # the times file lives under .git/geni/itera/, which a fresh
+    # checkout does not have yet
+    mkdir -p "$(dirname "$file")"
     printf '%.3f\n' "$1" >> "$file"
 }
 

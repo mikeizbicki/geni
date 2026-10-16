@@ -27,12 +27,12 @@ DEFAULTS_PATH = os.path.join(HERE, "models.json")
 
 
 def providers_path(env):
-    """The user's providers, ~/.config/fac/providers.json."""
+    """The user's providers, ~/.config/geni/providers.json."""
     return os.path.join(config_dir(env), "providers.json")
 
 
 def models_path(env):
-    """The user's models, ~/.config/fac/models.json."""
+    """The user's models, ~/.config/geni/models.json."""
     return os.path.join(config_dir(env), "models.json")
 
 # The ancestor chain of an id, folded root-first.  The first CTE is the same

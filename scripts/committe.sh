@@ -55,11 +55,12 @@ function committe() {
 
 function committe-patchfile() {
     # Output the absolute path to the temporary file that will store the patch.
-    # Everything goes under .git so it survives across invocations
-    # and can be inspected when debugging a failed patch.
+    # Everything goes under .git/geni/committe so it survives across
+    # invocations and can be inspected when debugging a failed patch, and
+    # it is worktree-local because each checkout has its own patch to apply.
     # `git rev-parse --git-dir` works even from subdirectories of the repo,
     # and any worktrees will automatically have different paths.
-    echo "$(git rev-parse --git-dir)/committe-patchfile"
+    echo "$(git rev-parse --git-dir)/geni/committe/patchfile"
 }
 
 function committe-message() {
@@ -73,6 +74,10 @@ function committe-mkpatch() {
     # is made in one place.
     local llm_command
     llm_command=$(dic-llm) || return 1
+
+    # The patchfile lives under .git/geni/committe/, which a fresh
+    # checkout does not have yet.
+    mkdir -p "$(dirname "$(committe-patchfile)")"
 
     # The user's request is the prompt, and the instructions that say what
     # to do with it are prepended above it, so the two are named apart and

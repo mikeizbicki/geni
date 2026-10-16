@@ -75,7 +75,7 @@ def load_adaptor(api_type, env):
     """The module implementing api_type: PATH, auth, build, parse, finish.
 
     Built-ins are dic.adaptors.<api_type with '-' as '_'>.  Anything else
-    must be ~/.config/fac/adapters/<api_type>.py exporting the same five
+    must be ~/.config/geni/adapters/<api_type>.py exporting the same five
     names and importing dic's own helpers by package name, e.g.
     `from dic.store import data_url`.  Only the selected adaptor is ever
     imported, and each one gets its own module name, so two of them cannot

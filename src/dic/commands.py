@@ -739,7 +739,7 @@ def log(conn, env, *,
     flat shape the picker reads, and are never paged.
     """
     mid = (resolve_ref(conn, from_, env) if from_
-           else session_read(env))
+           else session_head(env))
     scope = session
     if scope == "":
         scope = env.get("DIC_SESSION", "global")

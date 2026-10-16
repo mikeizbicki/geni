@@ -39,7 +39,7 @@ function committe() {
     # a request from a flag's value, which would mean parsing dic's options
     # here, so it only catches the invocation with nothing at all.
     if (( ${#llm_args[@]} == 0 )) && [[ -t 0 ]]; then
-        echo "committe-error: no request" >&2
+        dic-error "committe-error: no request"
         return 1
     fi
 
@@ -90,7 +90,7 @@ function committe-mkpatch() {
             > "$(committe-patchfile)"; then
         return 0
     fi
-    echo "committe-error: $llm_command failed" >&2
+    dic-error "committe-error: $llm_command failed"
     return 1
 }
 
@@ -100,19 +100,13 @@ function committe-apply() {
     # A reply with no patch at all is the model asking a question instead of
     # making a change, so there is nothing to apply and nothing to commit
     if ! grep -q '^diff --git ' "$patch_file"; then
-        echo "committe-question: the model made no change; it asks:" >&2
-        # FIXME: this hardcodes tty.BLUE.  use_color decides by DIC_COLOR,
-        # NO_COLOR and isatty, and only the terminal case is copied by hand
-        # here: a pipe or a NO_COLOR gets the escapes anyway and a
-        # DIC_COLOR=always is ignored.  Model output belongs in blue
-        # everywhere it is printed, and the one place that knows what blue
-        # means is tty.py, so the fix is a `dic --paint` that applies
-        # use_color to stdin and the question goes through it:
-        #     sed ... | dic --paint >&2
-        printf '%s' $'\e[38;5;39m' >&2
-        sed 's/^#![[:space:]]*//' "$patch_file" >&2
-        printf '%s' $'\e[0m' >&2
-        echo "committe-hint: continue with: committe -c '...'" >&2
+        dic-info "committe-question: the model made no change; it asks:"
+        # The model's own words, in the payload role -- the same role a
+        # printed answer carries -- read from GENI_COLORS and not
+        # hardcoded, so the shell and tty.py cannot disagree about what
+        # the answer's colour is.
+        sed 's/^#![[:space:]]*//' "$patch_file" | dic-paint payload
+        dic-hint "committe-hint: continue with: committe -c '...'"
         return 2
     fi
 
@@ -129,16 +123,16 @@ function committe-apply() {
         # `git apply` needs every context line to match exactly, which the
         # model does not always manage; `git-apply-fuzzy` retries the patch
         # and tolerates small mismatches in the context lines.
-        echo "committe-warning: git apply failed, retrying with git-apply-fuzzy" >&2
+        dic-warn "committe-warning: git apply failed, retrying with git-apply-fuzzy"
         dic-run git-apply-fuzzy -q "$patch_file" && break
 
         if (( i >= retries )); then
-            echo "committe-error: git apply and git-apply-fuzzy both failed" >&2
-            echo "committe-hint: fix the raw patch at: $patch_file" >&2
-            echo "committe-hint: after fixing, rerun committe-apply" >&2
+            dic-error "committe-error: git apply and git-apply-fuzzy both failed"
+            dic-hint "committe-hint: fix the raw patch at: $patch_file"
+            dic-hint "committe-hint: after fixing, rerun committe-apply"
             return 1
         fi
-        echo "committe-warning: retrying patch ($((i + 1))/$retries)" >&2
+        dic-warn "committe-warning: retrying patch ($((i + 1))/$retries)"
     done
 
     # `git apply` staged the changes, so no separate `git add` is required.
@@ -148,7 +142,7 @@ function committe-apply() {
     commit_message="[geni] $(committe-message)"
     if ! GIT_COMMITTER_NAME='committe' GIT_COMMITTER_EMAIL='committe@agent' \
          dic-run git commit --quiet -m "$commit_message"; then
-        echo "committe-error: git commit failed" >&2
+        dic-error "committe-error: git commit failed"
         return 1
     fi
 

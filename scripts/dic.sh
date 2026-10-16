@@ -48,6 +48,95 @@ alias gemini='dic -m openrouter+gemini'
 
 # --- shared helpers -----------------------------------------------------
 
+# Whether to colour anything.  The same precedence tty.use_color uses:
+# DIC_COLOR=always|never wins, then NO_COLOR, then whether stderr is a
+# terminal -- so the trace and the answer coloured beside it agree
+# about when there is any colour at all.
+dic-use-color() {
+    case ${DIC_COLOR:-} in
+        never)  return 1 ;;
+        always) return 0 ;;
+    esac
+    [[ -n ${NO_COLOR:-} ]] && return 1
+    [[ -t 2 ]]
+}
+
+# The SGR code for a role, or empty for a role with no colour.  The
+# values come from GENI_COLORS; dic-colors-load below fills them in.
+dic-sgr() {
+    case ${1:-} in
+        error)   printf '%s' "${GENI_ERROR:-}" ;;
+        warning) printf '%s' "${GENI_WARNING:-}" ;;
+        hint)    printf '%s' "${GENI_HINT:-}" ;;
+        info)    printf '%s' "${GENI_INFO:-}" ;;
+        payload) printf '%s' "${GENI_PAYLOAD:-}" ;;
+        cost)    printf '%s' "${GENI_COST:-}" ;;
+        id)      printf '%s' "${GENI_ID:-}" ;;
+        ref)     printf '%s' "${GENI_REF:-}" ;;
+        trace)   printf '%s' "${GENI_TRACE:-}" ;;
+    esac
+}
+
+# One line in a role's colour, on stderr.  Nothing is written when the
+# role has no code or colour is off, so an empty palette writes what a
+# plain echo would have written and a NO_COLOR writes no escape at all.
+dic-color() {
+    local role=$1 code; shift
+    code=$(dic-sgr "$role")
+    if [[ -n $code ]] && dic-use-color; then
+        printf '\e[%sm%s\e[0m\n' "$code" "$*" >&2
+    else
+        printf '%s\n' "$*" >&2
+    fi
+}
+
+dic-error() { dic-color error   "$@"; }
+dic-warn()  { dic-color warning "$@"; }
+dic-hint()  { dic-color hint    "$@"; }
+dic-info()  { dic-color info    "$@"; }
+
+# Write stdin in a role's colour, on stderr, then reset.  dic-color is
+# this to one line; this is what replaces the escape committe-apply once
+# hardcoded for the model's own question.
+dic-paint() {
+    local role=$1 code
+    code=$(dic-sgr "$role")
+    if [[ -n $code ]] && dic-use-color; then
+        printf '\e[%sm' "$code" >&2
+        cat >&2
+        printf '\e[0m' >&2
+    else
+        cat >&2
+    fi
+}
+
+# Fill one shell variable per role from GENI_COLORS, in LS_COLORS'
+# syntax: ':'-separated role=SGR, an empty value meaning no escape.
+# Unset or empty is no colour anywhere, which is what a pip-installed
+# dic that has never sourced this file gets for every role.
+dic-colors-load() {
+    local entry role code
+    GENI_ERROR= GENI_WARNING= GENI_HINT= GENI_INFO=
+    GENI_PAYLOAD= GENI_COST= GENI_ID= GENI_REF= GENI_TRACE=
+    for entry in ${GENI_COLORS//:/ }; do
+        [[ $entry == *=* ]] || continue
+        role=${entry%%=*}
+        code=${entry#*=}
+        case $role in
+            error)   GENI_ERROR=$code ;;
+            warning) GENI_WARNING=$code ;;
+            hint)    GENI_HINT=$code ;;
+            info)    GENI_INFO=$code ;;
+            payload) GENI_PAYLOAD=$code ;;
+            cost)    GENI_COST=$code ;;
+            id)      GENI_ID=$code ;;
+            ref)     GENI_REF=$code ;;
+            trace)   GENI_TRACE=$code ;;
+        esac
+    done
+}
+dic-colors-load
+
 # Single-quote an argument for the audit line.  The whole string sits
 # inside ' ', so a prose prompt reads as written instead of as a run of
 # escaped spaces, while a lone identifier -- a SHA, a path, a mid --
@@ -88,15 +177,16 @@ _dic_quote() {
 #
 # fd 2 and not fd 1: fd 1 is the payload's channel and it varies per
 # call site (dic's reply, itera's tee of the tests), so a trace written
-# there would be read back by the pipe's next stage.  The color is
-# dropped when fd 2 is not a terminal and when NO_COLOR is set, so the
-# same function fills an interactive terminal and, one `2>log` away,
-# the file a background geni will log to.
+# there would be read back by the pipe's next stage.  The '+' is fixed
+# output and is never coloured -- the palette reserves no code for it,
+# and the reset around it is what makes it the terminal's own
+# foreground -- so the same function fills an interactive terminal and,
+# one `2>log` away, the file a background geni will log to.
 dic-run() {
-    local red= reset= a
-    if [[ -t 2 && -z ${NO_COLOR:-} ]]; then red=$'\e[31m'; reset=$'\e[0m'; fi
+    local a reset=
+    dic-use-color && reset=$'\e[0m'
     {
-        printf '%s+' "$red"
+        printf '%s+' "$reset"
         for a in "$@"; do
             # A multi-line argument -- a heredoc pasted as one -- is
             # summarized by its first line, which its author wrote as

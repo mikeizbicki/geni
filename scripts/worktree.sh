@@ -53,11 +53,11 @@ function worktree() {
     local branch common_dir token wt_dir wt_branch
 
     git rev-parse --show-toplevel >/dev/null 2>&1 || {
-        echo "worktree-error: not inside a git repository" >&2
+        dic-error "worktree-error: not inside a git repository"
         return 1
     }
     branch=$(git symbolic-ref --quiet --short HEAD) || {
-        echo "worktree-error: detached HEAD; check out a branch first" >&2
+        dic-error "worktree-error: detached HEAD; check out a branch first"
         return 1
     }
 
@@ -76,7 +76,7 @@ function worktree() {
     # .git/geni/ is not mistaken for one.
     if git worktree list --porcelain | grep -qxF "worktree $wt_dir"; then
         cd "$wt_dir" || {
-            echo "worktree-error: could not enter $wt_dir" >&2
+            dic-error "worktree-error: could not enter $wt_dir"
             return 1
         }
         worktree-prompt "$token"
@@ -86,12 +86,12 @@ function worktree() {
     dic-git-clean worktree || return 1
 
     if ! dic-run git worktree add --quiet -b "$wt_branch" "$wt_dir" HEAD; then
-        echo "worktree-error: could not create worktree" >&2
+        dic-error "worktree-error: could not create worktree"
         return 1
     fi
 
     cd "$wt_dir" || {
-        echo "worktree-error: could not enter $wt_dir" >&2
+        dic-error "worktree-error: could not enter $wt_dir"
         return 1
     }
     worktree-prompt "$token"

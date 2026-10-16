@@ -81,11 +81,11 @@ itera-record-test() {
 # something other than the round's.
 itera-require-clean-tree() {
     if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
-        echo 'itera: working tree has uncommitted changes' >&2
+        dic-error 'itera-error: working tree has uncommitted changes'
         return 1
     fi
     if ! git diff --cached --quiet; then
-        echo 'itera: staging area is non-empty' >&2
+        dic-error 'itera-error: staging area is non-empty'
         return 1
     fi
 }
@@ -119,7 +119,7 @@ itera-detect-test() {
         printf 'sandbox go test ./...\n'
         return 0
     fi
-    echo 'itera: no test command; pass --test' >&2
+    dic-error 'itera-error: no test command; pass --test'
     return 1
 }
 
@@ -185,7 +185,7 @@ itera() {
         esac
     done
     if (( ${#llm_args[@]} == 0 )) && [[ -t 0 ]]; then
-        echo 'itera: no request' >&2
+        dic-error 'itera-error: no request'
         return 64
     fi
 
@@ -194,7 +194,7 @@ itera() {
     # Pre-flight: the tree must be green before anyone touches it, or a red
     # round says nothing about the model's change.
     if ! itera-run-tests; then
-        echo 'itera: tests do not pass before starting' >&2
+        dic-error 'itera-error: tests do not pass before starting'
         return 1
     fi
     itera-require-clean-tree || return 1
@@ -203,7 +203,7 @@ itera() {
     while (( round <= max )); do
         if (( round == 1 )); then
             if ! committe "${llm_args[@]}"; then
-                echo 'itera: committe failed' >&2
+                dic-error 'itera-error: committe failed'
                 return 1
             fi
         else
@@ -214,7 +214,7 @@ itera() {
             # pipe and no subshell, so committe's fd 0 is stdin exactly
             # as a heredoc would make it.
             if ! committe -c <<< "$itera_test_output"; then
-                echo 'itera: committe failed' >&2
+                dic-error 'itera-error: committe failed'
                 return 1
             fi
         fi
@@ -224,7 +224,7 @@ itera() {
         fi
         round=$((round + 1))
     done
-    echo "itera: hit ITERA_MAX=$max without green" >&2
+    dic-error "itera-error: hit ITERA_MAX=$max without green"
     return 1
 }
 

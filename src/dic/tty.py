@@ -55,16 +55,21 @@ def reset_for(palette):
 # GENI_COLORS with the same entries, so the trace and the answer cannot
 # disagree about what a role means.  Unset or empty is no colour anywhere,
 # which is the default of a pip-installed dic that has never sourced dic.sh.
+#
+# The constants are the roles and not the colours: `dic-info` on the
+# shell side and INFO here are the same role, whichever SGR each names,
+# so the two readers of one palette cannot drift apart in vocabulary
+# even though one is bash and the other python.
 PALETTE = parse_colors(os.environ.get("GENI_COLORS", ""))
 
-BLUE = PALETTE.get("payload", "")      # model output
-ORANGE = PALETTE.get("cost", "")       # the cost summary
-RED = PALETTE.get("error", "")         # errors
-YELLOW = PALETTE.get("id", "")         # a message id, as git hashes one
-GREEN = PALETTE.get("ref", "")         # a decoration, as git refs
-THINKING = PALETTE.get("info", "")     # reasoning: faded, on the usual background
+ERROR = PALETTE.get("error", "")       # errors
 WARNING = PALETTE.get("warning", "")   # a recoverable failure
 HINT = PALETTE.get("hint", "")         # an aside, fainter than what it follows
+INFO = PALETTE.get("info", "")         # progress: reasoning, the pv meters
+PAYLOAD = PALETTE.get("payload", "")   # model output
+COST = PALETTE.get("cost", "")         # the cost summary
+ID = PALETTE.get("id", "")             # a message id, as git hashes one
+REF = PALETTE.get("ref", "")           # a decoration, as git refs
 RESET = reset_for(PALETTE)
 
 
@@ -102,7 +107,7 @@ def die(msg, err=None, env=None):
     """
     err = sys.stderr if err is None else err
     line = f"dic: {msg}\n"
-    err.write(RED + line + RESET if use_color(err, env) else line)
+    err.write(ERROR + line + RESET if use_color(err, env) else line)
     sys.exit(1)
 
 
@@ -118,7 +123,7 @@ def report(verbosity, level, msg, err=None, env=None):
         return
     err = sys.stderr if err is None else err
     line = f"{msg}\n"
-    err.write(ORANGE + line + RESET if use_color(err, env) else line)
+    err.write(COST + line + RESET if use_color(err, env) else line)
     err.flush()
 def pager_command(env=None):
     """The pager to pipe through, or None: $DIC_PAGER, then $PAGER, then less.
@@ -241,7 +246,7 @@ def pv_paint(state, line, err=None, env=None):
     err = sys.stderr if err is None else err
     state["width"] = max(state.get("width", 0), len(line))
     line = line.ljust(state["width"])
-    err.write("\r" + (THINKING + line + RESET if use_color(err, env) else line))
+    err.write("\r" + (INFO + line + RESET if use_color(err, env) else line))
     err.flush()
 
 

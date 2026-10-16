@@ -23,7 +23,7 @@ from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
                        TOOL_STATS, resolve_ref, session_read)
-from dic.tty import (GREEN, RESET, YELLOW, DicError, page, pager_command,
+from dic.tty import (ID, REF, RESET, DicError, page, pager_command,
                      use_color)
 
 
@@ -123,11 +123,11 @@ def paint(text, color, ctx):
     so colour is conditional here for the same reason it is in the client:
     a piped row is clean text and a terminal row is coloured.
 
-    >>> paint("abc", YELLOW, {"color": True}) == YELLOW + "abc" + RESET
+    >>> paint("abc", ID, {"color": True}) == ID + "abc" + RESET
     True
-    >>> paint("abc", YELLOW, {})
+    >>> paint("abc", ID, {})
     'abc'
-    >>> paint("", YELLOW, {"color": True})
+    >>> paint("", ID, {"color": True})
     ''
     """
     return f"{color}{text}{RESET}" if ctx.get("color") and text else text
@@ -225,8 +225,8 @@ def format_turn(head, rounds, ctx):
     tool loop -- each is named by its round and by the tools that round
     called, because that is what a reader needs to see about it.
     """
-    lines = [f"mid {paint(head['mid'], YELLOW, ctx)}"
-             + (paint(decorations(head, ctx["head"], ctx["here"]), GREEN, ctx)
+    lines = [f"mid {paint(head['mid'], ID, ctx)}"
+             + (paint(decorations(head, ctx["head"], ctx["here"]), REF, ctx)
                 if ctx["decorate"] else "")]
     lines.append(f"{'Model:':<{LABEL_WIDTH}}{head['model_id']}")
     lines.append(f"{'Date:':<{LABEL_WIDTH}}{date_line(head['t_start'])}")
@@ -478,8 +478,8 @@ def decorations(row, head, here):
 # format string with a typo in it must not read as a quiet log: the reader
 # would be reading the wrong day's work and would never see that they were.
 SPECIFIERS = {
-    "H": lambda row, ctx: paint(row["mid"], YELLOW, ctx),
-    "h": lambda row, ctx: paint(row["mid"][:10], YELLOW, ctx),
+    "H": lambda row, ctx: paint(row["mid"], ID, ctx),
+    "h": lambda row, ctx: paint(row["mid"][:10], ID, ctx),
     "s": lambda row, _: prompt_line(row["user"]),
     "b": lambda row, _: prompt_line(row["response"]),
     "a": lambda row, _: ago(row["t_start"]),
@@ -489,7 +489,7 @@ SPECIFIERS = {
     "c": lambda row, _: "" if row["cost"] is None else f"${row['cost']:.4f}",
     "t": lambda row, _: str(row["tokens"] or 0),
     "D": lambda row, ctx: (paint(decorations(row, ctx["head"], ctx["here"]),
-                                 GREEN, ctx)
+                                 REF, ctx)
                            if ctx["decorate"] else ""),
 }
 

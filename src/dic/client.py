@@ -27,7 +27,7 @@ from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
                        session_read, session_write, store_attachment,
                        turns_from_rows, ulid)
-from dic.tty import (BLUE, RESET, THINKING, DicError, Line, osc52, pv_update,
+from dic.tty import (INFO, PAYLOAD, RESET, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -823,7 +823,7 @@ def dic(prompt,
                     if pv is not None:
                         pv_update(pv, chunk, err=err, env=env)
                     elif use_color(err, env):
-                        err.write(THINKING + chunk + RESET)
+                        err.write(INFO + chunk + RESET)
                     else:
                         err.write(chunk)
                     if pv is None:
@@ -842,7 +842,7 @@ def dic(prompt,
                     pv_update(pv_resp, chunk, err=err, env=env)
                 if not knobs["extract"]:
                     if paint and painted != kind:
-                        sink.write((RESET if painted is not None else "") + BLUE)
+                        sink.write((RESET if painted is not None else "") + PAYLOAD)
                         painted = kind
                     sink.write(chunk)
             wire["t_last"] = time.time_ns()
@@ -965,7 +965,7 @@ def dic(prompt,
     text = response
     if knobs["extract"]:
         text = code_block(response)
-        sink.write(BLUE + text + RESET if paint else text)
+        sink.write(PAYLOAD + text + RESET if paint else text)
     else:
         if painted is not None:
             sink.write(RESET)

@@ -1,13 +1,12 @@
-"""Gathering: the files, the context above them, and the prompt they make.
+"""Traversal: the files, the context above them, and the chunks they make.
 
 `accio` walks the paths it is given, skips what cannot be a prompt, and
-prints each file under its own path so that whoever reads the result can
+yields each file under its own path so that whoever reads the result can
 cite where a line came from.  The one thing it does that `cat` cannot is
-the ancestor walk: before a file is printed, the README and AGENTS files
-of every directory above it are printed first, once, so that a subtree's
+the ancestor walk: before a file is yielded, the README and AGENTS files
+of every directory above it are yielded first, once, so that a subtree's
 conventions arrive before the code that obeys them.
 
-Nothing here reads the network or calls a model, so importing it costs
 What a walk skips is decided by the repository the path is in: git is
 asked which files it ignores rather than being second-guessed, so nested
 `.gitignore` files, `!` negation and `/` anchoring are git's rules and
@@ -19,6 +18,8 @@ See SPEC.md.
     accio a.py b.py           two files, plus the READMEs above them
 """
 import fnmatch, os, subprocess
+
+from accio.extract import by_extension
 
 # The names looked for in every directory above a summoned file, in the
 # order they are tried.  A README states what a subtree is and an AGENTS
@@ -284,15 +285,73 @@ def ancestors(path, readmes=DEFAULT_READMES):
     return out
 
 
-def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
-           gitignore=True):
-    """Yields (path, text) for all that is to be printed, context once.
+def _readme_ancestor(path, readmes):
+    """The innermost ancestor README of a path, or None.
 
-    The path yielded is the normalized key the run deduplicates on, not
-    the spelling the walk happened to build, so `accio .` and `accio ./`
-    print one tree and a path named twice is summoned once.
+    The walk that a file is written for the tree it lives in, and this
+    is the file the SPEC calls `the file it was summoned above`: the
+    README of `a/b/` before the README of `a/` before the README of
+    `.`, with the file itself never counted as its own ancestor.
+    """
+    here = os.path.normpath(path)
+    for directory in reversed(ancestor_dirs(path)):
+        for name in readmes:
+            candidate = os.path.normpath(os.path.join(directory, name))
+            if candidate != here and os.path.isfile(candidate):
+                return candidate
+    return None
 
-    A context file is printed the first time some file needs it and never
+
+def canvassed(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
+              gitignore=True):
+    """Every path the walk reads, in walk order, deduped, context included.
+
+    `traverse` reads and chunks these; the index stat()s them instead,
+    because re-chunking a file whose (mtime, size) has not changed is
+    wall clock spent for nothing.  Same walk, same dedup, same order --
+    the two are the same list of files, and this is where it is written
+    down so both can see it.
+
+    >>> import tempfile
+    >>> d = tempfile.mkdtemp()
+    >>> os.makedirs(d + "/a")
+    >>> for name in ("README.md", "a/README.md", "a/x.py"):
+    ...     open(os.path.join(d, name), "w").close()
+    >>> [os.path.relpath(p, d) for p in canvassed([d + "/a"])
+    ...  if p.startswith(d)]
+    ['README.md', 'a/README.md', 'a/x.py']
+    >>> import shutil; shutil.rmtree(d)
+    """
+    # A fresh answer per call: the two caches below are for the walk
+    # that is about to happen and not for the process that happened to
+    # run first, so a file written between two walks is seen by the
+    # second one.
+    _ROOTS.clear()
+    _ALLOWED.clear()
+    seen = set()
+    for path in files(paths, patterns, gitignore):
+        for context in ancestors(path, readmes):
+            key = os.path.normpath(context)
+            if key in seen or not kept(context, patterns, gitignore):
+                continue
+            seen.add(key)
+            yield key
+        key = os.path.normpath(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield key
+
+
+def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
+             gitignore=True):
+    """Yields the chunks of all that is to be rendered, context once.
+
+    The path on a chunk is the normalized key the run deduplicates on,
+    not the spelling the walk happened to build, so `accio .` and
+    `accio ./` print one tree and a path named twice is summoned once.
+
+    A context file is yielded the first time some file needs it and never
     again, so the root README arrives with the first file beneath it and
     the thousandth file of the tree does not repeat it.  Context is
     filtered like everything else, so an ignored README is not a way to
@@ -304,119 +363,28 @@ def bundle(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
     >>> for name, text in (("README.md", "root\\n"), ("a/README.md", "sub\\n"),
     ...                    ("a/x.py", "x = 1\\n"), ("a/y.py", "y = 2\\n")):
     ...     _ = open(os.path.join(d, name), "w").write(text)
-    >>> [(os.path.relpath(p, d), t) for p, t in bundle([d + "/a"])
-    ...  if p.startswith(d)]
+    >>> [(os.path.relpath(c.path, d), c.text) for c in traverse([d + "/a"])
+    ...  if c.path.startswith(d)]
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> # the same path named twice is still one entry:
-    >>> [(os.path.relpath(p, d), t)
-    ...  for p, t in bundle([d + "/a", d + "/README.md"])
-    ...  if p.startswith(d)]
+    >>> [(os.path.relpath(c.path, d), c.text)
+    ...  for c in traverse([d + "/a", d + "/README.md"])
+    ...  if c.path.startswith(d)]
     [('README.md', 'root\\n'), ('a/README.md', 'sub\\n'), ('a/x.py', 'x = 1\\n'), ('a/y.py', 'y = 2\\n')]
     >>> import shutil; shutil.rmtree(d)
     """
-    seen = set()
-    for path in files(paths, patterns, gitignore):
-        for context in ancestors(path, readmes):
-            key = os.path.normpath(context)
-            if key in seen or not kept(context, patterns, gitignore):
-                continue
-            seen.add(key)
-            text = read(context)
-            if text is not None:
-                yield key, text
-        key = os.path.normpath(path)
-        if key in seen:
-            continue
-        seen.add(key)
+    readme_names = frozenset(readmes)
+    for path in canvassed(paths, readmes, patterns, gitignore):
         text = read(path)
-        if text is not None:
-            yield key, text
-
-
-def bundle_paths(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
-                 gitignore=True):
-    """The paths bundle() would emit, in the order it would emit them.
-
-    Same traversal, same ancestor walk, same dedup, same normalized
-    spelling -- a projection of bundle() and not a second implementation
-    of it.
-
-    >>> import tempfile
-    >>> d = tempfile.mkdtemp()
-    >>> os.makedirs(d + "/a")
-    >>> for name, text in (("README.md", "root\\n"), ("a/README.md", "sub\\n"),
-    ...                    ("a/x.py", "x = 1\\n"), ("a/y.py", "y = 2\\n")):
-    ...     _ = open(os.path.join(d, name), "w").write(text)
-    >>> [os.path.relpath(p, d) for p in bundle_paths([d + "/a"])
-    ...  if p.startswith(d)]
-    ['README.md', 'a/README.md', 'a/x.py', 'a/y.py']
-    >>> import shutil; shutil.rmtree(d)
-    """
-    for path, _ in bundle(paths, readmes, patterns, gitignore):
-        yield path
-
-
-def render(pairs, out):
-    """Write (path, text) pairs as the one format accio has: path, fences, text.
-
-    The path is on a line of its own, a `---` fence follows it, the text
-    follows that, and a closing `---` follows the text, so that a reader
-    -- a model, a human, `less` -- can see where one file stops, and so
-    that the output is the encoding files-to-prompt already produces.  A
-    fence closes every file, so the last line of the whole run is always
-    `---`.  The newline below the text is written and never assumed: a
-    file whose last line has no newline of its own must not run into the
-    closing fence.
-
-    >>> import io
-    >>> stream = io.StringIO()
-    >>> render([("a.py", "x = 1\\n")], stream)
-    >>> stream.getvalue()
-    'a.py\\n---\\nx = 1\\n---\\n'
-    >>> stream = io.StringIO()
-    >>> render([("b.txt", "no newline")], stream)
-    >>> stream.getvalue()
-    'b.txt\\n---\\nno newline\\n---\\n'
-    """
-    for path, text in pairs:
-        out.write(f"{path}\n---\n{text}")
-        if not text.endswith("\n"):
-            out.write("\n")
-        out.write("---\n")
-
-
-def wc(pairs, out):
-    """Print (path, text) pairs as `wc` does, and one token estimate.
-
-    Lines are newlines, words are whitespace-separated runs, and bytes
-    are the text as utf-8 -- the three numbers `wc -l -w -c` reports, in
-    order, one file to a line, then a `total` line for the run.  Ancestor
-    context files are counted as the paths they are, because that is what
-    they cost the prompt.
-
-    The token count is not knowable here: it depends on the tokenizer and
-    the model, and neither is accio's business.  `bytes/4` is the usual
-    rule of thumb for English and is exact on nothing; it is printed as
-    an estimate, marked with `~`, and is a proxy for size rather than a
-    prediction of cost.
-
-    >>> import io
-    >>> stream = io.StringIO()
-    >>> wc([("a.py", "x = 1\\n"), ("b.txt", "no newline")], stream)
-    >>> print(stream.getvalue(), end="")
-          1       3       6 a.py
-          0       2      10 b.txt
-          1       5      16 total
-    ~4 tokens (bytes/4)
-    """
-    lines = words = size = 0
-    for path, text in pairs:
-        n = text.count("\n")
-        w = len(text.split())
-        b = len(text.encode("utf-8"))
-        out.write(f"{n:7d} {w:7d} {b:7d} {path}\n")
-        lines += n
-        words += w
-        size += b
-    out.write(f"{lines:7d} {words:7d} {size:7d} total\n")
-    out.write(f"~{size // 4} tokens (bytes/4)\n")
+        if text is None:
+            continue
+        chunks = list(by_extension(path, text))
+        if not chunks:
+            continue
+        if os.path.basename(path) not in readme_names:
+            parent = _readme_ancestor(path, readmes)
+            if parent is not None:
+                meta = dict(chunks[0].meta)
+                meta["parent_path"] = parent
+                chunks[0] = chunks[0]._replace(meta=meta)
+        yield from chunks

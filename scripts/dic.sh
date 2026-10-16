@@ -28,6 +28,12 @@ export DIC_MODEL=groq+qwen
 export DIC_SYSTEM="Keep your response short, between 1-20 lines. Focus on a high signal to noise ratio (audience has strong math/cs background). If the question is about a computer, respond for: $(uname -a)."
 [[ $- == *i* ]] && export DIC_SESSION="$$"
 
+# The colour palette, in LS_COLORS' syntax: ':'-separated role=SGR, an
+# empty value meaning no escape.  tty.py reads it to colour dic's own
+# output; the shell reads the same value to colour the trace, so the two
+# readers cannot disagree about what a role means.
+export GENI_COLORS='error=01;31:warning=33:hint=2:info=38;5;245:payload=38;5;39:cost=38;5;208:id=33:ref=32:trace='
+
 # Record per-round byte-rate samples into dic.db, so that a plot of B/s over
 # the generation is a SQL query.  Off by default in dic; on here
 export DIC_RECORD=bps

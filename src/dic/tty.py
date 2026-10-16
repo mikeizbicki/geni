@@ -10,13 +10,62 @@ See SPEC.md, "Color", "Progress meters" and "Verbosity".
 """
 import base64, os, shlex, shutil, subprocess, sys, time
 
-BLUE = "\033[38;5;39m"       # model output
-ORANGE = "\033[38;5;208m"    # the cost summary
-RED = "\033[31m"             # errors
-YELLOW = "\033[33m"          # a message id, as git colors a commit hash
-GREEN = "\033[32m"           # a decoration, as git colors a ref
-THINKING = "\033[38;5;245m"             # reasoning: faded gray on the usual background
-RESET = "\033[0m"
+def parse_colors(text):
+    """A GENI_COLORS string as {role: SGR escape}, in LS_COLORS' syntax.
+
+    ':'-separated role=SGR entries, which is what dircolors(1),
+    GCC_COLORS and GREP_COLORS all use, so a shell has one habit for
+    reading a palette and not three.  An empty SGR means the role is
+    uncoloured, which is what 'trace=' is: a name reserved by the
+    transcript rule rather than a code.
+
+    >>> parse_colors("error=01;31:payload=38;5;39")
+    {'error': '\\x1b[01;31m', 'payload': '\\x1b[38;5;39m'}
+    >>> parse_colors("trace=")
+    {'trace': ''}
+    >>> parse_colors("")
+    {}
+    """
+    out = {}
+    for entry in text.split(":"):
+        role, sep, code = entry.partition("=")
+        if sep:
+            out[role.strip()] = f"\033[{code}m" if code else ""
+    return out
+
+
+def reset_for(palette):
+    """The reset sequence for a palette, or '' when there is nothing to reset.
+
+    A palette whose every value is empty is no colour at all, and a
+    reset written after an empty code is a stray escape in a pipe: the
+    reset is emitted only where it turns something off.
+
+    >>> reset_for({"payload": "\\x1b[38;5;39m"})
+    '\\x1b[0m'
+    >>> reset_for({"trace": ""})
+    ''
+    >>> reset_for({})
+    ''
+    """
+    return "\033[0m" if any(palette.values()) else ""
+
+
+# One palette, read once, from the shell that set it: dic.sh exports
+# GENI_COLORS with the same entries, so the trace and the answer cannot
+# disagree about what a role means.  Unset or empty is no colour anywhere,
+# which is the default of a pip-installed dic that has never sourced dic.sh.
+PALETTE = parse_colors(os.environ.get("GENI_COLORS", ""))
+
+BLUE = PALETTE.get("payload", "")      # model output
+ORANGE = PALETTE.get("cost", "")       # the cost summary
+RED = PALETTE.get("error", "")         # errors
+YELLOW = PALETTE.get("id", "")         # a message id, as git hashes one
+GREEN = PALETTE.get("ref", "")         # a decoration, as git refs
+THINKING = PALETTE.get("info", "")     # reasoning: faded, on the usual background
+WARNING = PALETTE.get("warning", "")   # a recoverable failure
+HINT = PALETTE.get("hint", "")         # an aside, fainter than what it follows
+RESET = reset_for(PALETTE)
 
 
 def use_color(stream, env=None):

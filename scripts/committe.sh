@@ -274,16 +274,16 @@ function committe-record() {
     # and setting the committer fields.
     local commit_message
     commit_message="[geni] $(committe-message)"
+    # Not --quiet: git's own stat is the summary of the round, and dic-run
+    # mutes it like every other step's output.  The `git show` that used to
+    # reproduce it is gone with it.
     if ! GIT_COMMITTER_NAME='committe' GIT_COMMITTER_EMAIL='committe@agent' \
-         dic-run git commit --quiet -m "$commit_message"; then
+         dic-run git commit -m "$commit_message"; then
         dic-error "committe-error: git commit failed"
         return 1
     fi
 
     committe-merge || return 1
-
-    # Show a short summary of the commit we just made.
-    git show HEAD --stat --format='%h %s'
 }
 
 function committe-merge() {

@@ -37,7 +37,7 @@ export DIC_SYSTEM="Keep your response short, between 1-20 lines. Focus on a high
 # empty value meaning no escape.  tty.py reads it to colour dic's own
 # output; the shell reads the same value to colour the trace, so the two
 # readers cannot disagree about what a role means.
-export GENI_COLORS='error=01;31:warning=33:hint=2:info=38;5;245:payload=38;5;39:cost=38;5;208:id=33:ref=32:trace='
+export GENI_COLORS='error=01;31:warning=33:hint=2:info=38;5;245:muted=38;5;242:payload=38;5;39:cost=38;5;208:id=33:ref=32:trace='
 
 # Record per-round byte-rate samples into dic.db, so that a plot of B/s over
 # the generation is a SQL query.  Off by default in dic; on here
@@ -74,6 +74,7 @@ dic-sgr() {
         warning) printf '%s' "${GENI_WARNING:-}" ;;
         hint)    printf '%s' "${GENI_HINT:-}" ;;
         info)    printf '%s' "${GENI_INFO:-}" ;;
+        muted)   printf '%s' "${GENI_MUTED:-}" ;;
         payload) printf '%s' "${GENI_PAYLOAD:-}" ;;
         cost)    printf '%s' "${GENI_COST:-}" ;;
         id)      printf '%s' "${GENI_ID:-}" ;;
@@ -115,13 +116,33 @@ dic-paint() {
     fi
 }
 
+# Write stdin in a role's colour, on stdout.  dic-paint is this on stderr,
+# which is what an aside wants; a nested command's own output is the
+# command's stdout and stays there.  Every escape the program wrote is
+# stripped first: a program that colours unconditionally would otherwise
+# leak its codes into a transcript that is meant to read as one, and an
+# intermediate step's own distinctions are not what is being read.  One
+# role wraps the whole block and not each line, so a reset the program
+# wrote cannot end the colour early.
+dic-paint-out() {
+    local role=$1 code
+    code=$(dic-sgr "$role")
+    if [[ -n $code ]] && dic-use-color; then
+        printf '\e[%sm' "$code"
+        sed $'s/\033\\[[0-9;]*[a-zA-Z]//g'
+        printf '\e[0m'
+    else
+        cat
+    fi
+}
+
 # Fill one shell variable per role from GENI_COLORS, in LS_COLORS'
 # syntax: ':'-separated role=SGR, an empty value meaning no escape.
 # Unset or empty is no colour anywhere, which is what a pip-installed
 # dic that has never sourced this file gets for every role.
 dic-colors-load() {
     local entry role code
-    GENI_ERROR= GENI_WARNING= GENI_HINT= GENI_INFO=
+    GENI_ERROR= GENI_WARNING= GENI_HINT= GENI_INFO= GENI_MUTED=
     GENI_PAYLOAD= GENI_COST= GENI_ID= GENI_REF= GENI_TRACE=
     for entry in ${GENI_COLORS//:/ }; do
         [[ $entry == *=* ]] || continue
@@ -132,6 +153,7 @@ dic-colors-load() {
             warning) GENI_WARNING=$code ;;
             hint)    GENI_HINT=$code ;;
             info)    GENI_INFO=$code ;;
+            muted)   GENI_MUTED=$code ;;
             payload) GENI_PAYLOAD=$code ;;
             cost)    GENI_COST=$code ;;
             id)      GENI_ID=$code ;;
@@ -220,6 +242,15 @@ dic-run() {
         done
         printf '%s\n' "$reset"
     } >&2
+    # A command run inside a harness is a step and not the result, so what
+    # it printed is repainted in the muted role -- and only when stdout is
+    # a terminal.  A redirected stdout is a patchfile or a test's own
+    # output, and an escape in either is corruption of what the next stage
+    # reads: committe-run's patchfile, itera-run-tests' itera_test_output.
+    if [[ -t 1 ]] && dic-use-color; then
+        "$@" | dic-paint-out muted
+        return "${PIPESTATUS[0]}"
+    fi
     "$@"
 }
 

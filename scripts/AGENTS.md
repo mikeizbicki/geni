@@ -32,6 +32,7 @@ Colour:
       warning  a recoverable one
       hint     an aside, fainter than what it follows
       info     progress: reasoning, a pv meter
+      muted    a nested command's own output, stripped and repainted
       payload  the model's own output
       cost     the cost summary
       id       a message id, as git colours a hash
@@ -57,6 +58,12 @@ Tracing:
   declarations and other internals, which are not part of what it did
 - a fallback or retry is one logical step: trace the step, not each attempt
 - a subshell inside an argument is never traced
+- a nested command's output is *replaced*, not dimmed: dic-run strips every
+  escape the program wrote and wraps the whole block in one role, so a
+  program that colours unconditionally cannot leak its codes into a
+  transcript that is meant to read as one.  Only when stdout is a terminal
+  -- a redirected stdout is a patchfile or a test's own output, and an
+  escape in either is corruption of what the next stage reads
 
 The four-step harness pattern:
 - NAME-validate   pure: is this run possible at all

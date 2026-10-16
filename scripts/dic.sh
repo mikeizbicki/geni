@@ -299,7 +299,7 @@ _dic_log_flags() {
     all)     printf '%s\n' --format "$fmt" --decorate --graph --all ;;
     session) printf '%s\n' --format "$fmt" --decorate --graph --session ;;
     chain)   printf '%s\n' --format "$fmt" --decorate ;;
-    *)       printf 'dic.sh: bad DIC_LOG_SCOPE: %s\n' "$DIC_LOG_SCOPE" >&2 ;;
+    *)       dic-error "dic.sh: bad DIC_LOG_SCOPE: $DIC_LOG_SCOPE" ;;
   esac
 }
 

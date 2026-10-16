@@ -25,9 +25,9 @@ from dic import config, output, price
 from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
-                       session_read, session_write, store_attachment,
+                       session_head, session_move, store_attachment,
                        turns_from_rows, ulid)
-from dic.tty import (BLUE, RESET, THINKING, DicError, Line, osc52, pv_update,
+from dic.tty import (INFO, PAYLOAD, RESET, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -75,7 +75,7 @@ def load_adaptor(api_type, env):
     """The module implementing api_type: PATH, auth, build, parse, finish.
 
     Built-ins are dic.adaptors.<api_type with '-' as '_'>.  Anything else
-    must be ~/.config/fac/adapters/<api_type>.py exporting the same five
+    must be ~/.config/geni/adapters/<api_type>.py exporting the same five
     names and importing dic's own helpers by package name, e.g.
     `from dic.store import data_url`.  Only the selected adaptor is ever
     imported, and each one gets its own module name, so two of them cannot
@@ -539,7 +539,7 @@ def dic(prompt,
         raise DicError("pick one: -c or --mid")
 
     prev_mid = (resolve_ref(conn, knobs["mid"], env) if knobs["mid"]
-                else (session_read(env) if knobs["cont"] else None))
+                else (session_head(env) if knobs["cont"] else None))
     if knobs["cont"] and not prev_mid:
         # -c with no pointer is an error: never a new conversation, and never
         # somebody else's
@@ -823,7 +823,7 @@ def dic(prompt,
                     if pv is not None:
                         pv_update(pv, chunk, err=err, env=env)
                     elif use_color(err, env):
-                        err.write(THINKING + chunk + RESET)
+                        err.write(INFO + chunk + RESET)
                     else:
                         err.write(chunk)
                     if pv is None:
@@ -842,7 +842,7 @@ def dic(prompt,
                     pv_update(pv_resp, chunk, err=err, env=env)
                 if not knobs["extract"]:
                     if paint and painted != kind:
-                        sink.write((RESET if painted is not None else "") + BLUE)
+                        sink.write((RESET if painted is not None else "") + PAYLOAD)
                         painted = kind
                     sink.write(chunk)
             wire["t_last"] = time.time_ns()
@@ -965,7 +965,7 @@ def dic(prompt,
     text = response
     if knobs["extract"]:
         text = code_block(response)
-        sink.write(BLUE + text + RESET if paint else text)
+        sink.write(PAYLOAD + text + RESET if paint else text)
     else:
         if painted is not None:
             sink.write(RESET)
@@ -989,7 +989,7 @@ def dic(prompt,
     # is left alone, so the row is always a leaf and never replayed
     if wire["status"] != 200:
         raise DicError(f"{wire['status']} {wire.get('error')}")
-    session_write(mid, env)
+    session_move(env, mid)
 
     out.flush()
 

@@ -496,19 +496,38 @@ def http_url(url):
 # ---------------------------------------------------------------- sqlite
 
 def config_dir(env):
-    """The directory holding dic's database and the user's configuration.
+    """The directory holding the user's configuration: ~/.config/geni.
 
     >>> config_dir({"HOME": "/home/u"})
-    '/home/u/.config/fac'
+    '/home/u/.config/geni'
     """
     home = env.get("HOME")
-    return (os.path.join(home, ".config", "fac") if home
-            else os.path.expanduser("~/.config/fac"))
+    return (os.path.join(home, ".config", "geni") if home
+            else os.path.expanduser("~/.config/geni"))
+
+
+def state_dir(env):
+    """The directory holding dic's database: $XDG_STATE_HOME/geni.
+
+    State and not config, because the message tree is dic's own durable
+    output and not a file the user edits; ~/.local/state is where XDG
+    puts that, and $XDG_STATE_HOME moves it.
+
+    >>> state_dir({"HOME": "/home/u"})
+    '/home/u/.local/state/geni'
+    >>> state_dir({"XDG_STATE_HOME": "/s"})
+    '/s/geni'
+    """
+    base = env.get("XDG_STATE_HOME")
+    if not base:
+        home = env.get("HOME") or os.path.expanduser("~")
+        base = os.path.join(home, ".local", "state")
+    return os.path.join(base, "geni")
 
 
 def db_path(env):
     """The sqlite file holding the message tree and the parsed config cache."""
-    return os.path.join(config_dir(env), "dic.db")
+    return os.path.join(state_dir(env), "dic.db")
 
 
 def db(env):
@@ -570,7 +589,7 @@ def resolve_ref(conn, ref, env):
     ref = ref.strip()
     if ref in ("HEAD", "@") or ref.startswith(("HEAD~", "@~")):
         _, _, depth = ref.partition("~")
-        mid = session_read(env)
+        mid = session_head(env)
         if not mid:
             raise DicError(
                 f"{ref}: no conversation in this session"
@@ -722,42 +741,120 @@ def session_filename(name):
     return name.replace("%", "%25").replace("/", "%2F")
 
 
-def session_path(env):
-    """The tmpfs file holding this shell session's last mid.
+def session_unescape(filename):
+    """A ref filename as the DIC_SESSION name it encodes.
 
-    One file per DIC_SESSION value, wiped on logout: no sessions table, no
-    garbage collection, no locking, and the mtime is "last used" for free.
+    The inverse of session_filename, and the order of the two replacements
+    is what makes it one: an original '%2F' escapes to '%252F', which holds
+    no '%2F' to decode by mistake, so the slash is undone before the percent
+    and not after it.
+
+    >>> [session_unescape(session_filename(n))
+    ...  for n in ("global", "a/b", "a%2Fb", "%", "%%", "%/")]
+    ['global', 'a/b', 'a%2Fb', '%', '%%', '%/']
+    """
+    return filename.replace("%2F", "/").replace("%25", "%")
+
+
+def session_dir(env):
+    """The directory holding every session's ref: $XDG_RUNTIME_DIR/geni.
+
+    A tmpfs, wiped on logout: no sessions table, no garbage collection, no
+    locking, and the mtime is "last used" for free.
+
+    >>> session_dir({"XDG_RUNTIME_DIR": "/run/u"})
+    '/run/u/geni'
     """
     runtime = env.get("XDG_RUNTIME_DIR")
-    base = (os.path.join(runtime, "fac", "dic") if runtime
-            else f"/tmp/fac-{os.getuid()}/dic")  # noqa: S108
-    return os.path.join(base, session_filename(env.get("DIC_SESSION", "global")))
+    return (os.path.join(runtime, "geni") if runtime
+            else f"/tmp/geni-{os.getuid()}")  # noqa: S108
 
 
-def session_read(env):
-    """The mid that -c continues, or None when this session has no conversation.
+def session_path(env, name=None):
+    """The file holding one session's ref: one file per session name.
+
+    The name is the argument when there is one and this shell's session
+    otherwise, so `dic rev-parse NAME` and a bare `dic -c` read the same
+    kind of file by the same rule.
+
+    >>> session_path({"XDG_RUNTIME_DIR": "/run"}, "a/b")
+    '/run/geni/a%2Fb'
+    >>> session_path({"XDG_RUNTIME_DIR": "/run"})
+    '/run/geni/global'
+    >>> session_path({"XDG_RUNTIME_DIR": "/run", "DIC_SESSION": "s"})
+    '/run/geni/s'
+    """
+    if name is None:
+        name = env.get("DIC_SESSION", "global")
+    return os.path.join(session_dir(env), session_filename(name))
+
+
+def session_head(env, name=None):
+    """The mid a session points at, or None when it has no conversation.
 
     None is not a new chat: the caller reports the missing pointer on its own
     stderr, because only the caller knows which stream that is.
     """
     try:
-        with open(session_path(env)) as f:
+        with open(session_path(env, name)) as f:
             return f.read().strip()
     except OSError:
         return None
 
 
-def session_write(mid, env):
-    """Point this session at mid, atomically.
+def session_move(env, mid, name=None):
+    """Point a session at mid, atomically.
 
     The temporary name is unique to this write and not merely to this
     process: two concurrent calls in one process share a pid, so a batch
     that finished two conversations at once would have had both rename the
     one temp file, the loser finding it already gone.
     """
-    path = session_path(env)
+    path = session_path(env, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = f"{path}.{os.getpid()}.{os.urandom(4).hex()}.tmp"
     with open(tmp, "w") as f:
         f.write(mid)
     os.replace(tmp, path)
+
+
+def session_names(env):
+    """Every session that has a ref, sorted, as the names it was written
+    under.
+
+    The ref directory is one file per session, so this is a listing of it
+    decoded.  A half-written ref -- the `.tmp` session_move renames over --
+    is not a session.
+
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     env = {"XDG_RUNTIME_DIR": d, "DIC_SESSION": "a/b"}
+    ...     session_move(env, "01ABC")
+    ...     session_names(env)
+    ['a/b']
+    >>> session_names({"XDG_RUNTIME_DIR": "/nonexistent-xyz"})
+    []
+    """
+    try:
+        files = sorted(os.listdir(session_dir(env)))
+    except OSError:
+        return []
+    return [session_unescape(f) for f in files if not f.endswith(".tmp")]
+
+
+def session_delete(env, name):
+    """Remove a session's ref and return the file it was.
+
+    >>> import tempfile, os
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     env = {"XDG_RUNTIME_DIR": d, "DIC_SESSION": "a"}
+    ...     session_move(env, "01ABC")
+    ...     os.path.basename(session_delete(env, "a"))
+    'a'
+    """
+    path = session_path(env, name)
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        raise DicError(f"{name}: no such session") from None
+    return path

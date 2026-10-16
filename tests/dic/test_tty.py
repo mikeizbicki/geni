@@ -15,7 +15,7 @@ def test_report_is_coloured_on_a_terminal_and_plain_on_a_pipe(stream):
     tty.report(0, 1, "cost: $0.01", err=err, env={})   # too quiet to say anything
     assert err.getvalue() == ""
     tty.report(1, 1, "cost: $0.01", err=err, env={})
-    assert err.getvalue() == f"{tty.ORANGE}cost: $0.01\n{tty.RESET}"
+    assert err.getvalue() == f"{tty.COST}cost: $0.01\n{tty.RESET}"
 
     pipe = stream()
     tty.report(1, 1, "cost: $0.01", err=pipe, env={})
@@ -25,7 +25,7 @@ def test_report_is_coloured_on_a_terminal_and_plain_on_a_pipe(stream):
 def test_DIC_COLOR_overrides_what_the_stream_says(stream):
     forced = stream()                          # a pipe, so colour would be off...
     tty.report(1, 1, "hi", err=forced, env={"DIC_COLOR": "always"})
-    assert forced.getvalue().startswith(tty.ORANGE)
+    assert forced.getvalue().startswith(tty.COST)
 
     off = stream(tty=True)                     # a terminal, so colour would be on...
     tty.report(1, 1, "hi", err=off, env={"DIC_COLOR": "never"})

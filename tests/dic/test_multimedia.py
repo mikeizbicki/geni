@@ -185,7 +185,7 @@ def finish(acc):
 
 @pytest.fixture
 def stub(env):
-    """Write ~/.config/fac/adapters/stub.py: the escape hatch, from the inside.
+    """Write ~/.config/geni/adapters/stub.py: the escape hatch, from the inside.
 
     A file adaptor is the one place a test can see whether prepare ran before
     build and whether call replaced events(), without inventing a wire.

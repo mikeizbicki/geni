@@ -78,11 +78,11 @@ function geni() {
     # back into the branch we start on, and a detached HEAD has no
     # name to merge into.
     toplevel=$(git rev-parse --show-toplevel 2>/dev/null) || {
-        echo "geni-error: not inside a git repository" >&2
+        dic-error "geni-error: not inside a git repository"
         return 1
     }
     branch=$(git symbolic-ref --quiet --short HEAD) || {
-        echo "geni-error: detached HEAD; check out a branch first" >&2
+        dic-error "geni-error: detached HEAD; check out a branch first"
         return 1
     }
 
@@ -107,13 +107,13 @@ function geni() {
     base_sha=$(git rev-parse HEAD) || return 1
 
     if ! dic-run git worktree add --quiet -b "$wt_branch" "$wt_dir" HEAD; then
-        echo "geni-error: could not create worktree" >&2
+        dic-error "geni-error: could not create worktree"
         return 1
     fi
 
     start_pwd=$PWD
     cd "$wt_dir" || {
-        echo "geni-error: could not enter $wt_dir" >&2
+        dic-error "geni-error: could not enter $wt_dir"
         return 1
     }
 
@@ -136,7 +136,7 @@ function geni() {
             wt_dir=$renamed
             wt_branch="geni/${renamed##*/}"
         fi
-        echo "geni-error: itera failed; staying in $wt_dir" >&2
+        dic-error "geni-error: itera failed; staying in $wt_dir"
         cd "$wt_dir" || true
         return 1
     fi
@@ -153,7 +153,7 @@ function geni() {
             wt_dir=$renamed
             wt_branch="geni/${renamed##*/}"
         fi
-        echo "geni-error: merge into $branch failed; branch $wt_branch is in $wt_dir" >&2
+        dic-error "geni-error: merge into $branch failed; branch $wt_branch is in $wt_dir"
         cd "$wt_dir" || true
         return 1
     fi
@@ -176,7 +176,7 @@ geni-clean() {
     # worktree at a time rather than all of them.
     local common_dir d name branch
     common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
-        echo "geni-error: not inside a git repository" >&2
+        dic-error "geni-error: not inside a git repository"
         return 1
     }
     for d in "$common_dir"/geni/*; do
@@ -184,7 +184,7 @@ geni-clean() {
         name=${d##*/}
         branch="geni/$name"
         git worktree remove --force "$d" 2>/dev/null || {
-            echo "geni-error: could not remove $d" >&2
+            dic-error "geni-error: could not remove $d"
             continue
         }
         git branch -D "$branch" >/dev/null 2>&1 || true

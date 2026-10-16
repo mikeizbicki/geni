@@ -44,9 +44,10 @@ each other by their full package name.
 Whenever possible, names and semantics remain the same as simonw's `llm`.
 
 The command line is a tree of commands: the call is the default, and every
-other command is a readout that answers a question about the database and
-never calls a model.  Each command takes the options of its own row, plus
-the globals `-v`, `-q` and `--models-file`, which every command accepts.
+other command answers from the local state -- the database, or a session's
+ref -- and never calls a model.  Each command takes the options of its own
+row, plus the globals `-v`, `-q` and `--models-file`, which every command
+accepts.
 The command name must be `argv[0]`: a word that is not a command name is the
 call's prompt.
 
@@ -59,6 +60,9 @@ call's prompt.
 | `dic cost` | `commands.cost` | `--session NAME` `--tree` `--of REF` |
 | `dic show` | `commands.show` | `REF` |
 | `dic bps` | `bps.bps` | `-m/--model PAT` `--upstream PAT` `--format=csv\|svg` `--where SQL` |
+| `dic rev-parse` | `commands.rev_parse` | `[NAME]` |
+| `dic branch` | `commands.branch` | `[NAME [START]]` `-d` `-D` |
+| `dic update-ref` | `commands.update_ref` | `NAME [NEW [OLD]]` `-d` |
 
 | short form | long form      | meaning |
 | ---------- | -------------- | ------- |
@@ -346,7 +350,7 @@ A major change between `dic` and `llm` is how conversation history is stored.
 In `llm`, conversations are always "linear" and always "global",
 but in `dic` conversations can have non-linear tree structures and are local to the current shell session.
 
-The way this works is that all messages sent with `dic` have a "message id" or "mid" which serves as the primary key in a sqlite table "messages" located at `~/.config/fac/dic.db`.
+The way this works is that all messages sent with `dic` have a "message id" or "mid" which serves as the primary key in a sqlite table "messages" located at `$XDG_STATE_HOME/geni/dic.db` (`~/.local/state/geni/dic.db` by default).
 The messages table has the following columns:
 - `mid`: a ULID
 - `round`: which API call of this user turn the row is.  A call that used tools
@@ -506,7 +510,7 @@ two terminals that deliberately export the same value share one conversation;
 and `DIC_SESSION=foo dic -c ...` is a one-off way to address a named conversation.
 
 The pointer for each session is stored as a single file at
-`$XDG_RUNTIME_DIR/fac/dic/<session>` whose contents are the last `mid` written by that session.
+`$XDG_RUNTIME_DIR/geni/<session>` whose contents are the last `mid` written by that session.
 The name is percent-escaped before it is used as a filename -- `%` becomes
 `%25` and `/` becomes `%2F` -- because a session name is a path and a file
 cannot also be a directory: `parent` and `parent/child` are two files at the
@@ -514,12 +518,21 @@ same level, and neither is in the way of the other.
 This location is a tmpfs, so the pointers are wiped on logout and reboot with no garbage collection,
 no liveness checking, and no locking beyond an atomic rename.
 The file's mtime serves as the "last used" time for free.
+The file is a ref and is read and written as one: `dic rev-parse NAME` is
+its value, `dic branch` draws the sessions as the tree their names spell,
+`dic branch NAME START` forks one, `dic update-ref NAME NEW [OLD]` moves
+one, and `dic branch -d NAME` or `dic update-ref -d NAME` removes one.
+OLD is `git update-ref`'s own compare-and-swap -- the move fails unless the
+ref still holds it -- and it is what lets a harness merge a forked branch
+back without clobbering a parent that moved meanwhile.  No wrapper derives
+the name-to-file rule for itself: the escaping lives in one function, and
+these verbs are how anything else reaches it.
 There is deliberately no `sessions` table in sqlite:
 session state is ephemeral, and the message tree in sqlite is immutable and append-only.
 What a row stores instead is the *name* of the session that wrote it -- one
 column, so that a harness's total spend is one aggregate rather than a walk of
 the tmpfs directory, and a nested name is a subtree.
-If `XDG_RUNTIME_DIR` is unset, fall back to `/tmp/fac-$UID/dic/`.
+If `XDG_RUNTIME_DIR` is unset, fall back to `/tmp/geni-$UID/`.
 
 If `-c` is passed we assume that `--mid` is not passed,
 and the correct behavior is to first do a lookup to find the appropriate `--mid` value and then proceed as if that value was passed.
@@ -648,8 +661,8 @@ milliseconds, which is more than the time-to-first-token `dic` exists to protect
 There are four sources, weakest first:
 
 1. `dic/models.json`, the defaults shipped with the package,
-2. `~/.config/fac/providers.json`, the user's providers,
-3. `~/.config/fac/models.json`, the user's models,
+2. `~/.config/geni/providers.json`, the user's providers,
+3. `~/.config/geni/models.json`, the user's models,
 4. `$DIC_MODELS`, if it names a file.
 
 Each file is one JSON *object* mapping a model id to that entry's own keys,
@@ -869,7 +882,7 @@ which can be used with `api_type: openai-chat`,
 but it silently ignores unsupported fields and does not expose reasoning or tool-use blocks faithfully,
 so `anthropic-messages` is preferred.
 
-As a final escape hatch, if `api_type` names a file `~/.config/fac/adapters/<api_type>.py`,
+As a final escape hatch, if `api_type` names a file `~/.config/geni/adapters/<api_type>.py`,
 that file is imported and used as the adapter.
 It is loaded by path, but it imports `dic`'s own modules by package name --
 `from dic.store import data_url` -- exactly as the built-in adapters do.

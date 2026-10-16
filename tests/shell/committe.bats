@@ -89,3 +89,14 @@ teardown() {
     [ "$status" -eq 0 ]
     grep -q -- '--some-new-flag' "$FAKE_DIC_LOG"
 }
+
+@test "committe restores the caller's session name" {
+    # The child session is set on the one dic call that needs it and not
+    # exported for the shell: an export here would replace the caller's
+    # session for every later committe, so each fork would nest under the
+    # last, and a session name is one filename -- the '/' of the hierarchy
+    # is escaped -- so the name would grow past NAME_MAX after a few calls.
+    export DIC_SESSION=caller
+    committe 'add primes.py' >/dev/null 2>&1
+    [ "$DIC_SESSION" = "caller" ]
+}

@@ -64,7 +64,7 @@ sandbox-seccomp-blob() {
     dir=$(cd -- "$dir" && pwd) || return 1
     src=$dir/sandbox-seccomp.c
     [[ -f $src ]] || {
-        printf 'sandbox: %s: not found\n' "$src" >&2
+        dic-error "sandbox-error: $src: not found"
         return 1
     }
 
@@ -76,7 +76,7 @@ sandbox-seccomp-blob() {
 
     if [[ ! -s $blob ]]; then
         mkdir -p "$cache" || return 1
-        printf 'sandbox: building %s\n' "$blob" >&2
+        dic-info "sandbox-info: building $blob"
         ${CC:-cc} -std=gnu99 -O2 -Wall -Wextra -o "$bin.$$" "$src" ||
             return 1
         "$bin.$$" >"$blob.$$" || return 1

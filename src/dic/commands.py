@@ -1,5 +1,5 @@
-"""Readouts: what dic says about itself, its history and its spend, and never
-a call to a model.
+"""Commands: what dic says about itself, its history and its spend, and the
+refs that name a conversation.  Never a call to a model.
 
 One function per command, taking the open connection and the environment and
 returning the whole reply as a string.  sqlite computes every number and
@@ -22,8 +22,9 @@ from dic import bps, client, config
 from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
-                       TOOL_STATS, resolve_ref, session_read)
-from dic.tty import (GREEN, RESET, YELLOW, DicError, page, pager_command,
+                       TOOL_STATS, resolve_ref, session_delete, session_head,
+                       session_move, session_names)
+from dic.tty import (ID, REF, RESET, DicError, page, pager_command,
                      use_color)
 
 
@@ -123,11 +124,11 @@ def paint(text, color, ctx):
     so colour is conditional here for the same reason it is in the client:
     a piped row is clean text and a terminal row is coloured.
 
-    >>> paint("abc", YELLOW, {"color": True})
-    '\x1b[33mabc\x1b[0m'
-    >>> paint("abc", YELLOW, {})
+    >>> paint("abc", ID, {"color": True}) == ID + "abc" + RESET
+    True
+    >>> paint("abc", ID, {})
     'abc'
-    >>> paint("", YELLOW, {"color": True})
+    >>> paint("", ID, {"color": True})
     ''
     """
     return f"{color}{text}{RESET}" if ctx.get("color") and text else text
@@ -225,8 +226,8 @@ def format_turn(head, rounds, ctx):
     tool loop -- each is named by its round and by the tools that round
     called, because that is what a reader needs to see about it.
     """
-    lines = [f"mid {paint(head['mid'], YELLOW, ctx)}"
-             + (paint(decorations(head, ctx["head"], ctx["here"]), GREEN, ctx)
+    lines = [f"mid {paint(head['mid'], ID, ctx)}"
+             + (paint(decorations(head, ctx["head"], ctx["here"]), REF, ctx)
                 if ctx["decorate"] else "")]
     lines.append(f"{'Model:':<{LABEL_WIDTH}}{head['model_id']}")
     lines.append(f"{'Date:':<{LABEL_WIDTH}}{date_line(head['t_start'])}")
@@ -478,8 +479,8 @@ def decorations(row, head, here):
 # format string with a typo in it must not read as a quiet log: the reader
 # would be reading the wrong day's work and would never see that they were.
 SPECIFIERS = {
-    "H": lambda row, ctx: paint(row["mid"], YELLOW, ctx),
-    "h": lambda row, ctx: paint(row["mid"][:10], YELLOW, ctx),
+    "H": lambda row, ctx: paint(row["mid"], ID, ctx),
+    "h": lambda row, ctx: paint(row["mid"][:10], ID, ctx),
     "s": lambda row, _: prompt_line(row["user"]),
     "b": lambda row, _: prompt_line(row["response"]),
     "a": lambda row, _: ago(row["t_start"]),
@@ -489,7 +490,7 @@ SPECIFIERS = {
     "c": lambda row, _: "" if row["cost"] is None else f"${row['cost']:.4f}",
     "t": lambda row, _: str(row["tokens"] or 0),
     "D": lambda row, ctx: (paint(decorations(row, ctx["head"], ctx["here"]),
-                                 GREEN, ctx)
+                                 REF, ctx)
                            if ctx["decorate"] else ""),
 }
 
@@ -738,7 +739,7 @@ def log(conn, env, *,
     flat shape the picker reads, and are never paged.
     """
     mid = (resolve_ref(conn, from_, env) if from_
-           else session_read(env))
+           else session_head(env))
     scope = session
     if scope == "":
         scope = env.get("DIC_SESSION", "global")
@@ -746,7 +747,7 @@ def log(conn, env, *,
     if oneline and format_:
         raise DicError("pick one: --oneline or --format")
     rows = log_rows(conn, mid, limit or 200, all_, scope, where, params)
-    here, head = env.get("DIC_SESSION", "global"), session_read(env)
+    here, head = env.get("DIC_SESSION", "global"), session_head(env)
     color = use_color(sys.stdout, env)
     if format_ is not None or oneline:
         return log_table(rows, graph=graph,
@@ -794,7 +795,7 @@ def show(conn, env, ref=None):
     if tools:
         extra.append(("Tools:", ", ".join(
             f"{t['name']} {'ok' if t['ok'] else 'error'}" for t in tools)))
-    ctx = {"head": session_read(env),
+    ctx = {"head": session_head(env),
            "here": env.get("DIC_SESSION", "global"),
            "decorate": True, "stat": True, "full": True, "lines": None,
            "extra": extra, "color": use_color(sys.stdout, env)}
@@ -806,12 +807,156 @@ def show(conn, env, ref=None):
 # dispatch all read the same declaration.  `client.dic` is imported at
 # module level because client.py no longer imports this module: the call is
 # one command among the readouts, not the other way round.
+
+# ------------------------------------------------------------------- refs
+
+# A session is a ref into the message tree: a file whose contents are a mid,
+# exactly as a git branch is a file whose contents are a commit.  The four
+# functions below are its verbs, and they are in git's words on purpose,
+# because the analogy is the whole of the documentation they need.  What
+# they are for is the harness scripts: `committe` forks a session, runs the
+# model in it, and merges the fork back only if the patch applied, and it
+# does that with these instead of deriving the name-to-file rule for itself.
+
+
+def rev_parse(conn, env, *,  # noqa: ARG001
+              name=None):
+    """The mid a session points at: what `dic -c` would continue in it.
+
+    The ref readout, and the one a script uses: `dic rev-parse "$parent"`
+    answers the question `dic -c` answers, from the same file, so a wrapper
+    never re-derives the name-to-file rule the escaping encodes.  A session
+    with no conversation has no ref, and that is exit 1 with nothing on
+    stdout, exactly as `git rev-parse` refuses a name it cannot resolve.
+    """
+    mid = session_head(env, name)
+    if not mid:
+        raise DicError(f"no such session:"
+                       f" {name or env.get('DIC_SESSION', 'global')}")
+    return mid + "\n"
+
+
+def branch(conn, env, *,  # noqa: ARG001
+           name=None, start=None, delete=False, force=False):
+    """List the sessions, fork one, or delete one.
+
+    With no name the sessions are listed as a tree: the hierarchy is in the
+    name and not in the filesystem -- the '/'-escaping makes `a` and `a/b`
+    two files at one level -- so the drawing is what makes it visible.
+
+    With a name a session is forked from START, which defaults to this
+    shell's.  The ref is *copied* and not linked, and that is what makes a
+    child transparent: `-c`, `--mid HEAD` and a bare `dic` all read the
+    child's own file, and each would find it empty otherwise.
+
+    -d removes a ref, refusing the two removals that would surprise: this
+    shell's own session, and one that another session nests inside.  -D is
+    the same removal with both checks off.
+    """
+    if delete or force:
+        if name is None:
+            raise DicError("branch -d needs a session name")
+        return branch_delete(env, name, force)
+    if name is None:
+        return branch_tree(session_names(env))
+    return branch_create(env, name, start)
+
+
+def branch_create(env, name, start):
+    """Fork: a new session whose ref starts where another session's is."""
+    if session_head(env, name) is not None:
+        raise DicError(f"{name}: session already exists")
+    start = start or env.get("DIC_SESSION", "global")
+    mid = session_head(env, start)
+    if mid is None:
+        raise DicError(f"{start}: no such session")
+    session_move(env, mid, name)
+    return ""
+
+
+def branch_delete(env, name, force=False):
+    """Remove a session's ref, refusing the two surprises unless -D."""
+    here = env.get("DIC_SESSION", "global")
+    if not force:
+        if name == here:
+            raise DicError(f"{name}: this shell's session (use -D)")
+        children = [s for s in session_names(env) if s.startswith(name + "/")]
+        if children:
+            raise DicError(f"{name}: has sub-sessions"
+                           f" ({', '.join(children)}); use -D")
+    mid = session_head(env, name)
+    session_delete(env, name)
+    return f"deleted {name} (was {mid})\n"
+
+
+def update_ref(conn, env, *,  # noqa: ARG001
+               name=None, new=None, old=None, delete=False):
+    """Move a session's ref, and refuse unless it currently holds OLD.
+
+    OLD is git's own compare-and-swap, and it catches the case it is for: a
+    merge-back that started when the parent held one mid and ends minutes
+    later, after something else moved it.  The compare and the rename are
+    two syscalls and not one, so two writers racing inside the same
+    microsecond can both pass -- which is the window the SPEC already
+    accepts when it says "no locking beyond an atomic rename", because the
+    alternative is a lock file and a stale lock is worse than a lost race.
+
+    -d removes the ref instead, which is what `git update-ref -d` does and
+    what a harness does with the branch it has finished merging.
+    """
+    if not name:
+        raise DicError("update-ref needs a session name")
+    if delete:
+        if new or old:
+            raise DicError("update-ref -d takes no new value")
+        session_delete(env, name)
+        return ""
+    if not new:
+        raise DicError("update-ref needs a new mid")
+    current = session_head(env, name)
+    if old is not None and current != old:
+        raise DicError(f"{name}: expected {old},"
+                       f" found {current or 'nothing'}")
+    session_move(env, new, name)
+    return ""
+
+
+def branch_tree(names):
+    """Session names as an indented tree, sorted.
+
+    The hierarchy is in the name and not in the filesystem -- the
+    '/'-escaping makes `a` and `a/b` two files at one level -- so the
+    drawing is what makes it visible.  A name whose parent is not itself a
+    live session is drawn at the top level, because a tree drawn from a
+    hole would lie about where the name sits.
+
+    >>> print(branch_tree(["a", "a/b", "a/b/c", "x"]), end="")
+    a
+      a/b
+        a/b/c
+    x
+    >>> branch_tree([])
+    ''
+    """
+    live = set(names)
+    lines = []
+    for name in sorted(names):
+        parts = name.split("/")
+        depth = sum(1 for i in range(1, len(parts))
+                    if "/".join(parts[:i]) in live)
+        lines.append("  " * depth + name)
+    return "".join(line + "\n" for line in lines)
+
+
 COMMANDS = {
-    "call":  client.dic,
-    "log":   log,
-    "stats": stats,
-    "models": models,
-    "cost":  cost,
-    "show":  show,
-    "bps":   bps.bps,
+    "call":       client.dic,
+    "log":        log,
+    "stats":      stats,
+    "models":     models,
+    "cost":       cost,
+    "show":       show,
+    "bps":        bps.bps,
+    "rev-parse":  rev_parse,
+    "branch":     branch,
+    "update-ref": update_ref,
 }

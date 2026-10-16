@@ -10,13 +10,67 @@ See SPEC.md, "Color", "Progress meters" and "Verbosity".
 """
 import base64, os, shlex, shutil, subprocess, sys, time
 
-BLUE = "\033[38;5;39m"       # model output
-ORANGE = "\033[38;5;208m"    # the cost summary
-RED = "\033[31m"             # errors
-YELLOW = "\033[33m"          # a message id, as git colors a commit hash
-GREEN = "\033[32m"           # a decoration, as git colors a ref
-THINKING = "\033[38;5;245m"             # reasoning: faded gray on the usual background
-RESET = "\033[0m"
+def parse_colors(text):
+    """A GENI_COLORS string as {role: SGR escape}, in LS_COLORS' syntax.
+
+    ':'-separated role=SGR entries, which is what dircolors(1),
+    GCC_COLORS and GREP_COLORS all use, so a shell has one habit for
+    reading a palette and not three.  An empty SGR means the role is
+    uncoloured, which is what 'trace=' is: a name reserved by the
+    transcript rule rather than a code.
+
+    >>> parse_colors("error=01;31:payload=38;5;39")
+    {'error': '\\x1b[01;31m', 'payload': '\\x1b[38;5;39m'}
+    >>> parse_colors("trace=")
+    {'trace': ''}
+    >>> parse_colors("")
+    {}
+    """
+    out = {}
+    for entry in text.split(":"):
+        role, sep, code = entry.partition("=")
+        if sep:
+            out[role.strip()] = f"\033[{code}m" if code else ""
+    return out
+
+
+def reset_for(palette):
+    """The reset sequence for a palette, or '' when there is nothing to reset.
+
+    A palette whose every value is empty is no colour at all, and a
+    reset written after an empty code is a stray escape in a pipe: the
+    reset is emitted only where it turns something off.
+
+    >>> reset_for({"payload": "\\x1b[38;5;39m"})
+    '\\x1b[0m'
+    >>> reset_for({"trace": ""})
+    ''
+    >>> reset_for({})
+    ''
+    """
+    return "\033[0m" if any(palette.values()) else ""
+
+
+# One palette, read once, from the shell that set it: dic.sh exports
+# GENI_COLORS with the same entries, so the trace and the answer cannot
+# disagree about what a role means.  Unset or empty is no colour anywhere,
+# which is the default of a pip-installed dic that has never sourced dic.sh.
+#
+# The constants are the roles and not the colours: `dic-info` on the
+# shell side and INFO here are the same role, whichever SGR each names,
+# so the two readers of one palette cannot drift apart in vocabulary
+# even though one is bash and the other python.
+PALETTE = parse_colors(os.environ.get("GENI_COLORS", ""))
+
+ERROR = PALETTE.get("error", "")       # errors
+WARNING = PALETTE.get("warning", "")   # a recoverable failure
+HINT = PALETTE.get("hint", "")         # an aside, fainter than what it follows
+INFO = PALETTE.get("info", "")         # progress: reasoning, the pv meters
+PAYLOAD = PALETTE.get("payload", "")   # model output
+COST = PALETTE.get("cost", "")         # the cost summary
+ID = PALETTE.get("id", "")             # a message id, as git hashes one
+REF = PALETTE.get("ref", "")           # a decoration, as git refs
+RESET = reset_for(PALETTE)
 
 
 def use_color(stream, env=None):
@@ -53,7 +107,7 @@ def die(msg, err=None, env=None):
     """
     err = sys.stderr if err is None else err
     line = f"dic: {msg}\n"
-    err.write(RED + line + RESET if use_color(err, env) else line)
+    err.write(ERROR + line + RESET if use_color(err, env) else line)
     sys.exit(1)
 
 
@@ -69,7 +123,7 @@ def report(verbosity, level, msg, err=None, env=None):
         return
     err = sys.stderr if err is None else err
     line = f"{msg}\n"
-    err.write(ORANGE + line + RESET if use_color(err, env) else line)
+    err.write(COST + line + RESET if use_color(err, env) else line)
     err.flush()
 def pager_command(env=None):
     """The pager to pipe through, or None: $DIC_PAGER, then $PAGER, then less.
@@ -192,7 +246,7 @@ def pv_paint(state, line, err=None, env=None):
     err = sys.stderr if err is None else err
     state["width"] = max(state.get("width", 0), len(line))
     line = line.ljust(state["width"])
-    err.write("\r" + (THINKING + line + RESET if use_color(err, env) else line))
+    err.write("\r" + (INFO + line + RESET if use_color(err, env) else line))
     err.flush()
 
 

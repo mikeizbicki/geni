@@ -2,6 +2,21 @@
 # It takes a request / conversation and generates a git commit.
 # It is intended as a beginner-friendly intro to the "unix philosophy"
 # and how AI coding agents work.
+#
+# committe is a four-step harness (see scripts/AGENTS.md):
+#
+#   committe-validate   pure: is this run possible at all
+#   committe-prepare    fork a child session, record the parent's head
+#   committe-run        call dic in the child session
+#   committe-record     apply, commit, merge the child's ref into the parent
+#
+# and committe-fail, which is not a step: it prints the resume line.
+#
+# The fork is what makes a failure safe.  dic advances the *child's* ref on
+# every call, so the parent's ref is untouched until committe-record moves
+# it, with dic update-ref's OLD as the compare-and-swap.  A failed apply
+# therefore leaves the parent exactly where it was, with nothing to clean
+# up: the child is a leftover branch and not a corrupt parent.
 
 # dic-run, dic-git-clean and dic-llm live in dic.sh, which sources
 # this file in turn.  A caller that sources this file directly -- a
@@ -10,48 +25,137 @@
 # nothing, so dic.sh sourcing this file does not loop.
 [[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
 
+# ------------------------------------------------------------------- entry
+
 function committe() {
     # exit code meaning:
-    # 0 committed
-    # 1 nothing could be applied
-    #   (diff malformed and request should be repeated/manually fixed)
-    # 2 the model asked a question instead of making a change
-    #   (no diff provided)
+    # 0  committed
+    # 1  nothing could be applied
+    #    (diff malformed and request should be repeated/manually fixed)
+    # 2  the model asked a question instead of making a change
+    #    (no diff provided)
+    # 64 usage error (no request given, on a terminal)
 
     # committe's own flags are parsed first; the first `--` ends them and
     # everything after is passed to the model command.  A flag committe does
     # not know is passed through too, so a new dic/llm flag works unedited.
     local force=0 retries="${COMMITTE_RETRIES:-1}"
+    local retry_mode="${COMMITTE_RETRY_MODE:-bytes}"
+    local applier="${COMMITTE_APPLIER:-auto}"
+    local dry_run=0
     local -a llm_args=()
     while (( $# )); do
         case "$1" in
-            -f|--force) force=1; shift ;;
-            --retries)  retries=$2; shift 2 ;;
-            --)         shift; llm_args+=("$@"); break ;;
-            *)          llm_args+=("$1"); shift ;;
+            -f|--force)   force=1; shift ;;
+            --retries)    retries=$2; shift 2 ;;
+            --retry-mode) retry_mode=$2; shift 2 ;;
+            --applier)    applier=$2; shift 2 ;;
+            -n|--dry-run) dry_run=1; shift ;;
+            --)           shift; llm_args+=("$@"); break ;;
+            *)            llm_args+=("$1"); shift ;;
         esac
     done
 
-    # The prompt goes into the user turn in front of whatever the user wrote,
-    # so an invocation with no request would send the instructions alone and
-    # make a change nobody asked for.  A pipe on stdin is a request, and a
-    # continuation such as -c carries one already.  This does not try to tell
-    # a request from a flag's value, which would mean parsing dic's options
-    # here, so it only catches the invocation with nothing at all.
-    if (( ${#llm_args[@]} == 0 )) && [[ -t 0 ]]; then
-        dic-error "committe-error: no request"
-        return 1
-    fi
+    # The state the four steps share.  Bash has no lexical scope across
+    # functions, so the steps read these rather than taking every one as
+    # an argument; `local` keeps them invisible outside this call.
+    local COMMITTE_FORCE=$force
+    local COMMITTE_RETRIES=$retries
+    local COMMITTE_RETRY_MODE=$retry_mode
+    local COMMITTE_APPLIER=$applier
+    local COMMITTE_DRY_RUN=$dry_run
+    local -a COMMITTE_ARGS=("${llm_args[@]}")
+    local COMMITTE_PARENT COMMITTE_CHILD
 
-    # only allow committe to run if the repo is clean, unless -f was given
-    if (( ! force )); then
+    committe-validate || return $?
+    committe-prepare || return 1
+
+    # A bytes retry resends the request and so gets a fresh sample; a
+    # patch retry resends the same bytes to a less strict applier and
+    # never re-calls the model.  The second lives inside
+    # committe-record, because it is the apply and not the call that is
+    # repeated.
+    local attempt=0
+    while :; do
+        if ! committe-run; then
+            committe-fail "the model call failed"
+            return 1
+        fi
+        if ! committe-has-patch; then
+            committe-question
+            return 2
+        fi
+        if (( COMMITTE_DRY_RUN )); then
+            dic-info "committe-info: dry run; the patch was not applied"
+            dic-hint "committe-hint: the patch is at $(committe-patchfile)"
+            return 0
+        fi
+        if committe-record; then
+            return 0
+        fi
+        if [[ $COMMITTE_RETRY_MODE != bytes ]] \
+                || (( attempt >= COMMITTE_RETRIES )); then
+            break
+        fi
+        attempt=$((attempt + 1))
+        dic-warn "committe-warning: retrying the request ($attempt/$COMMITTE_RETRIES)"
+    done
+
+    committe-fail "could not apply the patch"
+    return 1
+}
+
+# ---------------------------------------------------------------- validate
+
+function committe-validate() {
+    # Pure: nothing is written and no model is called.  A run with no
+    # request on a terminal is a usage error and not a failed call, so it
+    # is 64 and not 1; a dirty tree is a failed run and is 1.
+    if (( ${#COMMITTE_ARGS[@]} == 0 )) && [[ -t 0 ]]; then
+        dic-error "committe-error: no request"
+        return 64
+    fi
+    if (( ! COMMITTE_FORCE )); then
         dic-git-clean committe || return 1
     fi
-
-    # generate and apply the patch
-    committe-mkpatch "${llm_args[@]}" || return $?
-    committe-apply "$retries"
+    return 0
 }
+
+# ----------------------------------------------------------------- prepare
+
+function committe-headfile() {
+    # The mid the parent session pointed at when the child was forked.
+    # committe-record passes it as update-ref's OLD, so a merge-back
+    # refuses if the parent moved meanwhile -- the guarantee `git merge
+    # --ff-only` gives, from the same place.
+    echo "$(git rev-parse --git-dir)/geni/committe/head"
+}
+
+function committe-prepare() {
+    # Fork the child session and record the fork point.  The child's ref
+    # is a *copy* of the parent's and not a link, so -c, --mid HEAD and a
+    # bare dic all resolve in the child exactly as they did in the
+    # parent, and the parent's own ref is not touched at all.
+    COMMITTE_PARENT="${DIC_SESSION:-global}"
+    COMMITTE_CHILD="$COMMITTE_PARENT/committe-$(worktree-token "$COMMITTE_PARENT")"
+
+    local headfile; headfile=$(committe-headfile)
+    mkdir -p "$(dirname "$headfile")"
+
+    if dic rev-parse "$COMMITTE_PARENT" > "$headfile" 2>/dev/null; then
+        dic-run dic branch "$COMMITTE_CHILD" "$COMMITTE_PARENT" || return 1
+    else
+        # No parent ref yet: the child starts from nothing, and the
+        # empty headfile is what tells the merge-back that the parent
+        # must still be empty.
+        : > "$headfile"
+    fi
+
+    export DIC_SESSION="$COMMITTE_CHILD"
+    return 0
+}
+
+# --------------------------------------------------------------------- run
 
 function committe-patchfile() {
     # Output the absolute path to the temporary file that will store the patch.
@@ -68,15 +172,13 @@ function committe-message() {
     sed -e '/^diff --git/,$d' -e '/./,$!d' "$(committe-patchfile)"
 }
 
-function committe-mkpatch() {
+function committe-run() {
     # `dic` is a more efficient version of simonw's `llm` command, but
     # either satisfies the caller; dic.sh resolves which, so the choice
     # is made in one place.
     local llm_command
     llm_command=$(dic-llm) || return 1
 
-    # The patchfile lives under .git/geni/committe/, which a fresh
-    # checkout does not have yet.
     mkdir -p "$(dirname "$(committe-patchfile)")"
 
     # The user's request is the prompt, and the instructions that say what
@@ -86,58 +188,76 @@ function committe-mkpatch() {
     # prompt is the head of every request dic makes, so rewriting it
     # throws away the cached prefix that -c exists to hit.
     #
-    # The model is asked once and never retried.  stdin is part of the
-    # request when it is not a terminal, and a pipe reads once: a retry
-    # that inherited it would find EOF and ask the model without the
-    # request it was sent.  The caller's fd 0 is inherited here and goes
-    # to $llm_command unchanged.
-    if dic-run "$llm_command" --prepend-prompt "$(committe-prompt)" "$@" \
-            > "$(committe-patchfile)"; then
-        return 0
-    fi
-    dic-error "committe-error: $llm_command failed"
-    return 1
+    # The model is asked once per attempt and never retried inside this
+    # function.  stdin is part of the request when it is not a terminal,
+    # and a pipe reads once: a retry that inherited it would find EOF and
+    # ask the model without the request it was sent.  The bytes retry in
+    # committe() re-runs this function with the same arguments and the
+    # same fd, which is why it works only when the request is a word and
+    # not a pipe -- and why it resends the same request and not the same
+    # response: a second sample of a prompt is a second patch.  A
+    # provider that made the call deterministic would need `-o seed=N`,
+    # at the cost of the prompt cache.
+    dic-run "$llm_command" --prepend-prompt "$(committe-prompt)" \
+        "${COMMITTE_ARGS[@]}" > "$(committe-patchfile)"
 }
 
-function committe-apply() {
-    local patch_file=$(committe-patchfile)
+function committe-has-patch() {
+    # Whether the model made a change at all, or only answered.
+    grep -q '^diff --git ' "$(committe-patchfile)"
+}
 
-    # A reply with no patch at all is the model asking a question instead of
-    # making a change, so there is nothing to apply and nothing to commit
-    if ! grep -q '^diff --git ' "$patch_file"; then
-        dic-info "committe-question: the model made no change; it asks:"
-        # The model's own words, in the payload role -- the same role a
-        # printed answer carries -- read from GENI_COLORS and not
-        # hardcoded, so the shell and tty.py cannot disagree about what
-        # the answer's colour is.
-        sed 's/^#![[:space:]]*//' "$patch_file" | dic-paint payload
-        dic-hint "committe-hint: continue with: committe -c '...'"
-        return 2
-    fi
+function committe-question() {
+    # The model asked instead of changing anything: print its words in
+    # the payload role, and merge the turn back anyway so that -c
+    # continues from the question and the user can answer it.
+    dic-info "committe-question: the model made no change; it asks:"
+    sed 's/^#![[:space:]]*//' "$(committe-patchfile)" | dic-paint payload
+    committe-merge 2>/dev/null || true
+    dic-hint "committe-hint: continue with: committe -c '...'"
+}
 
-    # We directly run `git apply` on the output of the llm.
-    # `git apply` ignores any text before the first "diff --git" line,
-    # so the commit message above the patch is skipped over.
-    # Finally, it either fully succeeds or leaves the tree untouched.
-    # So on error, the repo remains exactly as if nothing had happened.
-    local i
-    for (( i = 0; i <= retries; i++ )); do
-        dic-run git apply --quiet --index --recount --ignore-whitespace "$patch_file" \
-            && break
+# ------------------------------------------------------------------ record
 
-        # `git apply` needs every context line to match exactly, which the
-        # model does not always manage; `git-apply-fuzzy` retries the patch
-        # and tolerates small mismatches in the context lines.
-        dic-warn "committe-warning: git apply failed, retrying with git-apply-fuzzy"
-        dic-run git-apply-fuzzy -q "$patch_file" && break
+function committe-apply-patch() {
+    # One traced step: the applier picks which tool is tried first, and
+    # an `auto` fallback says so on stderr rather than in a second trace.
+    # git-apply-fuzzy's per-hunk report belongs to the model and not to
+    # the terminal, so it is quiet here.
+    local patch_file=$1 applier=$2
+    case $applier in
+        exact)
+            git apply --quiet --index --recount --ignore-whitespace "$patch_file"
+            ;;
+        fuzzy)
+            git-apply-fuzzy -q "$patch_file"
+            ;;
+        *)
+            if ! git apply --quiet --index --recount --ignore-whitespace "$patch_file" 2>/dev/null; then
+                dic-warn "committe-warning: git apply failed; retrying with git-apply-fuzzy"
+                git-apply-fuzzy -q "$patch_file"
+            fi
+            ;;
+    esac
+}
 
-        if (( i >= retries )); then
-            dic-error "committe-error: git apply and git-apply-fuzzy both failed"
-            dic-hint "committe-hint: fix the raw patch at: $patch_file"
-            dic-hint "committe-hint: after fixing, rerun committe-apply"
+function committe-record() {
+    # Apply, commit, and merge -- the only step that moves a ref.  The
+    # applier escalation for --retry-mode patch lives here and not in
+    # committe(), because it repeats the apply and never the call.
+    local applier=$COMMITTE_APPLIER
+    local attempt=0
+    while :; do
+        if dic-run committe-apply-patch "$(committe-patchfile)" "$applier"; then
+            break
+        fi
+        if [[ $COMMITTE_RETRY_MODE != patch ]] \
+                || (( attempt >= COMMITTE_RETRIES )); then
             return 1
         fi
-        dic-warn "committe-warning: retrying patch ($((i + 1))/$retries)"
+        attempt=$((attempt + 1))
+        applier=fuzzy
+        dic-warn "committe-warning: retrying the apply ($attempt/$COMMITTE_RETRIES)"
     done
 
     # `git apply` staged the changes, so no separate `git add` is required.
@@ -151,9 +271,58 @@ function committe-apply() {
         return 1
     fi
 
+    committe-merge || return 1
+
     # Show a short summary of the commit we just made.
     git show HEAD --stat --format='%h %s'
 }
+
+function committe-merge() {
+    # Move the parent's ref to where the child's is, with the fork point
+    # as the compare-and-swap, and then drop the child.  This is the
+    # merge and it is the whole of it: the child's mid is already in the
+    # message tree, so there is no content to copy -- only the ref.
+    local old new
+    old=$(cat "$(committe-headfile)")
+    new=$(dic rev-parse "$COMMITTE_CHILD") || {
+        dic-error "committe-error: no turn in $COMMITTE_CHILD to merge"
+        return 1
+    }
+
+    if [[ -z $old ]]; then
+        # The parent had no ref at prepare time, so it must still have
+        # none: something else started a conversation under this session
+        # name while we were running if it does.
+        if dic rev-parse "$COMMITTE_PARENT" >/dev/null 2>&1; then
+            dic-error "committe-error: $COMMITTE_PARENT moved meanwhile"
+            return 1
+        fi
+        dic-run dic update-ref "$COMMITTE_PARENT" "$new" || return 1
+    else
+        dic-run dic update-ref "$COMMITTE_PARENT" "$new" "$old" || return 1
+    fi
+
+    # The commit is reachable from the parent now, so the child's ref is
+    # bookkeeping.  A failure to remove it is not a failure to merge.
+    dic update-ref -d "$COMMITTE_CHILD" 2>/dev/null || true
+}
+
+# -------------------------------------------------------------------- fail
+
+function committe-fail() {
+    # Not a step: the resume line, and the one place the child's name is
+    # printed.  Nothing is cleaned up here -- the parent's ref is already
+    # where it was, and the child is a leftover branch the user may
+    # resume or ignore.
+    dic-error "committe-error: $1"
+    if [[ -n ${COMMITTE_CHILD:-} ]]; then
+        dic-hint "committe-hint: the turn is in session $COMMITTE_CHILD"
+        dic-hint "committe-hint: resume it with: DIC_SESSION=$COMMITTE_CHILD dic -c '...'"
+    fi
+}
+
+# ------------------------------------------------------------------ prompt
+
 
 function committe-prompt() {
     # Print the instructions committe puts in front of the request, in the

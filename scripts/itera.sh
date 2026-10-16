@@ -117,30 +117,30 @@ itera-state-dir() {
 # Record what a later --continue or --abort needs.  One file per fact, so a
 # half-written state is a missing file and not a malformed one.
 itera-state-write() {
-    mkdir -p "$ITERA_STATE" || return 1
-    printf '%s\n' "$ITERA_ORIGINAL_BRANCH" > "$ITERA_STATE/original-branch"
-    printf '%s\n' "$ITERA_ORIGINAL_HEAD" > "$ITERA_STATE/original-head"
-    printf '%s\n' "$ITERA_BRANCH" > "$ITERA_STATE/branch"
-    printf '%s\n' "$test_cmd" > "$ITERA_STATE/test-cmd"
-    printf '%s\n' "$ITERA_REQUEST" > "$ITERA_STATE/request"
+    mkdir -p "$ITERA_RUNDIR" || return 1
+    printf '%s\n' "$ITERA_ORIGINAL_BRANCH" > "$ITERA_RUNDIR/original-branch"
+    printf '%s\n' "$ITERA_ORIGINAL_HEAD" > "$ITERA_RUNDIR/original-head"
+    printf '%s\n' "$ITERA_BRANCH" > "$ITERA_RUNDIR/branch"
+    printf '%s\n' "$test_cmd" > "$ITERA_RUNDIR/test-cmd"
+    printf '%s\n' "$ITERA_REQUEST" > "$ITERA_RUNDIR/request"
 }
 
 # Read what itera-prepare recorded, or refuse.  $1 names what the caller
 # wanted to do, so the message says which command has nothing to work on.
 itera-state-read() {
-    ITERA_STATE=$(itera-state-dir) || return 1
+    ITERA_RUNDIR=$(itera-state-dir) || return 1
     local f
     for f in original-branch original-head branch test-cmd; do
-        if [[ ! -f "$ITERA_STATE/$f" ]]; then
+        if [[ ! -f "$ITERA_RUNDIR/$f" ]]; then
             dic-error "itera-error: no itera state; nothing to $1"
             return 1
         fi
     done
-    ITERA_ORIGINAL_BRANCH=$(cat "$ITERA_STATE/original-branch")
-    ITERA_ORIGINAL_HEAD=$(cat "$ITERA_STATE/original-head")
-    ITERA_BRANCH=$(cat "$ITERA_STATE/branch")
-    test_cmd=$(cat "$ITERA_STATE/test-cmd")
-    ITERA_REQUEST=$(cat "$ITERA_STATE/request" 2>/dev/null || echo "")
+    ITERA_ORIGINAL_BRANCH=$(cat "$ITERA_RUNDIR/original-branch")
+    ITERA_ORIGINAL_HEAD=$(cat "$ITERA_RUNDIR/original-head")
+    ITERA_BRANCH=$(cat "$ITERA_RUNDIR/branch")
+    test_cmd=$(cat "$ITERA_RUNDIR/test-cmd")
+    ITERA_REQUEST=$(cat "$ITERA_RUNDIR/request" 2>/dev/null || echo "")
 }
 
 # -------------------------------------------------------------- validate
@@ -186,7 +186,7 @@ itera-prepare() {
     ITERA_ORIGINAL_BRANCH=$branch
     ITERA_ORIGINAL_HEAD=$(git rev-parse HEAD) || return 1
     ITERA_BRANCH="geni/itera-$(worktree-token "$branch")"
-    ITERA_STATE=$(itera-state-dir) || return 1
+    ITERA_RUNDIR=$(itera-state-dir) || return 1
 
     itera-state-write || return 1
 
@@ -221,6 +221,7 @@ itera-run() {
         fi
         status=$?
         if (( status != 0 )); then
+            dic-error "itera-error: committe failed"
             return "$status"
         fi
         if itera-run-tests; then
@@ -246,7 +247,7 @@ itera-record() {
         return 1
     fi
     git branch -D "$ITERA_BRANCH" >/dev/null 2>&1 || true
-    rm -rf "$ITERA_STATE" 2>/dev/null || true
+    rm -rf "$ITERA_RUNDIR" 2>/dev/null || true
     return 0
 }
 
@@ -256,7 +257,6 @@ itera-record() {
 # Nothing is cleaned up here -- the loop branch already holds the work, and
 # the user is standing on it.
 itera-fail() {
-    dic-error "itera-error: $1"
     if [[ -n ${ITERA_BRANCH:-} ]]; then
         dic-hint "itera-hint: the loop branch is $ITERA_BRANCH"
         dic-hint "itera-hint: 'itera --continue' to keep going, 'itera --abort' to go back"
@@ -291,7 +291,7 @@ itera-continue() {
         itera-record
         return $?
     fi
-    itera-fail "the loop did not go green"
+    itera-fail
     return 1
 }
 
@@ -309,7 +309,7 @@ itera-skip() {
         itera-record
         return $?
     fi
-    itera-fail "the loop did not go green"
+    itera-fail
     return 1
 }
 
@@ -438,7 +438,7 @@ itera() {
         itera-record
         return $?
     fi
-    itera-fail "the loop did not go green"
+    itera-fail
     return "$status"
 }
 

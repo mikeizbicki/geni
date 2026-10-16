@@ -123,8 +123,8 @@ def paint(text, color, ctx):
     so colour is conditional here for the same reason it is in the client:
     a piped row is clean text and a terminal row is coloured.
 
-    >>> paint("abc", YELLOW, {"color": True})
-    '\\x1b[33mabc\\x1b[0m'
+    >>> paint("abc", YELLOW, {"color": True}) == YELLOW + "abc" + RESET
+    True
     >>> paint("abc", YELLOW, {})
     'abc'
     >>> paint("", YELLOW, {"color": True})

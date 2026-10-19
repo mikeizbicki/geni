@@ -32,7 +32,8 @@ already turns a raise into the result the model reads, with `ok` false in
 the row: dic is a bridge between a model and a server, and what the server
 said is the bridge's cargo.
 """
-import base64, http.client, json, os, queue, subprocess, threading, time
+import base64, concurrent.futures, http.client, json, os, queue
+import subprocess, threading, time
 import urllib.parse
 
 from dic import net
@@ -492,10 +493,11 @@ def resolve(pairs, blob=None, say=None, line=None):
     `blob` is the tools blob of the row this call continues, or None for a
     fresh call.  A fresh call opens every server and asks what it offers,
     because it must know before the model can be told; one that does not
-    answer is a DicError and not a shorter list.  A continuation builds its
-    records out of the blob and opens nothing, so `-c` reaches a server on
-    the first call to one of its tools and never merely because the
-    conversation was picked up.
+    answer is a DicError and not a shorter list.  The handshakes run at
+    once, one worker per server, so a fresh call costs the slowest one and
+    not their sum.  A continuation builds its records out of the blob and
+    opens nothing, so `-c` reaches a server on the first call to one of its
+    tools and never merely because the conversation was picked up.
 
     `line` is the caller's stderr line, painted as `mcp-handshake` while a
     server is being asked to introduce itself and as `mcp <server>` while a
@@ -523,15 +525,27 @@ def resolve(pairs, blob=None, say=None, line=None):
                             "fn": servers[where[0]].caller(where[1])})
         return records, mapping
 
+    # A fresh call must know what a server offers before the model can be
+    # told, so a server that will not start refuses the call: a model
+    # offered some of the tools it was told about is worse than a call
+    # that never happened.  The DicError already names the server and why.
+    #
+    # The handshakes run at once and not one after another.  A handshake is
+    # a round trip -- a spawn, or a POST -- and a fresh call makes one per
+    # server, so N of them in series is N round trips where one would do;
+    # each server has its own child process or endpoint and its own row of
+    # the progress block, so nothing here shares state but the reply list,
+    # and that is read back on this thread once every worker has finished.
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(servers))) as pool:
+        futures = {name: pool.submit(server.list)
+                   for name, server in servers.items()}
+        listed = {name: future.result() for name, future in futures.items()}
+
     records, mapping = [], {}
-    for name, server in servers.items():
-        # a fresh call must know what a server offers before the model can be
-        # told, so a server that will not start refuses the call: a model
-        # offered some of the tools it was told about is worse than a call
-        # that never happened.  The DicError already names the server and why.
-        listed = server.list()
-        say(2, f"mcp: {name}: {len(listed)} tool(s)")
-        for tool in listed:
+    for name in servers:                # the order the flags were given
+        say(2, f"mcp: {name}: {len(listed[name])} tool(s)")
+        for tool in listed[name]:
             full = namespace(name, tool["name"])
             if full in mapping:
                 raise DicError(f"mcp: {full}: one server's tools name one"
@@ -541,5 +555,5 @@ def resolve(pairs, blob=None, say=None, line=None):
                 "name": full,
                 "description": tool.get("description") or "",
                 "parameters": tool.get("inputSchema") or {"type": "object"},
-                "fn": server.caller(tool["name"])})
+                "fn": servers[name].caller(tool["name"])})
     return records, mapping

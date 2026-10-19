@@ -11,6 +11,7 @@ carried back, and the spec the row stored.
 """
 import base64, collections, http.server, json, os, shlex, sys, threading
 import urllib.parse
+import time as _time
 
 import pytest
 
@@ -289,3 +290,34 @@ def test_a_server_that_will_not_start_refuses_a_fresh_call(
     assert streams.out.getvalue() == "hello\n"
     assert "definitely-not-a-command-xyz" in streams.err.getvalue()
     assert "tools" not in llm.bodies[0]      # no server answered, nothing offered
+
+
+def test_the_servers_are_opened_at_once_and_not_one_after_another(
+        streams, env, models, llm):
+    """A slow server must not delay the ones behind it: four handshakes, one wait.
+
+    The command sleeps before it answers `initialize`, so three of them in
+    series would take three sleeps and a parallel opening takes one.  The
+    bound is generous -- a factor of two against the serial time -- because
+    the assertion is "not serialized" and not "as fast as possible on a
+    loaded machine"; the exact cost is the child processes' own.
+    """
+    script = ("import json, sys, time;"
+              " time.sleep(0.4);"
+              " [sys.stdout.write(json.dumps({'jsonrpc': '2.0',"
+              " 'id': json.loads(line).get('id'),"
+              " 'result': {'protocolVersion': '2025-06-18',"
+              " 'capabilities': {},"
+              " 'serverInfo': {'name': 'slow', 'version': '1'}}}) + chr(10))"
+              " or sys.stdout.flush()"
+              " for line in sys.stdin if line.strip()]")
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+    start = _time.monotonic()
+    say(streams, env, "hi", model="fake",
+        mcp_shell=[command] * 3)
+    elapsed = _time.monotonic() - start
+
+    # three sleeps if serial, one if parallel; the LLM call and dic's own
+    # startup are well inside the slack the factor of two leaves
+    assert elapsed < 0.4 * 2, f"three handshakes took {elapsed:.2f}s"

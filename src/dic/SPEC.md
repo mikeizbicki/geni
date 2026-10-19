@@ -174,11 +174,13 @@ name and dic dispatches by name; a name that arrives twice is an error and
 never a guess.
 
 A fresh call opens every server it names and asks what it offers.  A call that
-continues a conversation re-offers exactly the tools its row recorded and opens
-a server on the first call to one of its tools, so `-c` reaches no server it
-does not have to, and a server that has since died is a `tool_result` the model
-reads rather than a failed call: dic is a bridge, and what a server said -- an
-error, a timeout, an `isError` -- is the bridge's cargo.
+opens the servers at once, one per worker, so a fresh call costs the slowest
+handshake and not their sum.  A call that continues a conversation re-offers
+exactly the tools its row recorded and opens a server on the first call to one
+of its tools, so `-c` reaches no server it does not have to, and a server that
+has since died is a `tool_result` the model reads rather than a failed call:
+dic is a bridge, and what a server said -- an error, a timeout, an `isError` --
+is the bridge's cargo.
 
 Both transports are spoken: a command is a child process, one JSON-RPC message
 to a line of its stdout, and a URL is a POST whose answer is JSON or a one-way

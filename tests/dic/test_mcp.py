@@ -302,15 +302,23 @@ def test_the_servers_are_opened_at_once_and_not_one_after_another(
     the assertion is "not serialized" and not "as fast as possible on a
     loaded machine"; the exact cost is the child processes' own.
     """
-    script = ("import json, sys, time;"
-              " time.sleep(0.4);"
-              " [sys.stdout.write(json.dumps({'jsonrpc': '2.0',"
-              " 'id': json.loads(line).get('id'),"
-              " 'result': {'protocolVersion': '2025-06-18',"
-              " 'capabilities': {},"
-              " 'serverInfo': {'name': 'slow', 'version': '1'}}}) + chr(10))"
-              " or sys.stdout.flush()"
-              " for line in sys.stdin if line.strip()]")
+    # a one-tool MCP server whose every answer costs one sleep: the sleep
+    # is what the test measures, so it comes before the first byte the
+    # server sends and not only before the first tool is called.  print
+    # with flush=True, because a reply that stays in the child's buffer
+    # is indistinguishable from a server that never answered.
+    script = (
+        "import json, sys, time\n"
+        "time.sleep(0.4)\n"
+        "for line in sys.stdin:\n"
+        "    if not line.strip():\n"
+        "        continue\n"
+        "    req = json.loads(line)\n"
+        "    print(json.dumps({'jsonrpc': '2.0', 'id': req.get('id'),\n"
+        "        'result': {'protocolVersion': '2025-06-18',\n"
+        "            'capabilities': {},\n"
+        "            'serverInfo': {'name': 'slow', 'version': '1'}}}),\n"
+        "        flush=True)\n")
     command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
 
     start = _time.monotonic()

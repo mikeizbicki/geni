@@ -380,8 +380,12 @@ itera-run-tests() {
     # expression.  --meter folds pv in, so its meter is painted in the
     # info role instead of writing to stderr uncoloured, and dic-run
     # returns the test's own status, so nothing else has to preserve
-    # it.
-    itera_test_output=$(dic-run --meter "$label" -- eval "($test_cmd) 2>&1")
+    # it.  --as names the command for the trace: the eval and the 2>&1
+    # that carry it out are the harness's mechanics and not the step,
+    # so the trace reads as the command the caller would have typed
+    # instead of the eval that runs it.
+    itera_test_output=$(dic-run --meter "$label" \
+        --as "$test_cmd" -- eval "($test_cmd) 2>&1")
     status=$?
     if (( status == 0 )); then
         # Time and record here, not in itera(), so a standalone run is
@@ -392,7 +396,7 @@ itera-run-tests() {
         return 0
     fi
     printf '\n' >&2                    # close pv's line before the dump
-    printf '%s' "$itera_test_output" >&2
+    printf '%s' "$itera_test_output" | dic-paint muted
     return "$status"
 }
 

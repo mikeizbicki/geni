@@ -208,56 +208,84 @@ _dic_quote() {
 # function fills an interactive terminal and, one `2>log` away, the file
 # a background geni will log to.
 dic-run() {
-    # --meter LABEL -- is dic-run's own flag and is read first; an
-    # argument that is not it is the command, as it always was.  A
-    # meter is the caller's progress line, but its repaint and its
-    # colour are not: folding pv in here is what stops a meter from
-    # escaping the info role through stderr, which pv writes to by
-    # design and which nothing here painted.
-    local meter=0 meter_label=
-    if [[ ${1:-} == --meter ]]; then
-        if (( $# < 2 )); then
-            dic-error "dic-run-error: --meter needs a label"
-            return 2
-        fi
-        meter=1
-        meter_label=$2
-        shift 2
-    fi
-    [[ ${1:-} == -- ]] && shift
+    # --meter LABEL and --as CMD are dic-run's own flags, read left to
+    # right before the command; an argument that is not one is the
+    # command, as it always was.  A meter is the caller's progress
+    # line, but its repaint and its colour are not: folding pv in here
+    # is what stops a meter from escaping the info role through
+    # stderr, which pv writes to by design and which nothing here
+    # painted.  --as names the command for the trace alone, so a step
+    # whose real body is an eval reads as the command the caller would
+    # have typed.
+    local meter=0 meter_label= as=
+    while (( $# )); do
+        case $1 in
+            --meter)
+                if (( $# < 2 )); then
+                    dic-error "dic-run-error: --meter needs a label"
+                    return 2
+                fi
+                meter=1
+                meter_label=$2
+                shift 2
+                ;;
+            --as)
+                if (( $# < 2 )); then
+                    dic-error "dic-run-error: --as needs a command"
+                    return 2
+                fi
+                as=$2
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
 
     local a reset=
     dic-use-color && reset=$'\e[0m'
     {
         printf '%s+' "$reset"
-        for a in "$@"; do
-            # A multi-line argument -- a heredoc pasted as one -- is
-            # summarized by its first line, which its author wrote as
-            # the summary: whole when it fits in a terminal line, cut
-            # to its first few words when it does not.  A single-line
-            # argument with whitespace is prose -- a prompt -- and its
-            # first few words are enough to recognize it.  An argument
-            # with no whitespace is an identifier -- a SHA, a path, a
-            # mid -- and every byte of it is worth showing, so it is
-            # printed whole.  DIC_TRACE_WORDS and DIC_TRACE_MAX are
-            # shell variables, not exports, because no child process
-            # reads them.
-            if [[ $a == *$'\n'* ]]; then
-                local head=${a%%$'\n'*}
-                if (( ${#head} >= 50 )); then
+        # --as prints in place of the arguments: it is the caller's own
+        # spelling of the step, so it is shown as one word and the
+        # arguments that carry it out are not shown beside it.
+        if [[ -n $as ]]; then
+            printf ' %s' "$as"
+        else
+            for a in "$@"; do
+                # A multi-line argument -- a heredoc pasted as one -- is
+                # summarized by its first line, which its author wrote as
+                # the summary: whole when it fits in a terminal line, cut
+                # to its first few words when it does not.  A single-line
+                # argument with whitespace is prose -- a prompt -- and its
+                # first few words are enough to recognize it.  An argument
+                # with no whitespace is an identifier -- a SHA, a path, a
+                # mid -- and every byte of it is worth showing, so it is
+                # printed whole.  DIC_TRACE_WORDS and DIC_TRACE_MAX are
+                # shell variables, not exports, because no child process
+                # reads them.
+                if [[ $a == *$'\n'* ]]; then
+                    local head=${a%%$'\n'*}
+                    if (( ${#head} >= 50 )); then
+                        local -a w
+                        read -ra w <<< "$head"
+                        head=${w[*]:0:5}
+                    fi
+                    printf ' %s' "$(_dic_quote "$head" '<...>')"
+                elif [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
                     local -a w
-                    read -ra w <<< "$head"
-                    head=${w[*]:0:5}
+                    read -ra w <<< "$a"
+                    printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}}" '<...>')"
+                else
+                    printf ' %s' "$(_dic_quote "$a")"
                 fi
-                printf ' %s' "$(_dic_quote "$head" '<...>')"
-            elif [[ $a == *[[:space:]]* && ${#a} -gt ${DIC_TRACE_MAX:-30} ]]; then
-                local -a w
-                read -ra w <<< "$a"
-                printf ' %s' "$(_dic_quote "${w[*]:0:${DIC_TRACE_WORDS:-3}}" '<...>')"
-            else
-                printf ' %s' "$(_dic_quote "$a")"
-            fi
-        done
+            done
+        fi
         printf '%s\n' "$reset"
     } >&2
     # A command run inside a harness is a step and not the result, so what
@@ -277,10 +305,10 @@ dic-run() {
     # nothing else.  pv's meter is painted in the info role.
     if (( meter )) && [[ -t 2 ]]; then
         if [[ -t 1 ]] && dic-use-color; then
-            "$@" 2>&1 | pv -l -t -N "$meter_label" \
+            "$@" 2>&1 | pv -l -t -f -N "$meter_label" \
                 2> >(dic-paint info) | dic-paint-out muted
         else
-            "$@" | pv -l -t -N "$meter_label" 2> >(dic-paint info)
+            "$@" | pv -l -t -f -N "$meter_label" 2> >(dic-paint info)
         fi
         return "${PIPESTATUS[0]}"
     fi

@@ -670,9 +670,12 @@ def dic(prompt,
         # an error, a cancel, or a reply with no text; also ends a poll status
         line.first_token()
         if pv is not None:      # a reply that was nothing but reasoning
-            pv_update(pv, final=True, err=err, env=env)
+            pv_update(pv, final=True)
         if pv_resp is not None:
-            pv_update(pv_resp, final=True, err=err, env=env)
+            pv_update(pv_resp, final=True)
+        # the block is finished: its rows stay where they are on the screen
+        # and the next thing written starts below them
+        line.close()
 
     paint = use_color(out, env) and knobs["path"] is None
 
@@ -800,8 +803,12 @@ def dic(prompt,
             recorder = (Recorder(wire["t_start"])
                         if knobs["record"] == "bps" else None)
             line.restart()          # this request's clock, not the call's
-            pv = {"name": "thinking"} if pv_thinking else None
-            pv_resp = {"name": "response"} if pv_response else None
+            # the meters are rows of the same block as the clock, so a call
+            # with four handshakes beside it shows four lines and not one
+            # rewritten by four writers; a row is named, so the round a call
+            # already has is the row its next round reuses
+            pv = line.row("thinking") if pv_thinking else None
+            pv_resp = line.row("response") if pv_response else None
             if pv is not None or pv_resp is not None:
                 line.wait()         # a bare ttft clock until something arrives
             stream = (call(model, api_key, body, line, wire)
@@ -826,25 +833,27 @@ def dic(prompt,
                                      else chunk.encode()))
                 if kind == "thinking":
                     if pv is not None:
-                        pv_update(pv, chunk, err=err, env=env)
-                    elif use_color(err, env):
-                        err.write(INFO + chunk + RESET)
+                        pv_update(pv, chunk)
                     else:
-                        err.write(chunk)
-                    if pv is None:
+                        # --no-pv-thinking streams the reasoning itself, and
+                        # prose is not a block: the rows are let stand and
+                        # the text goes below them
+                        line.close()
+                        err.write(INFO + chunk + RESET if use_color(err, env)
+                                  else chunk)
                         err.flush()
                     continue
                 if kind == "blob":      # bytes: --path was checked above
                     sink.write_blob(chunk)
                     if pv_resp is not None:
-                        pv_update(pv_resp, chunk, err=err, env=env)
+                        pv_update(pv_resp, chunk)
                     continue
                 if pv is not None:      # the answer starts on a line of its own
-                    pv_update(pv, final=True, err=err, env=env)
+                    pv_update(pv, final=True)
                 chunks.append(chunk)
                 printed.append(chunk)
                 if pv_resp is not None:
-                    pv_update(pv_resp, chunk, err=err, env=env)
+                    pv_update(pv_resp, chunk)
                 if not knobs["extract"]:
                     if paint and painted != kind:
                         sink.write((RESET if painted is not None else "") + PAYLOAD)

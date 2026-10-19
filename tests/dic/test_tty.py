@@ -39,25 +39,26 @@ def test_NO_COLOR_uncolours_a_terminal(stream):
 
 
 def test_a_meter_writes_nothing_until_something_arrives(stream):
-    err = stream()
-    tty.pv_update({"name": "thinking"}, final=True, err=err, env={})
-    assert err.getvalue() == ""       # a model that never reasoned shows no line
+    block = tty.Line(stream(), {})
+    tty.pv_update(block.row("thinking"), final=True)
+    assert block.err.getvalue() == ""       # a model that never reasoned shows no line
 
 
 def test_a_meter_counts_bytes_repaints_in_place_and_closes_once(stream):
-    err, meter = stream(), {"name": "response"}
-    tty.pv_update(meter, "hello", err=err, env={})
-    assert err.getvalue().startswith("\rresponse: 5.0  B 0:00:00 [")
+    block = tty.Line(stream(), {})
+    meter = block.row("response")
+    tty.pv_update(meter, "hello")
+    assert block.err.getvalue().startswith("\r\033[Kresponse: 5.0  B 0:00:00 [")
 
-    tty.pv_update(meter, "a", err=err, env={})    # within 0.1s: not painted again
-    tty.pv_update(meter, "b", err=err, env={})
-    assert "response: 7.0  B" not in err.getvalue()
+    tty.pv_update(meter, "a")                  # within 0.1s: not painted again
+    tty.pv_update(meter, "b")
+    assert "response: 7.0  B" not in block.err.getvalue()
 
-    tty.pv_update(meter, final=True, err=err, env={})
-    closed = err.getvalue()
-    assert closed.rstrip().endswith("/s]") and closed.count("\n") == 1
-    tty.pv_update(meter, "more", err=err, env={})
-    assert err.getvalue() == closed               # a closed meter stays closed
+    tty.pv_update(meter, final=True)
+    block.close()
+    closed = block.err.getvalue()
+    assert closed.rstrip().endswith("/s]")
+    assert closed.count("\n") == 2             # one line per repaint, two repaints
 
 
 def test_the_wait_clock_is_never_drawn_when_the_answer_is_quick(stream, monkeypatch):
@@ -74,8 +75,11 @@ def test_the_wait_clock_counts_in_tenths_and_closes_its_own_line(stream, monkeyp
     time.sleep(0.3)                               # long enough for two or three ticks
     stop()
     text = err.getvalue()
-    assert text.startswith("\rttft: 0:00:00.")    # repainted in place, not scrolled
-    assert text.endswith("\n") and text.count("\n") == 1
+    assert text.startswith("\r\033[Kttft: 0:00:00.")
+    # every write is one whole line of the block, so the clock was repainted
+    # in place and no write left a half-drawn line behind it
+    assert text.endswith("\n")
+    assert text.count("\n") == text.count("\r\033[K")
 
 
 def test_status_ends_the_clock_and_keeps_one_line_on_stderr(stream, monkeypatch):
@@ -98,7 +102,10 @@ def test_status_ends_the_clock_and_keeps_one_line_on_stderr(stream, monkeypatch)
     text = err.getvalue()
     assert "ttft: 0:00:00." in text           # the clock was showing, and stopped
     assert "fal: IN_QUEUE" in text and "fal: COMPLETED" in text
-    assert text.endswith("\n") and text.count("\n") == 2   # the clock's, then ours
+    # every write is one whole line of the block, and the last of them is the
+    # final status: the clock and the two statuses are one row, repainted
+    assert text.count("\n") == text.count("\r\033[K")
+    assert text.rstrip("\n").endswith("fal: COMPLETED 0:00:02")
 
 
 def test_close_of_a_line_that_never_painted_writes_nothing(stream):
@@ -116,5 +123,5 @@ def test_a_status_without_a_clock_paints_and_closes_once(stream):
     line.close()
 
     text = err.getvalue()
-    assert text.startswith("\rvideos: in_progress")
+    assert text.startswith("\r\033[Kvideos: in_progress")
     assert text.endswith("\n") and text.count("\n") == 1

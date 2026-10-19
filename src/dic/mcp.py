@@ -32,7 +32,8 @@ already turns a raise into the result the model reads, with `ok` false in
 the row: dic is a bridge between a model and a server, and what the server
 said is the bridge's cargo.
 """
-import base64, http.client, json, os, queue, subprocess, threading, time
+import base64, concurrent.futures, http.client, json, os, queue
+import subprocess, threading, time
 import urllib.parse
 
 from dic import net
@@ -200,12 +201,16 @@ class Server:
         self.kind = kind
         self.target = target
         self.say = say
-        self.line = line            # the caller's Line, or None for a library call
+        # a server takes a row of its own, so four handshakes are four rows
+        # with four clocks rather than one row rewritten by four writers
+        self.line = line.row(name) if line is not None else None
         self.proc = None            # the child, once there is one
         self.url = None             # the endpoint, once there is one
         self.auth = {}              # what the URL's userinfo became
         self.session = None         # Mcp-Session-Id, if the server sent one
         self.inbox = queue.Queue()  # the child's replies, in arrival order
+        self.stderr_lines = []      # and what it said on its own stderr
+        self.stderr_done = threading.Event()
         self.next_id = 1
         self.opened = False
         self.protocol = VERSION
@@ -234,16 +239,18 @@ class Server:
         self.say(3, f"mcp: {self.name}: ready in {time.monotonic() - started:.2f}s")
 
     def spawn(self):
-        """Start the child, once, and read its stdout on a thread of its own."""
+        """Start the child, once, and read its two streams on threads of its own."""
         if self.proc is not None:
             return
         try:
             self.proc = subprocess.Popen(  # noqa: S602
                 self.target, shell=True, stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, text=True, bufsize=1)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1)
         except OSError as e:
             raise DicError(f"mcp: {self.name}: cannot start: {e}") from None
         threading.Thread(target=self.read, daemon=True).start()
+        threading.Thread(target=self.read_err, daemon=True).start()
         self.say(3, f"mcp: {self.name}: started {self.target}")
 
     def read(self):
@@ -262,6 +269,21 @@ class Server:
             except ValueError:
                 self.say(3, f"mcp: {self.name}: {line[:200]}")
         self.inbox.put(None)        # the server is gone; every wait ends
+
+    def read_err(self):
+        """Every line the child writes to its own stderr, kept for the error.
+
+        A command is a shell, and a shell says on its stderr why it could
+        not run what it was given; that is the diagnostic a user needs
+        when the server is gone, and it is the one thing a broken pipe
+        cannot say.  It is drained on a thread of its own, because a pipe
+        a child could fill is a pipe the child blocks on.
+        """
+        for line in self.proc.stderr:
+            line = line.rstrip()
+            if line:
+                self.stderr_lines.append(line)
+        self.stderr_done.set()
 
     def endpoint(self):
         """The URL to POST to, and the credential its userinfo carries."""
@@ -315,8 +337,8 @@ class Server:
             if self.line is not None:
                 self.line.arrived()
         if reply is None:
-            raise DicError(f"mcp: {self.name}: {method}: no answer"
-                           f" within {limit}s")
+            raise DicError(self.describe(
+                f"{method}: no answer within {limit}s"))
         if reply.get("error"):
             error = reply["error"]
             raise DicError(f"mcp: {self.name}: {method}:"
@@ -348,7 +370,24 @@ class Server:
             self.proc.stdin.write(line)
             self.proc.stdin.flush()
         except OSError as e:
-            raise DicError(f"mcp: {self.name}: the server is gone: {e}") from None
+            raise DicError(self.describe(f"the server is gone: {e}")) from None
+
+    def describe(self, what):
+        """One failure, with whatever the child said on its stderr beside it.
+
+        A command is a shell, and a shell says on its stderr why it could
+        not run what it was given -- ``not found``, a missing module, a
+        port already taken -- which is exactly what a broken pipe cannot
+        say.  It is waited for, because a child's exit and its stderr
+        having been read are not one instant, and it is added only once
+        the child has exited, so a server that is merely slow contributes
+        nothing to the message about it.
+        """
+        if (self.kind == "shell" and self.proc is not None
+                and self.proc.poll() is not None):
+            self.stderr_done.wait(timeout=1)
+        said = "; ".join(self.stderr_lines[-3:])
+        return f"mcp: {self.name}: {what}" + (f": {said}" if said else "")
 
     def exchange_stdio(self, body, message_id, deadline):
         """Write the request and wait for its reply, skipping notifications.
@@ -368,7 +407,7 @@ class Server:
             except queue.Empty:
                 return None
             if message is None:
-                raise DicError(f"mcp: {self.name}: the server exited")
+                raise DicError(self.describe("the server exited"))
             if message.get("id") == message_id:
                 return message
 
@@ -490,10 +529,11 @@ def resolve(pairs, blob=None, say=None, line=None):
     `blob` is the tools blob of the row this call continues, or None for a
     fresh call.  A fresh call opens every server and asks what it offers,
     because it must know before the model can be told; one that does not
-    answer is a DicError and not a shorter list.  A continuation builds its
-    records out of the blob and opens nothing, so `-c` reaches a server on
-    the first call to one of its tools and never merely because the
-    conversation was picked up.
+    answer is a DicError and not a shorter list.  The handshakes run at
+    once, one worker per server, so a fresh call costs the slowest one and
+    not their sum.  A continuation builds its records out of the blob and
+    opens nothing, so `-c` reaches a server on the first call to one of its
+    tools and never merely because the conversation was picked up.
 
     `line` is the caller's stderr line, painted as `mcp-handshake` while a
     server is being asked to introduce itself and as `mcp <server>` while a
@@ -521,15 +561,27 @@ def resolve(pairs, blob=None, say=None, line=None):
                             "fn": servers[where[0]].caller(where[1])})
         return records, mapping
 
+    # A fresh call must know what a server offers before the model can be
+    # told, so a server that will not start refuses the call: a model
+    # offered some of the tools it was told about is worse than a call
+    # that never happened.  The DicError already names the server and why.
+    #
+    # The handshakes run at once and not one after another.  A handshake is
+    # a round trip -- a spawn, or a POST -- and a fresh call makes one per
+    # server, so N of them in series is N round trips where one would do;
+    # each server has its own child process or endpoint and its own row of
+    # the progress block, so nothing here shares state but the reply list,
+    # and that is read back on this thread once every worker has finished.
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, len(servers))) as pool:
+        futures = {name: pool.submit(server.list)
+                   for name, server in servers.items()}
+        listed = {name: future.result() for name, future in futures.items()}
+
     records, mapping = [], {}
-    for name, server in servers.items():
-        # a fresh call must know what a server offers before the model can be
-        # told, so a server that will not start refuses the call: a model
-        # offered some of the tools it was told about is worse than a call
-        # that never happened.  The DicError already names the server and why.
-        listed = server.list()
-        say(2, f"mcp: {name}: {len(listed)} tool(s)")
-        for tool in listed:
+    for name in servers:                # the order the flags were given
+        say(2, f"mcp: {name}: {len(listed[name])} tool(s)")
+        for tool in listed[name]:
             full = namespace(name, tool["name"])
             if full in mapping:
                 raise DicError(f"mcp: {full}: one server's tools name one"
@@ -539,5 +591,5 @@ def resolve(pairs, blob=None, say=None, line=None):
                 "name": full,
                 "description": tool.get("description") or "",
                 "parameters": tool.get("inputSchema") or {"type": "object"},
-                "fn": server.caller(tool["name"])})
+                "fn": servers[name].caller(tool["name"])})
     return records, mapping

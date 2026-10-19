@@ -11,6 +11,7 @@ carried back, and the spec the row stored.
 """
 import base64, collections, http.server, json, os, shlex, sys, threading
 import urllib.parse
+import time as _time
 
 import pytest
 
@@ -289,3 +290,42 @@ def test_a_server_that_will_not_start_refuses_a_fresh_call(
     assert streams.out.getvalue() == "hello\n"
     assert "definitely-not-a-command-xyz" in streams.err.getvalue()
     assert "tools" not in llm.bodies[0]      # no server answered, nothing offered
+
+
+def test_the_servers_are_opened_at_once_and_not_one_after_another(
+        streams, env, models, llm):
+    """A slow server must not delay the ones behind it: four handshakes, one wait.
+
+    The command sleeps before it answers `initialize`, so three of them in
+    series would take three sleeps and a parallel opening takes one.  The
+    bound is generous -- a factor of two against the serial time -- because
+    the assertion is "not serialized" and not "as fast as possible on a
+    loaded machine"; the exact cost is the child processes' own.
+    """
+    # a one-tool MCP server whose every answer costs one sleep: the sleep
+    # is what the test measures, so it comes before the first byte the
+    # server sends and not only before the first tool is called.  print
+    # with flush=True, because a reply that stays in the child's buffer
+    # is indistinguishable from a server that never answered.
+    script = (
+        "import json, sys, time\n"
+        "time.sleep(0.4)\n"
+        "for line in sys.stdin:\n"
+        "    if not line.strip():\n"
+        "        continue\n"
+        "    req = json.loads(line)\n"
+        "    print(json.dumps({'jsonrpc': '2.0', 'id': req.get('id'),\n"
+        "        'result': {'protocolVersion': '2025-06-18',\n"
+        "            'capabilities': {},\n"
+        "            'serverInfo': {'name': 'slow', 'version': '1'}}}),\n"
+        "        flush=True)\n")
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
+
+    start = _time.monotonic()
+    say(streams, env, "hi", model="fake",
+        mcp_shell=[command] * 3)
+    elapsed = _time.monotonic() - start
+
+    # three sleeps if serial, one if parallel; the LLM call and dic's own
+    # startup are well inside the slack the factor of two leaves
+    assert elapsed < 0.4 * 2, f"three handshakes took {elapsed:.2f}s"

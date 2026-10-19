@@ -1,5 +1,10 @@
 """Everything dic prints that is not the answer: colour, errors, the cost
-line, and the pv-style progress meters.
+line, and the pv-style progress block.
+
+Progress is a block: one Line, and under it one Row per wait -- the ttft
+clock, one per MCP handshake, the thinking and response meters, a queued
+job's status.  Every row is repainted together, so the answer never scrolls
+away and no two writers fight over one row of the terminal.
 
 One module, because the two halves of the meters would otherwise live in two
 files: store.py held the formatting (pv_bytes, pv_clock, pv_line) while
@@ -8,7 +13,13 @@ network, so importing it costs one file of pure stdlib.
 
 See SPEC.md, "Color", "Progress meters" and "Verbosity".
 """
-import base64, os, shlex, shutil, subprocess, sys, time
+import base64, contextlib, os, shlex, shutil, subprocess, sys, threading, time
+import weakref
+
+
+# A first token faster than this needs no reassurance, so a wait that beats
+# it is never painted and the block a fast call shows is the one it needs.
+WAIT_DELAY = 0.5
 
 def parse_colors(text):
     """A GENI_COLORS string as {role: SGR escape}, in LS_COLORS' syntax.
@@ -111,11 +122,37 @@ def die(msg, err=None, env=None):
     sys.exit(1)
 
 
+# The live block on each stream, if there is one.  `report` has only the
+# stream to go on, and a message written beside a block would be overwritten
+# by the block's next repaint, so the block is found through the stream it
+# paints.  Weak, so a stream that outlives its Line is not kept alive by it.
+_LIVE = weakref.WeakKeyDictionary()
+
+
+def _live(stream):
+    """The Line painting this stream, or None.
+
+    A stream weakref cannot hold -- an io.StringIO in a test -- has no block
+    and cannot have one, so it is reported as having none rather than as an
+    error.
+
+    >>> _live(object()) is None
+    True
+    """
+    try:
+        return _LIVE.get(stream)
+    except TypeError:
+        return None
+
+
 def report(verbosity, level, msg, err=None, env=None):
     """Write msg to stderr in orange when verbosity has reached level.
 
     All of dic's stderr goes through here, so colour policy and verbosity
-    policy are each stated exactly once.
+    policy are each stated exactly once.  A message written while a progress
+    block is live goes through the block and not beside it: the block moves
+    the cursor up by its own height to repaint, and a line it did not put
+    there would be overwritten by the next repaint.
 
     >>> report(0, 1, "not printed")
     """
@@ -123,7 +160,12 @@ def report(verbosity, level, msg, err=None, env=None):
         return
     err = sys.stderr if err is None else err
     line = f"{msg}\n"
-    err.write(COST + line + RESET if use_color(err, env) else line)
+    text = COST + line + RESET if use_color(err, env) else line
+    block = _live(err)
+    if block is not None:
+        block.write(text)
+        return
+    err.write(text)
     err.flush()
 def pager_command(env=None):
     """The pager to pipe through, or None: $DIC_PAGER, then $PAGER, then less.
@@ -237,160 +279,380 @@ def pv_line(name, nbytes, seconds):
             f" [{pv_bytes(rate)}/s]")
 
 
-def pv_paint(state, line, err=None, env=None):
-    """Rewrite one status line in place on stderr, in the reasoning gray.
-
-    The line is padded to the widest one written so far, since a line that
-    shrinks would otherwise leave the tail of the previous one behind.
-    """
-    err = sys.stderr if err is None else err
-    state["width"] = max(state.get("width", 0), len(line))
-    line = line.ljust(state["width"])
-    err.write("\r" + (INFO + line + RESET if use_color(err, env) else line))
-    err.flush()
-
-
-WAIT_DELAY = 0.5     # a first token faster than this needs no reassurance
-
-
 class Line:
-    """stderr's one repaintable line: the ttft clock, a meter, a poll status.
+    """stderr's repaintable block: a column of Rows and the one cursor.
 
-    Progress is not content, so everything whose only job is to say that a
-    call is still running repaints the same line instead of printing a new
-    one: the answer never scrolls away and no two writers fight over one row
-    of the terminal.  The ttft clock starts it, and the first token, meter
-    update or job status ends it; one width is kept for all of them, so a
-    line that shrinks never leaves the tail of the one before it behind.
+    Everything whose only job is to say that a call is still running
+    repaints the same block instead of printing a line of its own.  One row
+    per wait is what makes a parallel call readable -- four MCP handshakes
+    are four rows with four clocks, and one may still be resolving while
+    another is already saying hello -- and a call that starts one wait takes
+    the short path: with one row and no height, the first paint is the
+    carriage return and the rewrite it has always been.
+
+    The rows are stable.  A row is frozen where it stands when its wait ends
+    and is never reordered or removed, because the block moves the cursor
+    back up by its own height to repaint and a row that moved would be a
+    reader following the wrong line.  A row with nothing to show is not
+    drawn and does not count toward that height, so a call whose first token
+    beat the clock has no row at all.
+
+    A block is a column of rows and one cursor, and the cursor is below the
+    block whenever a writer with one looks at it: a message reported while
+    rows are live moves to the top of the column, takes a line there, and
+    the rows are redrawn under it.
+
+    >>> import io
+    >>> out = io.StringIO()
+    >>> block = Line(out, {})
+    >>> block.row("a").paint("a: 0:00:01.0")
+    >>> block.height
+    1
+    >>> block.write("a message\\n")
+    >>> print(repr(out.getvalue()))
+    '\\r\\x1b[Ka: 0:00:01.0\\n\\x1b[1A\\ra message\\n\\r\\x1b[Ka: 0:00:01.0\\n'
+    >>> block.close()
+    >>> block.height, block.drawn()
+    (0, [])
     """
+
     def __init__(self, err=None, env=None):
         self.err = sys.stderr if err is None else err
         self.env = env
-        self.state = {}             # pv_paint's width, shared by every writer
-        self.start = time.time_ns()
-        self.stop = None            # the clock thread's flag, once it is running
-        self.thread = None
-        self.clock = False          # whether the clock owns the line now
-        self.extra = ""             # attribution appended to the ttft line
-        self.label = "ttft"         # what the clock is waiting for
+        self.lock = threading.RLock()
+        self.rows = []
+        self.height = 0             # lines the block occupies, cursor below
+        self.thread = None          # the one ticker, while something waits
+        self.primary = self.row("ttft")
+        with contextlib.suppress(TypeError):   # a stream weakref cannot hold
+            _LIVE[self.err] = self
+
+    # ---------------------------------------------------------------- rows
+
+    def row(self, key, label="ttft"):
+        """The row named `key`: made now, or reset for what is about to use it.
+
+        Rows are named rather than counted because a caller that comes back
+        -- the next round of a tool loop, the next page of a server's tools
+        -- is asking for the row it already has, and a block that grew a
+        line per round would scroll the answer off the screen to say the
+        same thing twice.  The row that comes back is fresh, because the
+        caller that names a row a second time is starting a second thing on
+        it.
+        """
+        with self.lock:
+            for row in self.rows:
+                if row.key == key:
+                    row.restart()
+                    return row
+            row = Row(self, key, label)
+            self.rows.append(row)
+            return row
+
+    # ------------------------------------------------------------- drawing
+
+    def drawn(self):
+        """The rows with something to show: the height the cursor moves back up."""
+        return [row for row in self.rows if row.text or row.clock]
+
+    def repaint(self):
+        """Redraw the whole block in place, cursor below it.
+
+        The cursor is moved back up by the height the block had, and every
+        row is written again, so one row changing is one repaint of the
+        column and no row is ever left half written.  \\033[K clears each
+        line as it is reached, which is what a row that got shorter needs,
+        and what the old padding-to-the-widest-line hack was for.  A block
+        that shrank clears the lines it no longer occupies, because the
+        cursor stops at the bottom of what is left and a stale row below
+        it would be the line the next writer landed on.
+        """
+        with self.lock:
+            rows = self.drawn()
+            old = self.height
+            if not rows and not old:
+                return
+            colour = use_color(self.err, self.env)
+            out = [f"\033[{old}A" if old else ""]
+            for row in rows:
+                text = row.clock_text() if row.clock else row.text
+                out.append("\r\033[K")
+                out.append(f"{INFO}{text}{RESET}" if colour and text else text)
+                out.append("\n")
+            if old > len(rows):
+                out.append("\033[J")
+            self.err.write("".join(out))
+            self.err.flush()
+            self.height = len(rows)
+
+    def write(self, text):
+        """Write text above the block, and put the block back under it.
+
+        Every stderr writer with a block on its stream comes through here,
+        because the block moves the cursor up to repaint and a line it did
+        not put there would be overwritten by the next repaint.  text ends
+        with a newline; without one it would take the first row's place
+        instead of a line of its own.
+
+        >>> import io
+        >>> out = io.StringIO()
+        >>> Line(out, {}).write("plain\\n")
+        >>> out.getvalue()
+        'plain\\n'
+        """
+        with self.lock:
+            if not self.height:
+                self.err.write(text)
+                self.err.flush()
+                return
+            self.err.write(f"\033[{self.height}A\r{text}")
+            self.height = 0
+            self.repaint()
+
+    def close(self):
+        """Let the block stand: stop the ticker and leave the rows on screen.
+
+        The rows are already where they belong -- the cursor is below them --
+        so closing writes nothing.  It clears them, stops their clocks and
+        forgets the height, so the next thing written starts on the line
+        after the block rather than moving the cursor back up into it, and
+        the next round's clock starts a block of its own below.
+        """
+        with self.lock:
+            for row in self.rows:
+                row.waiting = row.clock = False
+                row.text = ""
+            self.height = 0
+
+    # -------------------------------------------------------- the ticker
+
+    def ensure_ticker(self):
+        """Start the one ticker, if none is running.  Called under the lock."""
+        if self.thread is None:
+            self.thread = threading.Thread(target=self.tick, daemon=True)
+            self.thread.start()
+
+    def tick(self):
+        """Repaint every waiting clock at 10Hz, and exit when none is left.
+
+        One thread for the whole block and not one per row: the rows share
+        one cursor, so a second thread could only add a second repaint of
+        the same lines, and the lock the cursor already needs is the lock
+        the rows are started and retired under.  A wait that beats
+        WAIT_DELAY is never marked as painting and so is never drawn, which
+        is what keeps a fast call from writing at all.
+        """
+        while True:
+            time.sleep(0.1)
+            with self.lock:
+                waiting = [row for row in self.rows if row.waiting]
+                if not waiting:
+                    self.thread = None
+                    return
+                for row in waiting:
+                    if row.elapsed() >= WAIT_DELAY:
+                        row.clock = True
+                if any(row.clock for row in waiting):
+                    self.repaint()
+
+    # --------------------------------------------- the primary's own row
+
+    # The row a Line answers with its own methods is the first one it made,
+    # so a caller that starts one wait -- which is every caller that is not
+    # running several at once -- reaches one row by the one name it did.
 
     def restart(self):
-        """Start this line's clock over: a tool loop is more than one request.
+        """Start the primary row over: see Row.restart."""
+        self.primary.restart()
 
-        A call that stopped to run a tool waits again for its next first
-        token, so the ttft clock is the round's and not the call's.
+    def waiting_for(self, label, extra=""):
+        """Name what the primary row's clock waits for: see Row.waiting_for."""
+        self.primary.waiting_for(label, extra)
+
+    def begin(self, label, extra=""):
+        """Start a wait on the primary row: see Row.begin."""
+        self.primary.begin(label, extra)
+
+    def arrived(self):
+        """End the primary row's wait: see Row.arrived."""
+        self.primary.arrived()
+
+    def first_token(self):
+        """Freeze the primary row with its final time: see Row.first_token."""
+        self.primary.first_token()
+
+    def status(self, msg):
+        """Show a job status on the primary row: see Row.status."""
+        self.primary.status(msg)
+
+    def elapsed(self):
+        """Seconds since the primary row's clock last restarted."""
+        return self.primary.elapsed()
+
+    def paint(self, text):
+        """Show text on the primary row: see Row.paint."""
+        self.primary.paint(text)
+
+    def wait(self):
+        """Start the primary row's clock: see Row.wait."""
+        self.primary.wait()
+
+    @property
+    def extra(self):
+        """What the primary row's clock is waiting on, beside the seconds."""
+        return self.primary.extra
+
+    @extra.setter
+    def extra(self, value):
+        self.primary.extra = value
+
+    @property
+    def label(self):
+        """What the primary row's clock is waiting for."""
+        return self.primary.label
+
+    @label.setter
+    def label(self, value):
+        self.primary.label = value
+
+
+class Row:
+    """One line of a Line: a wait, a meter, or a job being queued.
+
+    A row is where a caller's state lives -- what it is waiting for, since
+    when, and what it has to show -- and its Line is what knows how to put
+    the column on the screen.  Every method the single-line interface had is
+    here, so a writer handed a row cannot tell it from the Line it used to
+    be handed, and dic.net and dic.mcp are unchanged by there being more
+    than one of them.
+
+    >>> import io
+    >>> row = Line(io.StringIO(), {}).row("a")
+    >>> row.name, row.text, row.waiting
+    ('a', '', False)
+    """
+
+    def __init__(self, line, key, label="ttft"):
+        self.line = line
+        self.key = key
+        self.name = key         # what pv_update's meter calls this row
+        self.label = label      # what this row's clock is waiting for
+        self.extra = ""         # who is answering, beside the seconds
+        self.start = time.time_ns()
+        self.waiting = False    # the clock is running
+        self.clock = False      # the ticker has painted it, and repaints it
+        self.text = ""          # the last thing painted, or the frozen total
+        self.bytes = 0          # a meter's own: how much has arrived
+        self.t0 = 0             # and when the first of it did
+        self.painted = 0        # and when it was last on the screen
+
+    def elapsed(self):
+        """Seconds since this row's clock last restarted."""
+        return (time.time_ns() - self.start) / 1e9
+
+    def restart(self):
+        """Start over for a new wait: a fresh clock, name and meter.
+
+        A tool loop is more than one request and a block is more than one
+        round, so the row a call already has is the row its next round uses:
+        the clock, and the bytes a meter has counted, are this wait's and not
+        the call's.  The text is left where it stands, because a row reused
+        by the request after it is a row whose last answer is still worth
+        reading -- a handshake that has been answered, a meter that has
+        stopped -- and blanking it here would erase a line the reader has
+        already seen for the sake of a wait that has not painted yet.
         """
         self.start = time.time_ns()
         self.label, self.extra = "ttft", ""
+        self.waiting = self.clock = False
+        self.bytes = self.t0 = self.painted = 0
 
     def waiting_for(self, label, extra=""):
         """Name what the clock is waiting for, without restarting it.
 
-        A dns wait and the ttft wait that follows it are one wait from the
+        A dns wait and the request that follows it are one wait from the
         user's side, so the number on the line keeps counting from where it
         was and only the word in front of it moves.
         """
         self.label, self.extra = label, extra
 
     def begin(self, label, extra=""):
-        """Start a wait on this line: a fresh clock, and a name for it.
+        """Start a wait on this row: a fresh clock, and a name for it.
 
-        Each wait gets its own clock rather than sharing the call's -- a tool
+        Each wait gets its own clock rather than sharing the row's -- a tool
         loop is more than one request and an MCP handshake is several round
         trips -- so the number a user reads is the one this wait took and not
         the sum of every wait before it.  `label` names what is being waited
-        for and `extra` who is answering -- `dns gitmcp.io`,
-        `mcp-handshake gitmcp.io`, `ttft api.groq.com` -- so one line carries
-        both the number and what explains it.
+        for and `extra` who is answering -- `dns gitmcp.io`, `mcp-handshake
+        gitmcp.io`, `ttft api.groq.com` -- so one row carries both the number
+        and what explains it, and a parallel call carries one such row each.
         """
         self.restart()
         self.waiting_for(label, extra)
         self.wait()
 
     def arrived(self):
-        """The wait is over: freeze the clock where it stopped and end the line.
+        """The wait is over: freeze the clock where it stopped.
 
         A wait that returned, one that was cancelled and one whose deadline
         passed are the same instant from the user's side, so every caller
-        ends its own wait here whether or not it was answered.
+        ends its own wait here whether or not it was answered, and ends only
+        its own: the rows beside it keep their clocks.
         """
         self.first_token()
 
-    def elapsed(self):
-        """Seconds since this line was made: one clock for every writer."""
-        return (time.time_ns() - self.start) / 1e9
-
-    def paint(self, line):
-        """Repaint the line in place, in the reasoning gray."""
-        pv_paint(self.state, line, self.err, self.env)
-
-    def close(self):
-        """End the line, so the next thing written starts below it."""
-        if self.state.get("width"):
-            self.err.write("\n")
-            self.err.flush()
-            self.state["width"] = 0
-
     def wait(self):
-        """Show a ticking ttft clock until the first token; nothing if it is fast.
+        """Show a ticking clock on this row until it is stopped.
 
         A slow first token is indistinguishable from a hung program, so this
         needs a thread: the main thread is blocked in a socket read until
-        exactly the moment the clock should stop.  A call whose first token
-        beats WAIT_DELAY never paints at all.
+        exactly the moment the clock should stop.  A wait that beats
+        WAIT_DELAY never paints at all, and one thread ticks every row of a
+        parallel call rather than one thread per row.
         """
-        import threading
-        self.stop = threading.Event()
-
-        def tick():
-            while not self.stop.wait(0.1):
-                if self.elapsed() >= WAIT_DELAY:
-                    self.clock = True
-                    tail = f"  {self.extra}" if self.extra else ""
-                    self.paint(
-                        f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}{tail}")
-
-        self.thread = threading.Thread(target=tick, daemon=True)
-        self.thread.start()
+        with self.line.lock:
+            self.waiting = True
+            self.line.ensure_ticker()
 
     def stop_clock(self):
-        """Stop the clock; whether it was showing anything on the line."""
-        if self.stop is None:
-            return False
-        self.stop.set()
-        self.thread.join()
-        self.stop = self.thread = None
-        showing, self.clock = self.clock, False
-        return showing
+        """Stop this row's clock; whether the ticker had painted it at all."""
+        with self.line.lock:
+            self.waiting = False
+            painted, self.clock = self.clock, False
+            return painted
+
+    def clock_text(self):
+        """`ttft: 0:00:03.4  api.groq.com`: what a running clock shows."""
+        tail = f"  {self.extra}" if self.extra else ""
+        return f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}{tail}"
 
     def first_token(self):
-        """The first token arrived: finish and close the line, if one is showing.
+        """The first token arrived: freeze this row with its final time.
 
         `extra` -- something learned while the wait was running, like the
-        upstream a router chose -- is appended to the clock, so one line
-        carries both the number and what explains it.  The line exists to
-        explain a stall, so a call whose clock never painted drops the
-        attribution with it.
+        upstream a router chose -- is appended to the clock, so one row
+        carries both the number and what explains it.  A row the ticker never
+        painted stays unpainted, because the row exists to explain a stall,
+        and a call whose clock never showed drops the attribution with it.
         """
         if self.stop_clock():
-            tail = f"  {self.extra}" if self.extra else ""
-            self.paint(
-                f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}{tail}")
-        self.close()
+            self.paint(self.clock_text())
 
     def status(self, msg):
-        """A job status: end the clock like a token does, then repaint the line.
+        """A job status: end the clock like a token does, then show the status.
 
         An adaptor whose call() polls says what it is waiting for here, so a
-        long job's progress is one more thing on stderr's one line and not a
-        line of its own; the first status supersedes the bare clock exactly
-        as the first token would.
+        long job's progress is one row and not a line of its own; the first
+        status supersedes the bare clock exactly as the first token would.
         """
         if self.stop_clock():
-            self.paint(f"ttft: {pv_clock(self.elapsed(), tenths=True)}")
-            self.paint(f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}")
-            self.close()
+            self.paint(self.clock_text())
         self.paint(msg)
+
+    def paint(self, text):
+        """Show text on this row, and repaint the block around it."""
+        self.text = text
+        self.line.repaint()
 
 
 def pv_waiter(err=None, env=None):
@@ -405,34 +667,27 @@ def pv_waiter(err=None, env=None):
     return line.first_token
 
 
-def pv_update(state, text=None, final=False, err=None, env=None):
-    """Repaint one `pv -N <state["name"]> -btr` meter on stderr.
+def pv_update(row, text=None, final=False):
+    """Refresh one meter row: `pv -N <row.name> -btr` over the bytes it saw.
 
-    text adds its bytes to the meter, creating it on the first call; final
-    closes the line so the finished meter stays visible above whatever comes
-    next.  A stream that never arrives therefore writes nothing at all, and
-    repaints are capped at ten a second so a fast stream is not spent on
-    escape codes.
+    text adds its bytes to the row's total, making it a meter on the first
+    call; final freezes it, so a finished meter stays where it stands above
+    whatever comes next.  A stream that never arrives therefore shows nothing
+    at all, and repaints are capped at ten a second so a fast stream is not
+    spent on escape codes.  The row is what carries the stream's identity,
+    the total and the last time on the screen, so two meters and four clocks
+    are seven rows of one block and not seven writers of one line.
     """
-    if state.get("done"):
-        return
-    err = sys.stderr if err is None else err
     now = time.time_ns()
     if text is not None:
-        state["bytes"] = state.get("bytes", 0) + len(
-            text if isinstance(text, bytes) else text.encode())
-        state.setdefault("t0", now)
-    if "t0" not in state:
+        row.bytes += len(text if isinstance(text, bytes) else text.encode())
+        row.t0 = row.t0 or now
+    if not row.t0:
         return
-    if not final and now - state.get("t_paint", 0) < 10 ** 8:
+    if not final and now - row.painted < 10 ** 8:
         return
-    state["t_paint"] = now
-    pv_paint(state, pv_line(state["name"], state["bytes"],
-                            (now - state["t0"]) / 1e9), err, env)
-    if final:
-        err.write("\n")
-        state["done"] = True
-        err.flush()
+    row.painted = now
+    row.paint(pv_line(row.name, row.bytes, (now - row.t0) / 1e9))
 
 
 def label(item):

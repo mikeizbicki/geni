@@ -174,18 +174,22 @@ name and dic dispatches by name; a name that arrives twice is an error and
 never a guess.
 
 A fresh call opens every server it names and asks what it offers.  A call that
-continues a conversation re-offers exactly the tools its row recorded and opens
-a server on the first call to one of its tools, so `-c` reaches no server it
-does not have to, and a server that has since died is a `tool_result` the model
-reads rather than a failed call: dic is a bridge, and what a server said -- an
-error, a timeout, an `isError` -- is the bridge's cargo.
+opens the servers at once, one per worker, so a fresh call costs the slowest
+handshake and not their sum.  A call that continues a conversation re-offers
+exactly the tools its row recorded and opens a server on the first call to one
+of its tools, so `-c` reaches no server it does not have to, and a server that
+has since died is a `tool_result` the model reads rather than a failed call:
+dic is a bridge, and what a server said -- an error, a timeout, an `isError` --
+is the bridge's cargo.
 
 Both transports are spoken: a command is a child process, one JSON-RPC message
 to a line of its stdout, and a URL is a POST whose answer is JSON or a one-way
 event stream.  The child inherits dic's environment, which is how it gets a
-secret, and a HTTP secret rides in the URL, because dic stores the spec it was
-given and never a credential of its own.  Every wait is bounded, and an expiry
-names the method and the number of seconds it waited.
+secret, and its own stderr is kept, because a shell that could not run the
+program says why there and a broken pipe does not.  A HTTP secret rides in the
+URL, because dic stores the spec it was given and never a credential of its
+own.  Every wait is bounded, and an expiry names the method and the number of
+seconds it waited.
 
 Tools ship in categories, one module each, so `dic.tools.fs:*` is a category
 and `dic.tools.fs:ls` is one tool in it.  Importing that module is the cost,
@@ -289,6 +293,15 @@ ttft: 0:00:03.4
 
 It has no byte counter because no bytes have arrived; it is closed with the final
 time when the first token does arrive, and a faster call never shows it at all.
+
+The same line is a block.  Each wait gets a row of its own, and the rows are
+repainted together: four `--mcp` servers therefore show four `mcp-handshake`
+clocks that count in parallel and freeze in place as each one is answered,
+rather than one line rewritten four times.  A row is named, so the second
+round of a tool loop reuses the first round's rows and a block does not grow
+a line per call.  A message written while rows are live -- `report`'s cost
+line, `-vv`'s `mcp: name: method` -- moves the block down and takes the line
+above it, so a log line never lands on a clock.
 
 The same clock names what it is waiting for.  The name is `ttft` for the request
 itself, and `dns` while the host is being resolved, because a resolver that has

@@ -309,19 +309,17 @@ dic-run() {
         # the trace above, because the trace is what overwrote the
         # caller's placeholder and left its tail beside the command.
         printf '%s: 0:00:00\r' "$meter_label" | dic-paint info
-        local status
+        # -i 0.1: pv repaints ten times a second instead of once, so the
+        # timer moves as soon as the test does.  The line is left where
+        # pv leaves it -- its last repaint carries the total elapsed,
+        # and it stays below the trace as the round's timing.
         if [[ -t 1 ]] && dic-use-color; then
-            "$@" 2>&1 | pv -l -t -f -N "$meter_label" \
+            "$@" 2>&1 | pv -i 0.1 -l -t -f -N "$meter_label" \
                 2> >(dic-paint info) | dic-paint-out muted
         else
-            "$@" | pv -l -t -f -N "$meter_label" 2> >(dic-paint info)
+            "$@" | pv -i 0.1 -l -t -f -N "$meter_label" 2> >(dic-paint info)
         fi
-        status=${PIPESTATUS[0]}
-        # pv ends the meter with a newline, so its line stands and the
-        # cursor sits one below it.  Go back up and erase it, so what
-        # is printed next is the command's own output and nothing else.
-        printf '\e[1A\r\e[K' >&2
-        return "$status"
+        return "${PIPESTATUS[0]}"
     fi
     if [[ -t 1 ]] && dic-use-color; then
         "$@" 2>&1 | dic-paint-out muted

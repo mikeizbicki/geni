@@ -642,9 +642,6 @@ class Row:
         """Show text on this row, and repaint the block around it."""
         self.text = text
         self.line.repaint()
-            self.paint(f"{self.label}: {pv_clock(self.elapsed(), tenths=True)}")
-            self.close()
-        self.paint(msg)
 
 
 def pv_waiter(err=None, env=None):

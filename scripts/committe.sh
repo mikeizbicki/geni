@@ -278,7 +278,7 @@ function committe-record() {
     # mutes it like every other step's output.  The `git show` that used to
     # reproduce it is gone with it.
     if ! GIT_COMMITTER_NAME='committe' GIT_COMMITTER_EMAIL='committe@agent' \
-         dic-run git commit -m "$commit_message"; then
+         dic-run git commit --stat -m "$commit_message"; then
         dic-error "committe-error: git commit failed"
         return 1
     fi

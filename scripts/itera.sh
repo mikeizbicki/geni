@@ -302,7 +302,7 @@ itera-continue() {
 itera-skip() {
     itera-state-read skip || return 1
     dic-run git add -A || return 1
-    if ! dic-run git commit --quiet -m '[geni] itera: manual checkpoint'; then
+    if ! dic-run git commit --quiet --stat -m '[geni] itera: manual checkpoint'; then
         dic-info "itera-info: nothing to commit"
     fi
     if itera-run 2; then

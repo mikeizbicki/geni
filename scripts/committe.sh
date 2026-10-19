@@ -274,14 +274,19 @@ function committe-record() {
     # and setting the committer fields.
     local commit_message
     commit_message="[geni] $(committe-message)"
-    # Not --quiet: git's own stat is the summary of the round, and dic-run
-    # mutes it like every other step's output.  The `git show` that used to
-    # reproduce it is gone with it.
+    # --quiet: git hardcodes the short form ("N files changed") as the
+    # summary of a non-merge commit, so a --stat here is accepted and then
+    # ignored.  The `git show --stat` beside it is what reproduces the
+    # per-file bars `git merge` prints.
     if ! GIT_COMMITTER_NAME='committe' GIT_COMMITTER_EMAIL='committe@agent' \
-         dic-run git commit --stat -m "$commit_message"; then
+         dic-run git commit --quiet -m "$commit_message"; then
         dic-error "committe-error: git commit failed"
         return 1
     fi
+    # The per-file stat belongs to the round, and dic-run mutes it like
+    # every other step's output.  --format= suppresses the commit header
+    # so only the diffstat prints.
+    dic-run git show --stat --format= HEAD
 
     committe-merge || return 1
 }

@@ -414,6 +414,15 @@ def dic(prompt,
         tools:        flag(long="--tools", action="append",
                            metavar="MODULE:FUNC",
                            help="offer a python function as a tool; repeatable") = None,
+        mcp:          flag(long="--mcp", action="append", metavar="CMD|URL",
+                           help="offer the tools of an MCP server, told from"
+                                " a command by its scheme; repeatable") = None,
+        mcp_url:      flag(long="--mcp-url", action="append", metavar="URL",
+                           help="--mcp with the guess left out, for a URL"
+                                " that carries no scheme") = None,
+        mcp_shell:    flag(long="--mcp-shell", action="append", metavar="CMD",
+                           help="--mcp with the guess left out, for a"
+                                " command that begins with a scheme") = None,
         cont:         flag(short="-c", long="--continue", action="bool",
                            help="continue this session's last conversation") = False,
         mid:          flag(long="--mid", metavar="REF",
@@ -580,6 +589,26 @@ def dic(prompt,
         from dic import tool
         tools = tool.resolve(specs)
 
+    # --mcp names servers, whose tools arrive over a pipe or a POST instead of
+    # over an import.  They become records of the same shape, so the schema
+    # builder, the tool loop and the stored row need no MCP case at all.  A
+    # call that names one opens it now, because it must know what to offer; a
+    # continuation reads its own row's servers and opens one on the first call
+    # to one of its tools, so a server that has since died is a tool result
+    # and never a failed call.
+    named = bool(knobs["mcp"] or knobs["mcp_url"] or knobs["mcp_shell"])
+    pairs, mcp_map = [], {}
+    if named or (rows and rows[-1]["mcp"]):
+        from dic import mcp
+
+        def say(level, message):
+            report(verbosity, level, message, err=err, env=env)
+
+        pairs = (mcp.specs(knobs["mcp"], knobs["mcp_url"], knobs["mcp_shell"])
+                 if named else json.loads(rows[-1]["mcp"]))
+        found, mcp_map = mcp.resolve(pairs, None if named else stored, say)
+        tools = tools + tuple(found)
+
     # what the answer will be, settled before the call so that a missing or
     # taken --path fails before the network instead of after a whole video
     mime = knobs["mime_type"] or model.get("output") or "text/plain"
@@ -640,7 +669,7 @@ def dic(prompt,
         # call asks for exactly that and never regenerates it; a caller who
         # names --tools gets the freshly described schema instead
         opts["tools"] = (adaptor.tool_schema(tools)
-                         if given or not stored.get("schema")
+                         if given or named or not stored.get("schema")
                          else stored["schema"])
     line = Line(err, env)
     prepare = getattr(adaptor, "prepare", None)
@@ -777,9 +806,13 @@ def dic(prompt,
             wire.get("t_start"), wire.get("t_connect"), wire.get("t_request"),
             wire.get("t_headers"), wire.get("t_first"), wire.get("t_last"),
             wire.get("t_done"),
-            json.dumps({"specs": list(specs), "schema": opts.get("tools")})
-                if tools else None,
-            None,
+            json.dumps({
+                "specs": list(specs), "schema": opts.get("tools"),
+                "records": [{"name": t["name"],
+                             "description": t["description"],
+                             "parameters": t["parameters"]} for t in tools],
+                "mcp": mcp_map}) if tools else None,
+            json.dumps(pairs) if pairs else None,
             json.dumps(overrides) if overrides else None))
         if recorder is not None:
             # one row per round that produced bytes, and none for one that did

@@ -158,6 +158,35 @@ model as the result, so the model can read it and try again.  A call that keeps
 asking for tools is given 16 rounds and then fails, because a loop is a bug and
 not a conversation.
 
+### MCP servers
+
+`--mcp CMD|URL` offers the tools of an MCP server, and is repeatable.  The
+value is told from itself: a scheme makes it a URL and anything else makes it a
+command, with `--mcp-url` and `--mcp-shell` for the value that looks like the
+other one.  There is no file to write and no name to invent: a server is named
+after its host or its basename, and a second server of that name takes a
+number.
+
+What comes back is the same three things `--tools` produces -- a name, a
+description and a JSON Schema -- so nothing downstream knows the difference.  A
+server's tools are prefixed `mcp__<server>__<tool>`, because the model asks by
+name and dic dispatches by name; a name that arrives twice is an error and
+never a guess.
+
+A fresh call opens every server it names and asks what it offers.  A call that
+continues a conversation re-offers exactly the tools its row recorded and opens
+a server on the first call to one of its tools, so `-c` reaches no server it
+does not have to, and a server that has since died is a `tool_result` the model
+reads rather than a failed call: dic is a bridge, and what a server said -- an
+error, a timeout, an `isError` -- is the bridge's cargo.
+
+Both transports are spoken: a command is a child process, one JSON-RPC message
+to a line of its stdout, and a URL is a POST whose answer is JSON or a one-way
+event stream.  The child inherits dic's environment, which is how it gets a
+secret, and a HTTP secret rides in the URL, because dic stores the spec it was
+given and never a credential of its own.  Every wait is bounded, and an expiry
+names the method and the number of seconds it waited.
+
 Tools ship in categories, one module each, so `dic.tools.fs:*` is a category
 and `dic.tools.fs:ls` is one tool in it.  Importing that module is the cost,
 which is why `dic.tool` itself is imported only when `--tools` is given; a tool
@@ -294,12 +323,13 @@ is not, then moved by `-q` (to 0) or `-v` (each repetition one higher).
 All of it goes through one `report(verbosity, level, msg)` in `tty.py`.
 
 **TODO:**
-1. Tools work for importable python functions (`--tools`), but not for MCP
-    servers, which are the same name, description and JSON Schema arriving over
-    a pipe instead of over an import; that is the next piece of this.
-    Every round of a loop is stored, so a later `-c` replays what a tool did,
-    but the tool itself is not re-run: `--tools` must be given again for the
-    model to be offered it.
+1. A fresh call fetches `tools/list` from every server it names, every time:
+    the `mcp_tools` table that would remember the answer is in the schema and
+    unused.  What that table would save is one handshake per server per new
+    conversation, which is what makes it a cache and not a requirement.
+    Per-server deadlines and the older two-endpoint SSE transport are not
+    implemented either, so a server that needs more than `--mcp`'s value is
+    not reachable yet.
 
 5. Subagents: an agent that calls other agents is several conversations under
     one session, and every piece dic needs for that is already here.  A session

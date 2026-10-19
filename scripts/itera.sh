@@ -366,8 +366,10 @@ itera-run-tests() {
     # pv does not paint until its first read, and a quiet test can sit a
     # full second before that.  Print the label with no newline so the
     # terminal has something to show while pv waits; pv's own repaint
-    # begins with \r and overwrites this line.
-    printf '%s: 0:00\r' "$label" >&2
+    # begins with \r and overwrites this line, and both are painted in
+    # the one info role so the placeholder and the meter it becomes
+    # read as the same line.
+    printf '%s: 0:00\r' "$label" | dic-paint info
     # The test's output lands in itera_test_output rather than a temp
     # file: the bytes of a red round must survive to the next round's
     # committe -c, and a variable leaves no file behind to clean up.
@@ -375,12 +377,11 @@ itera-run-tests() {
     # 2>&1 on dic-run itself would capture the trace as well.  eval
     # runs in this shell, so a sourced function such as sandbox is
     # still a function.  The parens make 2>&1 apply to the whole
-    # expression.  The `exit` inside the substitution reads
-    # PIPESTATUS[0], which is still the test's own status, and makes it
-    # the substitution's status; nothing runs between the pipeline and
-    # the exit to move it.
-    itera_test_output=$(dic-run eval "($test_cmd) 2>&1" \
-        | pv -l -t -N "$label"; exit "${PIPESTATUS[0]}")
+    # expression.  --meter folds pv in, so its meter is painted in the
+    # info role instead of writing to stderr uncoloured, and dic-run
+    # returns the test's own status, so nothing else has to preserve
+    # it.
+    itera_test_output=$(dic-run --meter "$label" -- eval "($test_cmd) 2>&1")
     status=$?
     if (( status == 0 )); then
         # Time and record here, not in itera(), so a standalone run is

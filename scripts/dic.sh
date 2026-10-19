@@ -208,6 +208,24 @@ _dic_quote() {
 # function fills an interactive terminal and, one `2>log` away, the file
 # a background geni will log to.
 dic-run() {
+    # --meter LABEL -- is dic-run's own flag and is read first; an
+    # argument that is not it is the command, as it always was.  A
+    # meter is the caller's progress line, but its repaint and its
+    # colour are not: folding pv in here is what stops a meter from
+    # escaping the info role through stderr, which pv writes to by
+    # design and which nothing here painted.
+    local meter=0 meter_label=
+    if [[ ${1:-} == --meter ]]; then
+        if (( $# < 2 )); then
+            dic-error "dic-run-error: --meter needs a label"
+            return 2
+        fi
+        meter=1
+        meter_label=$2
+        shift 2
+    fi
+    [[ ${1:-} == -- ]] && shift
+
     local a reset=
     dic-use-color && reset=$'\e[0m'
     {
@@ -247,8 +265,27 @@ dic-run() {
     # a terminal.  A redirected stdout is a patchfile or a test's own
     # output, and an escape in either is corruption of what the next stage
     # reads: committe-run's patchfile, itera-run-tests' itera_test_output.
+    # The child's stderr is merged into the same pipe, so a program that
+    # colours its own stderr cannot leak its codes into a transcript meant
+    # to read as one; the merge happens only here, for the same reason.
+    #
+    # A meter is worth having only where its own destination is a
+    # terminal, so pv is folded in only then.  Where stdout is a
+    # terminal too, the child's stderr joins the pipe the paint already
+    # reads; where it is not, the caller is capturing the child's
+    # stdout and the two stay apart, so pv counts lines and does
+    # nothing else.  pv's meter is painted in the info role.
+    if (( meter )) && [[ -t 2 ]]; then
+        if [[ -t 1 ]] && dic-use-color; then
+            "$@" 2>&1 | pv -l -t -N "$meter_label" \
+                2> >(dic-paint info) | dic-paint-out muted
+        else
+            "$@" | pv -l -t -N "$meter_label" 2> >(dic-paint info)
+        fi
+        return "${PIPESTATUS[0]}"
+    fi
     if [[ -t 1 ]] && dic-use-color; then
-        "$@" | dic-paint-out muted
+        "$@" 2>&1 | dic-paint-out muted
         return "${PIPESTATUS[0]}"
     fi
     "$@"

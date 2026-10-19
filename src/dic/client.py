@@ -834,7 +834,7 @@ def dic(prompt,
                 if kind == "thinking":
                     if pv is not None:
                         pv_update(pv, chunk)
-                    else:
+                    elif not pv_thinking:
                         # --no-pv-thinking streams the reasoning itself, and
                         # prose is not a block: the rows are let stand and
                         # the text goes below them
@@ -850,6 +850,8 @@ def dic(prompt,
                     continue
                 if pv is not None:      # the answer starts on a line of its own
                     pv_update(pv, final=True)
+                    pv = None           # frozen once: the next repaint would
+                                        # move the block into the answer
                 chunks.append(chunk)
                 printed.append(chunk)
                 if pv_resp is not None:

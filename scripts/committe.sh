@@ -146,7 +146,11 @@ function committe-prepare() {
     mkdir -p "$(dirname "$headfile")"
 
     if dic rev-parse "$COMMITTE_PARENT" > "$headfile" 2>/dev/null; then
-        dic-run dic branch "$COMMITTE_CHILD" "$COMMITTE_PARENT" || return 1
+        # Not dic-run: a ref move invokes no model, mutates no git tree
+        # and runs no user code, so it is bookkeeping and not a step;
+        # the trace line it would draw is one a reader skips past to
+        # find the round it belongs to.
+        dic branch "$COMMITTE_CHILD" "$COMMITTE_PARENT" || return 1
     else
         # No parent ref yet: the child starts from nothing, and the
         # empty headfile is what tells the merge-back that the parent
@@ -296,6 +300,10 @@ function committe-merge() {
     # as the compare-and-swap, and then drop the child.  This is the
     # merge and it is the whole of it: the child's mid is already in the
     # message tree, so there is no content to copy -- only the ref.
+    #
+    # The move is not dic-run: it is bookkeeping and not a step, and
+    # update-ref itself prints what the conversation and the fork cost
+    # on stderr in the cost role, which a trace would have muted.
     local old new
     old=$(cat "$(committe-headfile)")
     new=$(dic rev-parse "$COMMITTE_CHILD") || {
@@ -311,9 +319,9 @@ function committe-merge() {
             dic-error "committe-error: $COMMITTE_PARENT moved meanwhile"
             return 1
         fi
-        dic-run dic update-ref "$COMMITTE_PARENT" "$new" || return 1
+        dic update-ref "$COMMITTE_PARENT" "$new" || return 1
     else
-        dic-run dic update-ref "$COMMITTE_PARENT" "$new" "$old" || return 1
+        dic update-ref "$COMMITTE_PARENT" "$new" "$old" || return 1
     fi
 
     # The commit is reachable from the parent now, so the child's ref is

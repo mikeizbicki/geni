@@ -21,11 +21,12 @@ import json, sys, time
 from dic import bps, client, config
 from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
-                       LOG_SESSION, MODELS, PROVIDERS, SESSION_COST, STATS,
+                       FORK_COST, LOG_SESSION, MODELS, PROVIDERS, SESSION_COST,
+                       STATS,
                        TOOL_STATS, resolve_ref, session_delete, session_head,
                        session_move, session_names)
 from dic.tty import (ID, REF, RESET, DicError, page, pager_command,
-                     use_color)
+                     report, use_color)
 
 
 def table(rows):
@@ -889,7 +890,7 @@ def branch_delete(env, name, force=False):
     return f"deleted {name} (was {mid})\n"
 
 
-def update_ref(conn, env, *,  # noqa: ARG001
+def update_ref(conn, env, *,
                name=None, new=None, old=None, delete=False):
     """Move a session's ref, and refuse unless it currently holds OLD.
 
@@ -913,6 +914,32 @@ def update_ref(conn, env, *,  # noqa: ARG001
         return ""
     if not new:
         raise DicError("update-ref needs a new mid")
+
+    # The conversation is the walk of prev_mid from NEW to its root, and
+    # the run is the same walk stopped at OLD, so the two are the thread
+    # and what the fork added above the point it started from.  Two
+    # conversations subtracted from each other are not that: a fork that
+    # began a fresh context does not continue the parent's, and the
+    # difference is then the parent's dollars read off the child's -- a
+    # run larger than the thread it is part of, or less than nothing.
+    #
+    # The report goes out before the compare-and-swap: the calls were
+    # made whether or not the parent moved, and a failed merge is
+    # exactly when the number matters most.
+    #
+    # A fork with no OLD, and one whose OLD is not on the chain, added the
+    # whole thread, and then there is nothing to print a second line
+    # about.  The two are compared as they would print, and not as
+    # floats, because two sums that differ in the last bit are one
+    # number to a reader who sees four decimals.
+    thread = conn.execute(CONVERSATION_COST, (new,)).fetchone()[0]
+    lines = [f"cost: ${thread:.4f} conversation"]
+    if old:
+        added = conn.execute(FORK_COST, (new, old, old)).fetchone()[0]
+        if f"{added:.4f}" != f"{thread:.4f}":
+            lines.append(f"cost: ${added:.4f} run")
+    report(1, 1, "\n".join(lines), env=env)
+
     current = session_head(env, name)
     if old is not None and current != old:
         raise DicError(f"{name}: expected {old},"

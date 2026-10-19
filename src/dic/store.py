@@ -320,6 +320,24 @@ SELECT coalesce(sum(cost), 0.0) FROM messages
  WHERE mid IN (SELECT mid FROM chain)
 """
 
+# The cost of what one fork added above the point it started from: the same
+# walk of prev_mid, stopped at the old mid.  Subtracting the parent's whole
+# conversation is only the same number when the fork continued it -- a fork
+# that began a fresh context is not an extension of the parent's, and the
+# difference was then the parent's dollars read off the child's, which is
+# how a run came out larger than its own thread or less than nothing.  An
+# old mid that is not on the chain stops nothing, and the fork added the
+# whole thread.
+FORK_COST = """
+WITH RECURSIVE chain(mid, prev_mid, cost) AS (
+    SELECT mid, prev_mid, cost FROM messages WHERE mid = ? AND mid <> ?
+  UNION ALL
+    SELECT m.mid, m.prev_mid, m.cost
+      FROM messages m JOIN chain c ON m.mid = c.prev_mid
+     WHERE m.mid <> ?)
+SELECT coalesce(sum(cost), 0.0) FROM chain
+"""
+
 # The per-session breakdown of one subtree: each (sub)session's own total,
 # so that a tree can be rendered from it.  The rollup is python's job, for
 # the reason --stats is: neither is ever on the latency path.

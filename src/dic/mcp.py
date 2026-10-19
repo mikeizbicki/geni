@@ -18,15 +18,24 @@ opens every server it names, because it must know what to offer; a call that
 continues a conversation opens one on the first call to one of the tools its
 row recorded, and never merely because the conversation was picked up.
 
+Every wait goes on dic.tty's one line: `dns` while the resolver runs, and
+`mcp-handshake` while a server is being asked to introduce itself or a
+`tools/list` page is arriving.  A `tools/call` paints its own line,
+`mcp <server>`, because it is the one request whose deadline is minutes
+rather than seconds.  The connection is built through dic.net for that
+reason: a stock urlopen resolves inside the same uninterruptible C call
+and could paint no dns line at all.
+
 A failure the model can read is not an exception here.  A call that answers
 with isError, or that outlives its deadline, raises, and the tool loop
 already turns a raise into the result the model reads, with `ok` false in
 the row: dic is a bridge between a model and a server, and what the server
 said is the bridge's cargo.
 """
-import base64, json, os, queue, subprocess, threading, time
-import urllib.error, urllib.parse, urllib.request
+import base64, http.client, json, os, queue, subprocess, threading, time
+import urllib.parse
 
+from dic import net
 from dic.store import http_url
 from dic.tty import DicError
 
@@ -186,11 +195,12 @@ class Server:
     queue, so a wait has a deadline and a ^C has an eval loop to land in.
     """
 
-    def __init__(self, name, kind, target, say):
+    def __init__(self, name, kind, target, say, line=None):
         self.name = name
         self.kind = kind
         self.target = target
         self.say = say
+        self.line = line            # the caller's Line, or None for a library call
         self.proc = None            # the child, once there is one
         self.url = None             # the endpoint, once there is one
         self.auth = {}              # what the URL's userinfo became
@@ -277,16 +287,33 @@ class Server:
     # ------------------------------------------------------------ exchange
 
     def request(self, method, params, limit):
-        """One JSON-RPC round trip, under the deadline its stage was given."""
+        """One JSON-RPC round trip, under the deadline its stage was given.
+
+        The wait is painted on the caller's line: `mcp-handshake` for
+        everything that starts a server talking and `mcp <server>` for a
+        tools/call, which is the one request that can take minutes.  The
+        line closes when the reply arrives, so a handshake that is slow and
+        a handshake that never answers read the same way until the deadline.
+        """
         message_id = self.next_id
         self.next_id += 1
         body = {"jsonrpc": "2.0", "id": message_id, "method": method,
                 "params": params or {}}
         self.say(3, f"mcp: {self.name}: {method}")
-        deadline = time.monotonic() + limit
-        reply = (self.exchange_stdio(body, message_id, deadline)
-                 if self.kind == "shell"
-                 else self.exchange_http(body, deadline))
+        if self.line is not None:
+            if method == "tools/call":
+                self.line.begin(f"mcp {self.name}",
+                                (params or {}).get("name", ""))
+            else:
+                self.line.begin("mcp-handshake", self.name)
+        try:
+            deadline = time.monotonic() + limit
+            reply = (self.exchange_stdio(body, message_id, deadline)
+                     if self.kind == "shell"
+                     else self.exchange_http(body, deadline))
+        finally:
+            if self.line is not None:
+                self.line.arrived()
         if reply is None:
             raise DicError(f"mcp: {self.name}: {method}: no answer"
                            f" within {limit}s")
@@ -297,12 +324,23 @@ class Server:
         return reply.get("result")
 
     def notify(self, method, params=None):
-        """A notification: no id, and no reply to wait for."""
+        """A notification: no id, and no reply to wait for.
+
+        An HTTP notification is a POST like any other, so it is painted the
+        same way its sibling request is; a stdio one is a write into a pipe
+        that is already open and has nothing to wait for to paint.
+        """
         body = {"jsonrpc": "2.0", "method": method, "params": params or {}}
         if self.kind == "shell":
             self.write(json.dumps(body) + "\n")
-        else:
+            return
+        if self.line is not None:
+            self.line.begin("mcp-handshake", self.name)
+        try:
             self.post(json.dumps(body).encode(), HANDSHAKE_S)
+        finally:
+            if self.line is not None:
+                self.line.arrived()
 
     def write(self, line):
         """One line to the child, or an error that says it is gone."""
@@ -340,37 +378,51 @@ class Server:
                          max(0.1, deadline - time.monotonic()))
         return self.message(data) if data is not None else None
 
-    def post(self, data, limit):
-        """POST data and return the body, or None when the deadline passed."""
-        request = urllib.request.Request(  # noqa: S310
-            self.url, data=data, method="POST",
-            headers={"content-type": "application/json",
-                     "accept": "application/json, text/event-stream",
-                     # a fresh dic and nothing else: the interpreter's own
-                     # default names Python-urllib, which a bot check bans
-                     "user-agent": f"dic/{VERSION}",
-                     "mcp-protocol-version": self.protocol,
-                     **({"mcp-session-id": self.session} if self.session else {}),
-                     **self.auth})
+    def headers(self):
+        """The headers every request to this server carries.
+
+        The session id is the server's to name and rides on every request
+        after the first, which is how a streamable server keeps one
+        conversation's state out of another's way; the user-agent names dic
+        and nothing else, because the interpreter's default names
+        Python-urllib and a bot check bans it.
+        """
+        return {"content-type": "application/json",
+                "accept": "application/json, text/event-stream",
+                "user-agent": f"dic/{VERSION}",
+                "mcp-protocol-version": self.protocol,
+                **({"mcp-session-id": self.session} if self.session else {}),
+                **self.auth}
+
+    def post(self, data, limit, label="mcp-handshake"):
+        """POST data and return the body, or None when the deadline passed.
+
+        The connection is built through dic.net, so a resolver that has
+        stopped answering paints a `dns:` line and a ^C has an eval loop to
+        land in; a stock urlopen resolves inside that same uninterruptible
+        C call and neither is possible.
+        """
+        parts = urllib.parse.urlparse(self.url)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        conn = net.connection(self.url, self.line, label,
+                              timeout=max(0.1, limit))
         try:
-            with urllib.request.urlopen(request, timeout=limit) as response:  # noqa: S310
-                if not self.session:
-                    # the session is the server's to name, and every later
-                    # request carries it: it is how a streamable server keeps
-                    # one conversation's state out of another's way
-                    self.session = response.headers.get("mcp-session-id")
-                return response.read().decode("utf-8", "replace")
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "replace").strip()[:300]
-            raise DicError(f"mcp: {self.name}: {e.code} {detail}") from None
-        except urllib.error.URLError as e:
-            if isinstance(e.reason, TimeoutError):
-                return None
-            raise DicError(f"mcp: {self.name}: {e.reason}") from None
+            conn.request("POST", path, data, self.headers())
+            response = conn.getresponse()
+            body = response.read().decode("utf-8", "replace")
         except TimeoutError:
             return None
-        except OSError as e:
+        except (http.client.HTTPException, OSError) as e:
             raise DicError(f"mcp: {self.name}: {e}") from None
+        finally:
+            conn.close()
+        if response.status >= 400:
+            raise DicError(f"mcp: {self.name}: {response.status} {body[:300]}")
+        if not self.session:
+            self.session = response.headers.get("mcp-session-id")
+        return body
 
     def message(self, body):
         """The reply in a response body, whether it is JSON or an event stream.
@@ -432,7 +484,7 @@ class Server:
         return call
 
 
-def resolve(pairs, blob=None, say=None):
+def resolve(pairs, blob=None, say=None, line=None):
     """(records, mapping) for the servers of one call.
 
     `blob` is the tools blob of the row this call continues, or None for a
@@ -443,13 +495,18 @@ def resolve(pairs, blob=None, say=None):
     the first call to one of its tools and never merely because the
     conversation was picked up.
 
+    `line` is the caller's stderr line, painted as `mcp-handshake` while a
+    server is being asked to introduce itself and as `mcp <server>` while a
+    tool is running; a library caller that has no line passes none, and every
+    wait then goes unpainted exactly as it does today.
+
     `mapping` is what the next call needs and what the row stores: the
     namespaced name of each tool, back to the server and to the name the
     server itself knows it by.  It is data and not schema, because it is a
     fact about one row's tools and not about the database.
     """
     say = say or (lambda *_: None)
-    servers = {name: Server(name, kind, target, say)
+    servers = {name: Server(name, kind, target, say, line)
                for name, kind, target in names(pairs)}
     if blob is not None:
         mapping = blob.get("mcp") or {}

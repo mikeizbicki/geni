@@ -292,6 +292,30 @@ class Line:
         """
         self.label, self.extra = label, extra
 
+    def begin(self, label, extra=""):
+        """Start a wait on this line: a fresh clock, and a name for it.
+
+        Each wait gets its own clock rather than sharing the call's -- a tool
+        loop is more than one request and an MCP handshake is several round
+        trips -- so the number a user reads is the one this wait took and not
+        the sum of every wait before it.  `label` names what is being waited
+        for and `extra` who is answering -- `dns gitmcp.io`,
+        `mcp-handshake gitmcp.io`, `ttft api.groq.com` -- so one line carries
+        both the number and what explains it.
+        """
+        self.restart()
+        self.waiting_for(label, extra)
+        self.wait()
+
+    def arrived(self):
+        """The wait is over: freeze the clock where it stopped and end the line.
+
+        A wait that returned, one that was cancelled and one whose deadline
+        passed are the same instant from the user's side, so every caller
+        ends its own wait here whether or not it was answered.
+        """
+        self.first_token()
+
     def elapsed(self):
         """Seconds since this line was made: one clock for every writer."""
         return (time.time_ns() - self.start) / 1e9

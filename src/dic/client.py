@@ -19,9 +19,9 @@ entry point.
     dic/adaptors/*.py   one wire protocol each
     dic/models.json     packaged defaults, overlaid by the user's files
 """
-import http.client, json, os, re, socket, sys, threading, time, urllib.parse
+import json, os, re, sys, time, urllib.parse
 
-from dic import config, output, price
+from dic import config, net, output, price
 from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
@@ -95,56 +95,6 @@ def load_adaptor(api_type, env):
     return module
 
 
-def dial(addresses):
-    """An http.client _create_connection that connects to addresses in hand.
-
-    The resolver already ran, so a second lookup here would be one more wait
-    nobody can interrupt; the tuples are tried in order and the first that
-    answers wins, which is what socket.create_connection would have done.
-    """
-    def connect(address, timeout=None, source_address=None):  # noqa: ARG001
-        error = None
-        for _, _, _, _, sockaddr in addresses:
-            try:
-                return socket.create_connection(sockaddr[:2], timeout,
-                                                source_address)
-            except OSError as e:
-                error = e
-        raise error
-    return connect
-
-
-def resolve_addresses(host, port, line=None):
-    """Resolve host:port on a daemon thread, so that a ^C can interrupt it.
-
-    getaddrinfo never returns to the interpreter while it runs, so a signal
-    that arrives during it is not handled until it is over: a resolver that
-    is slow -- an unreachable nameserver, five seconds, two attempts -- is
-    ten seconds in which ^C does nothing at all.  On a thread the main
-    thread has an eval loop to be interrupted in, and the addresses that
-    were found are handed to the socket so that the lookup is never done
-    twice.
-    """
-    if line is not None:
-        line.waiting_for("dns", host)
-    box = {}
-
-    def lookup():
-        try:
-            box["addresses"] = socket.getaddrinfo(
-                host, port, proto=socket.IPPROTO_TCP)
-        except OSError as e:
-            box["error"] = e
-
-    thread = threading.Thread(target=lookup, daemon=True)
-    thread.start()
-    while thread.is_alive():
-        thread.join(0.1)
-    if "error" in box:
-        raise DicError(f"cannot resolve {host}: {box['error']}")
-    return box["addresses"]
-
-
 def events(api_base, path, headers, body, stamps, line=None):
     """POST body, stamp each phase into stamps, and yield events as they arrive.
 
@@ -153,15 +103,7 @@ def events(api_base, path, headers, body, stamps, line=None):
     and yields nothing, so the caller can record the attempt before dying.
     """
     url = urllib.parse.urlparse(api_base)
-    secure = url.scheme != "http"
-    addresses = resolve_addresses(
-        url.hostname, url.port or (443 if secure else 80), line)
-    if line is not None:
-        line.waiting_for("ttft", url.hostname)
-    connection = (http.client.HTTPConnection if url.scheme == "http"
-                  else http.client.HTTPSConnection)
-    conn = connection(url.netloc)
-    conn._create_connection = dial(addresses)
+    conn = net.connection(api_base, line, "ttft")
     conn.connect()
     stamps["t_connect"] = time.time_ns()
     conn.request("POST", url.path.rstrip("/") + path, json.dumps(body), headers)
@@ -572,6 +514,12 @@ def dic(prompt,
     if not api_key:
         raise DicError(f"{key_name} is not set")
 
+    # one line, one repaint, from here to the end of the call: every wait a
+    # user sits through -- dns, the mcp handshake, ttft -- is painted on it
+    # and closed when it is over, so a slow server and a hung one are told
+    # apart without a line of stderr for each
+    line = Line(err, env)
+
     # --tools names python, so dic.tool -- and the inspect and typing it reads
     # the annotations with -- is imported only when one was given, exactly as
     # only the selected adaptor is.  A spec that does not import is an error
@@ -602,7 +550,8 @@ def dic(prompt,
 
         pairs = (mcp.specs(knobs["mcp"], knobs["mcp_url"], knobs["mcp_shell"])
                  if named else json.loads(rows[-1]["mcp"]))
-        mcp_tools, mcp_map = mcp.resolve(pairs, None if named else stored, say)
+        mcp_tools, mcp_map = mcp.resolve(pairs, None if named else stored,
+                                         say, line)
 
     # the loop dispatches through tool.call whichever record it was handed, so
     # the module is imported when either source of records fired, and never
@@ -674,7 +623,6 @@ def dic(prompt,
         opts["tools"] = (adaptor.tool_schema(tools)
                          if given or named or not stored.get("schema")
                          else stored["schema"])
-    line = Line(err, env)
     prepare = getattr(adaptor, "prepare", None)
     if prepare is not None:            # fal reads URLs, so files go up first
         # a prepare that uploads is time the user waits, and an upload is a

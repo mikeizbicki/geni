@@ -557,6 +557,14 @@ ref still holds it -- and it is what lets a harness merge a forked branch
 back without clobbering a parent that moved meanwhile.  No wrapper derives
 the name-to-file rule for itself: the escaping lives in one function, and
 these verbs are how anything else reaches it.
+
+A move also reports the cost of the conversation the new mid ends, and,
+when OLD is given and the calls above it cost anything, the cost of what
+the fork added above it.  Both go to stderr in the cost role, before the
+compare-and-swap: the calls were made whether or not the parent moved, and
+a harness that forked, spent money and merged its ref back is the one place
+the two numbers are already in hand.
+
 There is deliberately no `sessions` table in sqlite:
 session state is ephemeral, and the message tree in sqlite is immutable and append-only.
 What a row stores instead is the *name* of the session that wrote it -- one

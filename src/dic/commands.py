@@ -889,7 +889,7 @@ def branch_delete(env, name, force=False):
     return f"deleted {name} (was {mid})\n"
 
 
-def update_ref(conn, env, *,  # noqa: ARG001
+def update_ref(conn, env, *,
                name=None, new=None, old=None, delete=False):
     """Move a session's ref, and refuse unless it currently holds OLD.
 

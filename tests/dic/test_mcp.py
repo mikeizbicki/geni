@@ -83,13 +83,16 @@ class _MCP(http.server.BaseHTTPRequestHandler):
     of them is answered here.  `received` is one Hit per request -- headers
     and parsed body -- so a test can assert what dic sent, not only what came
     back; `fail` makes tools/call answer with isError, which is how the tool
-    loop's failure path is reached without killing the server.
+    loop's failure path is reached without killing the server.  The header
+    names are lowercased, because HTTP header names are case-insensitive and
+    urllib capitalizes what it sends.
     """
 
     def do_POST(self):
         length = int(self.headers.get("content-length") or 0)
         body = json.loads(self.rfile.read(length) or b"{}")
-        self.server.received.append(Hit(dict(self.headers), body))
+        self.server.received.append(
+            Hit({k.lower(): v for k, v in self.headers.items()}, body))
         payload = json.dumps({"jsonrpc": "2.0", "id": body.get("id"),
                               "result": self.dispatch(body)}).encode()
         self.send_response(200)

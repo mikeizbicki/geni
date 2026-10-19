@@ -584,10 +584,6 @@ def dic(prompt,
         given = [given]
     stored = json.loads(rows[-1]["tools"]) if rows and rows[-1]["tools"] else {}
     specs = given or stored.get("specs") or []
-    tools = ()
-    if specs:
-        from dic import tool
-        tools = tool.resolve(specs)
 
     # --mcp names servers, whose tools arrive over a pipe or a POST instead of
     # over an import.  They become records of the same shape, so the schema
@@ -597,7 +593,7 @@ def dic(prompt,
     # to one of its tools, so a server that has since died is a tool result
     # and never a failed call.
     named = bool(knobs["mcp"] or knobs["mcp_url"] or knobs["mcp_shell"])
-    pairs, mcp_map = [], {}
+    pairs, mcp_map, mcp_tools = [], {}, []
     if named or (rows and rows[-1]["mcp"]):
         from dic import mcp
 
@@ -606,8 +602,15 @@ def dic(prompt,
 
         pairs = (mcp.specs(knobs["mcp"], knobs["mcp_url"], knobs["mcp_shell"])
                  if named else json.loads(rows[-1]["mcp"]))
-        found, mcp_map = mcp.resolve(pairs, None if named else stored, say)
-        tools = tools + tuple(found)
+        mcp_tools, mcp_map = mcp.resolve(pairs, None if named else stored, say)
+
+    # the loop dispatches through tool.call whichever record it was handed, so
+    # the module is imported when either source of records fired, and never
+    # for an invocation that offers no tool at all
+    tools = ()
+    if specs or mcp_tools:
+        from dic import tool
+        tools = tuple(tool.resolve(specs or [])) + tuple(mcp_tools)
 
     # what the answer will be, settled before the call so that a missing or
     # taken --path fails before the network instead of after a whole video

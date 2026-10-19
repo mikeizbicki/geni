@@ -346,6 +346,9 @@ class Server:
             self.url, data=data, method="POST",
             headers={"content-type": "application/json",
                      "accept": "application/json, text/event-stream",
+                     # a fresh dic and nothing else: the interpreter's own
+                     # default names Python-urllib, which a bot check bans
+                     "user-agent": f"dic/{VERSION}",
                      "mcp-protocol-version": self.protocol,
                      **({"mcp-session-id": self.session} if self.session else {}),
                      **self.auth})
@@ -434,9 +437,10 @@ def resolve(pairs, blob=None, say=None):
 
     `blob` is the tools blob of the row this call continues, or None for a
     fresh call.  A fresh call opens every server and asks what it offers,
-    because it must know before the model can be told; a continuation builds
-    its records out of the blob and opens nothing, so `-c` reaches a server
-    on the first call to one of its tools and never merely because the
+    because it must know before the model can be told; one that does not
+    answer is a DicError and not a shorter list.  A continuation builds its
+    records out of the blob and opens nothing, so `-c` reaches a server on
+    the first call to one of its tools and never merely because the
     conversation was picked up.
 
     `mapping` is what the next call needs and what the row stores: the
@@ -462,14 +466,11 @@ def resolve(pairs, blob=None, say=None):
 
     records, mapping = [], {}
     for name, server in servers.items():
-        try:
-            listed = server.list()
-        except DicError as e:
-            # a server that will not start does not refuse the call: the model
-            # is offered the tools of the servers that did answer, and the one
-            # that did not says so on stderr
-            say(1, f"{e}")
-            continue
+        # a fresh call must know what a server offers before the model can be
+        # told, so a server that will not start refuses the call: a model
+        # offered some of the tools it was told about is worse than a call
+        # that never happened.  The DicError already names the server and why.
+        listed = server.list()
         say(2, f"mcp: {name}: {len(listed)} tool(s)")
         for tool in listed:
             full = namespace(name, tool["name"])

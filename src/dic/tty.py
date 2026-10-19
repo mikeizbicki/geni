@@ -362,20 +362,25 @@ class Line:
         row is written again, so one row changing is one repaint of the
         column and no row is ever left half written.  \\033[K clears each
         line as it is reached, which is what a row that got shorter needs,
-        and what the old padding-to-the-widest-line hack was for.
+        and what the old padding-to-the-widest-line hack was for.  A block
+        that shrank clears the lines it no longer occupies, because the
+        cursor stops at the bottom of what is left and a stale row below
+        it would be the line the next writer landed on.
         """
         with self.lock:
             rows = self.drawn()
-            if not rows:
-                self.height = 0
+            old = self.height
+            if not rows and not old:
                 return
             colour = use_color(self.err, self.env)
-            out = [f"\033[{self.height}A" if self.height else ""]
+            out = [f"\033[{old}A" if old else ""]
             for row in rows:
                 text = row.clock_text() if row.clock else row.text
                 out.append("\r\033[K")
                 out.append(f"{INFO}{text}{RESET}" if colour and text else text)
                 out.append("\n")
+            if old > len(rows):
+                out.append("\033[J")
             self.err.write("".join(out))
             self.err.flush()
             self.height = len(rows)
@@ -551,12 +556,15 @@ class Row:
         A tool loop is more than one request and a block is more than one
         round, so the row a call already has is the row its next round uses:
         the clock, and the bytes a meter has counted, are this wait's and not
-        the call's.
+        the call's.  The text is left where it stands, because a row reused
+        by the request after it is a row whose last answer is still worth
+        reading -- a handshake that has been answered, a meter that has
+        stopped -- and blanking it here would erase a line the reader has
+        already seen for the sake of a wait that has not painted yet.
         """
         self.start = time.time_ns()
         self.label, self.extra = "ttft", ""
         self.waiting = self.clock = False
-        self.text = ""
         self.bytes = self.t0 = self.painted = 0
 
     def waiting_for(self, label, extra=""):

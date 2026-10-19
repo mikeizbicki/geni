@@ -185,9 +185,11 @@ is the bridge's cargo.
 Both transports are spoken: a command is a child process, one JSON-RPC message
 to a line of its stdout, and a URL is a POST whose answer is JSON or a one-way
 event stream.  The child inherits dic's environment, which is how it gets a
-secret, and a HTTP secret rides in the URL, because dic stores the spec it was
-given and never a credential of its own.  Every wait is bounded, and an expiry
-names the method and the number of seconds it waited.
+secret, and its own stderr is kept, because a shell that could not run the
+program says why there and a broken pipe does not.  A HTTP secret rides in the
+URL, because dic stores the spec it was given and never a credential of its
+own.  Every wait is bounded, and an expiry names the method and the number of
+seconds it waited.
 
 Tools ship in categories, one module each, so `dic.tools.fs:*` is a category
 and `dic.tools.fs:ls` is one tool in it.  Importing that module is the cost,

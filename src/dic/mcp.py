@@ -209,6 +209,8 @@ class Server:
         self.auth = {}              # what the URL's userinfo became
         self.session = None         # Mcp-Session-Id, if the server sent one
         self.inbox = queue.Queue()  # the child's replies, in arrival order
+        self.stderr_lines = []      # and what it said on its own stderr
+        self.stderr_done = threading.Event()
         self.next_id = 1
         self.opened = False
         self.protocol = VERSION
@@ -237,16 +239,18 @@ class Server:
         self.say(3, f"mcp: {self.name}: ready in {time.monotonic() - started:.2f}s")
 
     def spawn(self):
-        """Start the child, once, and read its stdout on a thread of its own."""
+        """Start the child, once, and read its two streams on threads of its own."""
         if self.proc is not None:
             return
         try:
             self.proc = subprocess.Popen(  # noqa: S602
                 self.target, shell=True, stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, text=True, bufsize=1)
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1)
         except OSError as e:
             raise DicError(f"mcp: {self.name}: cannot start: {e}") from None
         threading.Thread(target=self.read, daemon=True).start()
+        threading.Thread(target=self.read_err, daemon=True).start()
         self.say(3, f"mcp: {self.name}: started {self.target}")
 
     def read(self):
@@ -265,6 +269,21 @@ class Server:
             except ValueError:
                 self.say(3, f"mcp: {self.name}: {line[:200]}")
         self.inbox.put(None)        # the server is gone; every wait ends
+
+    def read_err(self):
+        """Every line the child writes to its own stderr, kept for the error.
+
+        A command is a shell, and a shell says on its stderr why it could
+        not run what it was given; that is the diagnostic a user needs
+        when the server is gone, and it is the one thing a broken pipe
+        cannot say.  It is drained on a thread of its own, because a pipe
+        a child could fill is a pipe the child blocks on.
+        """
+        for line in self.proc.stderr:
+            line = line.rstrip()
+            if line:
+                self.stderr_lines.append(line)
+        self.stderr_done.set()
 
     def endpoint(self):
         """The URL to POST to, and the credential its userinfo carries."""
@@ -318,8 +337,8 @@ class Server:
             if self.line is not None:
                 self.line.arrived()
         if reply is None:
-            raise DicError(f"mcp: {self.name}: {method}: no answer"
-                           f" within {limit}s")
+            raise DicError(self.describe(
+                f"{method}: no answer within {limit}s"))
         if reply.get("error"):
             error = reply["error"]
             raise DicError(f"mcp: {self.name}: {method}:"
@@ -351,7 +370,24 @@ class Server:
             self.proc.stdin.write(line)
             self.proc.stdin.flush()
         except OSError as e:
-            raise DicError(f"mcp: {self.name}: the server is gone: {e}") from None
+            raise DicError(self.describe(f"the server is gone: {e}")) from None
+
+    def describe(self, what):
+        """One failure, with whatever the child said on its stderr beside it.
+
+        A command is a shell, and a shell says on its stderr why it could
+        not run what it was given -- ``not found``, a missing module, a
+        port already taken -- which is exactly what a broken pipe cannot
+        say.  It is waited for, because a child's exit and its stderr
+        having been read are not one instant, and it is added only once
+        the child has exited, so a server that is merely slow contributes
+        nothing to the message about it.
+        """
+        if (self.kind == "shell" and self.proc is not None
+                and self.proc.poll() is not None):
+            self.stderr_done.wait(timeout=1)
+        said = "; ".join(self.stderr_lines[-3:])
+        return f"mcp: {self.name}: {what}" + (f": {said}" if said else "")
 
     def exchange_stdio(self, body, message_id, deadline):
         """Write the request and wait for its reply, skipping notifications.
@@ -371,7 +407,7 @@ class Server:
             except queue.Empty:
                 return None
             if message is None:
-                raise DicError(f"mcp: {self.name}: the server exited")
+                raise DicError(self.describe("the server exited"))
             if message.get("id") == message_id:
                 return message
 

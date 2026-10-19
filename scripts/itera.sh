@@ -365,13 +365,6 @@ itera-run-tests() {
     local label='test'
     [[ -n $estimate ]] && label="test (expect ~${estimate}s)"
     start=$(date +%s.%N)
-    # pv does not paint until its first read, and a quiet test can sit a
-    # full second before that.  Print the label with no newline so the
-    # terminal has something to show while pv waits; pv's own repaint
-    # begins with \r and overwrites this line, and both are painted in
-    # the one info role so the placeholder and the meter it becomes
-    # read as the same line.
-    printf '%s: 0:00\r' "$label" | dic-paint info
     # The test's output lands in itera_test_output rather than a temp
     # file: the bytes of a red round must survive to the next round's
     # committe -c, and a variable leaves no file behind to clean up.
@@ -397,8 +390,11 @@ itera-run-tests() {
         itera-record-time "$elapsed"
         return 0
     fi
-    printf '\n' >&2                    # close pv's line before the dump
     printf '%s' "$itera_test_output" | dic-paint muted
+    # A last line with no newline of its own would run into the next
+    # trace; the transcript rule puts every traced line at column 0.
+    [[ -z $itera_test_output || $itera_test_output == *$'\n' ]] \
+        || printf '\n' >&2
     return "$status"
 }
 

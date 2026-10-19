@@ -413,7 +413,6 @@ def main():
     global QUIET
 
     parser = argparse.ArgumentParser(
-        prog="fuzzy-apply",
         description="Apply a unified diff, matching context fuzzily.")
     parser.add_argument("patch", nargs="?", default=".git/committe-patchfile",
                         help="the patch to apply (default: %(default)s)")

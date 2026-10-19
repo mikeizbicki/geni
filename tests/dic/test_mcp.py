@@ -274,12 +274,17 @@ def test_a_urls_userinfo_becomes_basic_auth(streams, env, models, llm,
     assert json.loads(row["mcp"]) == [["url", secret]]
 
 
-def test_a_server_that_will_not_start_is_skipped_with_a_warning(
+def test_a_server_that_will_not_start_refuses_a_fresh_call(
         streams, env, models, llm):
-    """One dead server does not refuse the call: the rest are still offered."""
+    """A fresh call cannot be offered part of the servers it named."""
     streams.err.tty = True                   # a terminal gets the warning
-    say(streams, env, "hi", model="fake",
-        mcp_shell=["definitely-not-a-command-xyz"])
+    try:
+        say(streams, env, "hi", model="fake",
+            mcp_shell=["definitely-not-a-command-xyz"])
+    except Exception as e:
+        assert "definitely-not-a-command-xyz" in str(e)
+        return
+    raise AssertionError("a dead server did not refuse the call")
 
     assert streams.out.getvalue() == "hello\n"
     assert "definitely-not-a-command-xyz" in streams.err.getvalue()

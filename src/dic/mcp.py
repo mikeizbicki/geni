@@ -200,7 +200,9 @@ class Server:
         self.kind = kind
         self.target = target
         self.say = say
-        self.line = line            # the caller's Line, or None for a library call
+        # a server takes a row of its own, so four handshakes are four rows
+        # with four clocks rather than one row rewritten by four writers
+        self.line = line.row(name) if line is not None else None
         self.proc = None            # the child, once there is one
         self.url = None             # the endpoint, once there is one
         self.auth = {}              # what the URL's userinfo became

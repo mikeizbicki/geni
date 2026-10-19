@@ -290,6 +290,15 @@ ttft: 0:00:03.4
 It has no byte counter because no bytes have arrived; it is closed with the final
 time when the first token does arrive, and a faster call never shows it at all.
 
+The same line is a block.  Each wait gets a row of its own, and the rows are
+repainted together: four `--mcp` servers therefore show four `mcp-handshake`
+clocks that count in parallel and freeze in place as each one is answered,
+rather than one line rewritten four times.  A row is named, so the second
+round of a tool loop reuses the first round's rows and a block does not grow
+a line per call.  A message written while rows are live -- `report`'s cost
+line, `-vv`'s `mcp: name: method` -- moves the block down and takes the line
+above it, so a log line never lands on a clock.
+
 The same clock names what it is waiting for.  The name is `ttft` for the request
 itself, and `dns` while the host is being resolved, because a resolver that has
 stopped answering is a ten-second wait that otherwise looks exactly like a

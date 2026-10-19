@@ -13,8 +13,13 @@ network, so importing it costs one file of pure stdlib.
 
 See SPEC.md, "Color", "Progress meters" and "Verbosity".
 """
-import base64, os, shlex, shutil, subprocess, sys, threading, time
+import base64, contextlib, os, shlex, shutil, subprocess, sys, threading, time
 import weakref
+
+
+# A first token faster than this needs no reassurance, so a wait that beats
+# it is never painted and the block a fast call shows is the one it needs.
+WAIT_DELAY = 0.5
 
 def parse_colors(text):
     """A GENI_COLORS string as {role: SGR escape}, in LS_COLORS' syntax.
@@ -319,10 +324,8 @@ class Line:
         self.height = 0             # lines the block occupies, cursor below
         self.thread = None          # the one ticker, while something waits
         self.primary = self.row("ttft")
-        try:
+        with contextlib.suppress(TypeError):   # a stream weakref cannot hold
             _LIVE[self.err] = self
-        except TypeError:           # a stream weakref cannot hold
-            pass
 
     # ---------------------------------------------------------------- rows
 

@@ -106,16 +106,20 @@ def name_of(kind, target):
 
     There is no config file and so no name to read, so a server is named
     after what it was given: a URL by its host and a command by its basename,
-    which is the name a person would have written anyway.
+    which is the name a person would have written anyway.  A `www.` is a
+    convention and not a name, so it is left off.
 
     >>> name_of("url", "https://www.mcp.example.com/mcp?a=1")
     'mcp.example.com'
+    >>> name_of("url", "http://localhost:8000/sse")
+    'localhost'
     >>> name_of("shell", "npx -y @modelcontextprotocol/server-filesystem .")
     'npx'
     """
     if kind == "url":
         parts = urllib.parse.urlsplit(target if "//" in target else "//" + target)
-        return parts.hostname or "server"
+        host = parts.hostname or "server"
+        return host[4:] if host.startswith("www.") else host
     return os.path.basename(target.split()[0]) if target.split() else "server"
 
 

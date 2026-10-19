@@ -26,7 +26,7 @@ from dic.tty import DicError
 # version of dic migrates another one: dic is pre-release, so an older file is
 # not upgraded but reported with the rm that removes it, because a database
 # that is only nearly right fails later as a confusing sqlite error.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS messages (
     attachments TEXT,
     outputs TEXT,                -- the files this turn produced: {path, mime_type}
     tool_results TEXT,           -- what this round's tools answered, and how long
+    tools TEXT,                  -- the tools this round offered, verbatim
+    mcp TEXT,                    -- the MCP servers this round connected to
+    options TEXT,                -- the -o overrides this round was sent with
     model_id TEXT,
     api_type TEXT,
     session TEXT,                -- the DIC_SESSION this row was written under
@@ -126,6 +129,15 @@ CREATE TABLE IF NOT EXISTS config_meta (
     path TEXT PRIMARY KEY,
     mtime INTEGER,
     size INTEGER);
+-- The tools one MCP server advertised, cached so that a *fresh* conversation
+-- does not pay for a re-fetch; a continuing one never reads it, because it
+-- replays the blob its own row recorded.
+CREATE TABLE IF NOT EXISTS mcp_tools (
+    server TEXT,
+    spec TEXT,
+    tools TEXT,
+    fetched INTEGER,
+    PRIMARY KEY (server, spec));
 """
 
 # The columns a row is written with, in the order messages declares them.  The
@@ -135,7 +147,8 @@ COLUMNS = ("mid", "round", "user", "system", "response", "response_raw",
            "prev_mid", "attachments", "outputs", "tool_results", "model_id",
            "api_type", "session", "upstream", "status", "error", "usage", "cost",
            "cost_items", "price_hash", "t_start", "t_connect", "t_request",
-           "t_headers", "t_first", "t_last", "t_done")
+           "t_headers", "t_first", "t_last", "t_done",
+           "tools", "mcp", "options")
 INSERT = (f"INSERT INTO messages ({', '.join(COLUMNS)})"  # noqa: S608
           f" VALUES ({', '.join('?' * len(COLUMNS))})")
 
@@ -562,7 +575,7 @@ def history(conn, mid):
     model that produced its last turn, unless -m names another.
     """
     columns = ("mid,round,user,system,response,response_raw,prev_mid,model_id,"
-               "api_type,attachments,outputs,tool_results")
+               "api_type,attachments,outputs,tool_results,tools,mcp,options")
     qualified = ",".join(f"m.{c}" for c in columns.split(","))
     rows = conn.execute(
         f"WITH RECURSIVE chain({columns}) AS ("  # noqa: S608

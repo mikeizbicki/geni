@@ -566,10 +566,15 @@ def dic(prompt,
     # --tools names python, so dic.tool -- and the inspect and typing it reads
     # the annotations with -- is imported only when one was given, exactly as
     # only the selected adaptor is.  A spec that does not import is an error
-    # here, before the network and before a .part is opened.
-    specs = knobs["tools"]
-    if isinstance(specs, str):      # DIC_TOOLS="pkg.mod:fn" is one spec, not chars
-        specs = [specs]
+    # here, before the network and before a .part is opened.  A continuing
+    # conversation replays the blob its own row recorded, so the model is
+    # re-offered exactly the tools it was offered and not whatever the module
+    # says today.
+    given = knobs["tools"]
+    if isinstance(given, str):      # DIC_TOOLS="pkg.mod:fn" is one spec, not chars
+        given = [given]
+    stored = json.loads(rows[-1]["tools"]) if rows and rows[-1]["tools"] else {}
+    specs = given or stored.get("specs") or []
     tools = ()
     if specs:
         from dic import tool
@@ -610,7 +615,14 @@ def dic(prompt,
                             + [{"type": "text", "text": prompt}]})
     turns = normalize(turns)
 
-    opts = options(model, knobs["option"] or ())
+    # -o, like -m and -s, is replayed from the row the conversation continues
+    # from unless this call names its own: the parameters a thread was shaped
+    # by are part of it, and making a caller re-type them to continue would
+    # change the request silently when they did not.
+    overrides = knobs["option"]
+    if rows and not overrides and rows[-1]["options"]:
+        overrides = json.loads(rows[-1]["options"])
+    opts = options(model, overrides or ())
     # a cache breakpoint is a request dic builds and not an option it
     # forwards, so the TTL is settled here: off unless the caller asked for
     # one the model's own price table can rate
@@ -624,7 +636,12 @@ def dic(prompt,
         if not (getattr(adaptor, "tool_schema", None)
                 and getattr(adaptor, "calls", None)):
             raise DicError(f"{api_type}: this protocol does not support tools")
-        opts["tools"] = adaptor.tool_schema(tools)
+        # a replayed row carries the schema it was offered, so a continuing
+        # call asks for exactly that and never regenerates it; a caller who
+        # names --tools gets the freshly described schema instead
+        opts["tools"] = (adaptor.tool_schema(tools)
+                         if given or not stored.get("schema")
+                         else stored["schema"])
     line = Line(err, env)
     prepare = getattr(adaptor, "prepare", None)
     if prepare is not None:            # fal reads URLs, so files go up first
@@ -759,7 +776,11 @@ def dic(prompt,
             source if cost is not None else None,
             wire.get("t_start"), wire.get("t_connect"), wire.get("t_request"),
             wire.get("t_headers"), wire.get("t_first"), wire.get("t_last"),
-            wire.get("t_done")))
+            wire.get("t_done"),
+            json.dumps({"specs": list(specs), "schema": opts.get("tools")})
+                if tools else None,
+            None,
+            json.dumps(overrides) if overrides else None))
         if recorder is not None:
             # one row per round that produced bytes, and none for one that did
             # not: a round's samples are measured from that round's own start

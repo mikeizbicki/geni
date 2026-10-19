@@ -25,7 +25,7 @@ from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        TOOL_STATS, resolve_ref, session_delete, session_head,
                        session_move, session_names)
 from dic.tty import (ID, REF, RESET, DicError, page, pager_command,
-                     use_color)
+                     report, use_color)
 
 
 def table(rows):
@@ -913,6 +913,26 @@ def update_ref(conn, env, *,
         return ""
     if not new:
         raise DicError("update-ref needs a new mid")
+
+    # --of NEW walks the whole conversation to its root, and --of OLD
+    # only what the fork started from, so the difference is what the
+    # fork added above it.  A fork with no OLD added the whole thread,
+    # and then there is nothing to print a second line about.
+    #
+    # The report goes out before the compare-and-swap: the calls were
+    # made whether or not the parent moved, and a failed merge is
+    # exactly when the number matters most.
+    #
+    # The two lines are compared as they would print, and not as
+    # floats, because two sums that differ in the last bit are one
+    # number to a reader who sees four decimals.
+    thread = conn.execute(CONVERSATION_COST, (new,)).fetchone()[0]
+    held = conn.execute(CONVERSATION_COST, (old,)).fetchone()[0] if old else 0
+    lines = [f"cost: ${thread:.4f} conversation"]
+    if f"{thread - held:.4f}" != f"{thread:.4f}":
+        lines.append(f"cost: ${thread - held:.4f} run")
+    report(1, 1, "\n".join(lines), env=env)
+
     current = session_head(env, name)
     if old is not None and current != old:
         raise DicError(f"{name}: expected {old},"

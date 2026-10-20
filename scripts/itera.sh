@@ -15,15 +15,16 @@
 #   itera-validate   pure: is this run possible at all
 #   itera-prepare    branch and record where the run started
 #   itera-run        the round loop
-#   itera-record     checkout the original and merge the loop branch, on success
+#   itera-record     checkout the original and land the loop as one commit
 #
 # and itera-fail, which is not a step: it prints the resume line.
 #
 # The loop branch is what isolates a run.  HEAD moves to geni/itera-<token>
 # at prepare, the rounds commit there, and itera-record moves HEAD back to
-# the original and merges.  A failure leaves the user on the loop branch
-# with the commits still there -- nothing is cleaned up on a failure path --
-# and --continue and --abort are how they carry on or get back.
+# the original and squashes them into one commit.  A failure leaves the
+# user on the loop branch with the commits still there -- nothing is
+# cleaned up on a failure path -- and --continue and --abort are how they
+# carry on or get back.
 #
 # itera does not fork DIC_SESSION: each round's committe does that itself,
 # and it does it at its own prepare, so round 1's -c reads the session the
@@ -174,9 +175,9 @@ itera-validate() {
 
 # Branch and record.  The loop branch is what isolates a run: the original
 # stays where it is, the rounds commit on the branch, and itera-record
-# moves HEAD back and merges.  Nothing is forked in DIC_SESSION -- each
-# round's committe does that itself -- so round 1's -c reads the session
-# the user was already in.
+# moves HEAD back and squashes the rounds.  Nothing is forked in
+# DIC_SESSION -- each round's committe does that itself -- so round 1's -c
+# reads the session the user was already in.
 itera-prepare() {
     local branch
     branch=$(git symbolic-ref --quiet --short HEAD) || {
@@ -236,16 +237,47 @@ itera-run() {
 
 # ---------------------------------------------------------------- record
 
-# On success, go back to the original branch and merge the loop branch
-# into it.  A fast-forward is the usual case -- no other commit has landed
-# meanwhile -- and --no-edit keeps a true merge from opening an editor.
+# On success, go back to the original branch and land the loop's work on
+# it as one commit.  The rounds are a search -- round 2's commit is a fix
+# for round 1's -- so the result and the first round's message are what is
+# worth keeping; the later subjects name the bug fixes the first one
+# already implies.
+#
+# `merge --squash` stages the branch as one change and makes no commit of
+# its own, so the message is the one chosen here and not the "Squashed
+# commit of the following:" git would have written.  It is also why there
+# is no --no-edit: --squash never opens an editor.
+#
+# The oldest commit is the one to keep, and `rev-list --reverse` is how it
+# is named: -n is applied before the reverse, so `log -1 --reverse` gives
+# the newest instead.  An empty range is itera-continue's green tree with
+# nothing committed, and there is then nothing to land.
+#
+# A conflicting squash leaves the index conflicted with no MERGE_HEAD, so
+# `git merge --abort` cannot undo it; `git reset --hard` can.
 itera-record() {
     dic-run git checkout --quiet "$ITERA_ORIGINAL_BRANCH" || return 1
-    if ! dic-run git merge --no-edit "$ITERA_BRANCH"; then
-        dic-error "itera-error: merge into $ITERA_ORIGINAL_BRANCH failed"
-        dic-hint "itera-hint: the loop branch is $ITERA_BRANCH"
-        return 1
+
+    local first msg
+    first=$(git rev-list --reverse \
+        "$ITERA_ORIGINAL_HEAD..$ITERA_BRANCH" | head -1)
+    if [[ -n $first ]]; then
+        msg=$(git log -1 --format=%B "$first")
+        if ! dic-run git merge --squash "$ITERA_BRANCH"; then
+            dic-error "itera-error: squash into $ITERA_ORIGINAL_BRANCH failed"
+            dic-hint "itera-hint: the loop branch is $ITERA_BRANCH"
+            dic-hint "itera-hint: git reset --hard $ITERA_ORIGINAL_HEAD"
+            return 1
+        fi
+        if ! dic-run git commit --quiet -m "$msg"; then
+            dic-error "itera-error: could not commit the squashed loop"
+            dic-hint "itera-hint: the loop branch is $ITERA_BRANCH"
+            return 1
+        fi
     fi
+
+    # -D and not -d: the squashed commits are not ancestors of the new
+    # commit, so git does not count the loop branch as merged.
     git branch -D "$ITERA_BRANCH" >/dev/null 2>&1 || true
     rm -rf "$ITERA_RUNDIR" 2>/dev/null || true
     return 0

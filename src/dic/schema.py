@@ -39,10 +39,41 @@ LLM_SCALARS = {"str": "string", "int": "integer",
                "float": "number", "bool": "boolean"}
 SYSTEMONE_LEAVES = ("noul", "choice", "score", "box")
 
-# The two spellings of a JSONL answer.  `application/x-ndjson` is the
-# registered one and `application/jsonl` is the de facto one; dic accepts
-# both, and either is how a caller asks for one JSON value per line.
-JSONL_MIMES = ("application/x-ndjson", "application/jsonl")
+# The spellings of a JSONL answer: `application/x-ndjson` is the registered
+# one, `application/jsonl` is the de facto one, and `text/jsonl` is the
+# same answer under the left half a terminal can also show.  dic accepts
+# all three, and any of them is how a caller asks for one JSON value per
+# line.
+JSONL_MIMES = ("application/jsonl", "application/x-ndjson", "text/jsonl")
+
+# What a bare --mime-type name means, so `--mime-type=json` and
+# `--mime-type=application/json` name one request.  The left half a user
+# leaves out is the half they were unsure of, so a name not here is an
+# error and never a guess: `json` is application/json because that is
+# what every provider means by it, and `csv` is text/csv because that is
+# what a terminal can show.
+MIME_NAMES = {
+    "csv": "text/csv",
+    "gif": "image/gif",
+    "html": "text/html",
+    "jpeg": "image/jpeg",
+    "jpg": "image/jpeg",
+    "json": "application/json",
+    "jsonl": "application/jsonl",
+    "markdown": "text/markdown",
+    "md": "text/markdown",
+    "mp3": "audio/mpeg",
+    "mp4": "video/mp4",
+    "ndjson": "application/x-ndjson",
+    "pdf": "application/pdf",
+    "png": "image/png",
+    "svg": "image/svg+xml",
+    "text": "text/plain",
+    "tsv": "text/tab-separated-values",
+    "wav": "audio/wav",
+    "webm": "video/webm",
+    "webp": "image/webp",
+}
 
 # The one key a JSONL answer's records are asked under.  Every provider's
 # structured output requires a schema's root to be an object and none of
@@ -139,6 +170,8 @@ def is_json_mime(mime_type):
     (True, False)
     >>> is_json_mime("application/x-ndjson"), is_json_mime("application/jsonl")
     (True, True)
+    >>> is_json_mime("text/json"), is_json_mime("text/jsonl")
+    (True, True)
     >>> is_json_mime("application/problem+json")
     True
     >>> is_json_mime("image/png")
@@ -147,6 +180,28 @@ def is_json_mime(mime_type):
     return (mime_type in JSONL_MIMES
             or mime_type.endswith("/json")
             or mime_type.endswith("+json"))
+
+
+def resolve_mime(value):
+    """A --mime-type value as the full mime type it names.
+
+    A full type is itself; a bare name -- the right half of one -- is
+    looked up here, so `--mime-type=json` and `--mime-type=application/json`
+    name one request.  A name that is not here is an error and never a
+    guess, because the half a caller leaves out is the half they were
+    unsure of.
+
+    >>> resolve_mime("json"), resolve_mime("text/csv"), resolve_mime("md")
+    ('application/json', 'text/csv', 'text/markdown')
+    """
+    if "/" in value:
+        return value
+    found = MIME_NAMES.get(value.strip().lower())
+    if not found:
+        raise DicError(f"--mime-type {value}: not a mime type; try a full"
+                       " type like text/csv, or a bare name such as json,"
+                       " jsonl, csv or png")
+    return found
 
 
 def printable(mime_type):

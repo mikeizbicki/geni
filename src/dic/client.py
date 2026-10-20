@@ -643,7 +643,9 @@ def dic(prompt,
                            help="continue from a message: a mid, its prefix,"
                                 " or a ref like HEAD~3") = None,
         mime_type:    flag(long="--mime-type", metavar="TYPE",
-                           help="the mime type of the answer") = None,
+                           help="the mime type of the answer; a full type"
+                                " such as text/csv, or a bare name such as"
+                                " json, jsonl or png") = None,
         schema:       flag(long="--schema", metavar="REF",
                            help="a JSON Schema, a path to one, or a"
                                 " shorthand in the llm or systemone"
@@ -891,14 +893,19 @@ def dic(prompt,
                            " for typesafe")
 
     # taken --path fails before the network instead of after a whole video.
-    # A schema makes it application/json; a manual text/* alongside one
-    # drops the schema; --schema='' keeps the JSON mime with no constraint.
-    asked_mime = knobs["mime_type"]
+    # A schema makes it application/json, so a JSON mime restates what it
+    # already makes and a text/* mime that is not JSON drops it; anything
+    # else contradicts it.  --schema='' keeps the JSON mime with no
+    # constraint.  A bare --mime-type -- json, png -- is the right half
+    # of one, resolved here so both spellings name one request.
+    asked_mime = (schema_mod.resolve_mime(knobs["mime_type"])
+                  if knobs["mime_type"] else None)
     if asked_mime and schema_value is not None:
-        if asked_mime.startswith("text/"):
-            schema_value, schema_dialect = None, None
-        elif not schema_mod.is_json_mime(asked_mime):
-            raise DicError(f"--mime-type {asked_mime} contradicts a schema")
+        if not schema_mod.is_json_mime(asked_mime):
+            if asked_mime.startswith("text/"):
+                schema_value, schema_dialect = None, None
+            else:
+                raise DicError(f"--mime-type {asked_mime} contradicts a schema")
     mime = (asked_mime
             or ("application/json" if schema_value is not None else None)
             or model.get("output")

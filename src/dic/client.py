@@ -900,12 +900,12 @@ def dic(prompt,
     # of one, resolved here so both spellings name one request.
     asked_mime = (schema_mod.resolve_mime(knobs["mime_type"])
                   if knobs["mime_type"] else None)
-    if asked_mime and schema_value is not None:
-        if not schema_mod.is_json_mime(asked_mime):
-            if asked_mime.startswith("text/"):
-                schema_value, schema_dialect = None, None
-            else:
-                raise DicError(f"--mime-type {asked_mime} contradicts a schema")
+    if (asked_mime and schema_value is not None
+            and not schema_mod.is_json_mime(asked_mime)):
+        if asked_mime.startswith("text/"):
+            schema_value, schema_dialect = None, None
+        else:
+            raise DicError(f"--mime-type {asked_mime} contradicts a schema")
     mime = (asked_mime
             or ("application/json" if schema_value is not None else None)
             or model.get("output")

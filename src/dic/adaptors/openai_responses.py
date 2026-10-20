@@ -38,6 +38,9 @@ def output_format(body, model, schema, mime):  # noqa: ARG001
         body["text"] = {"format": {"type": "json_schema", "name": "response",
                                    "schema": schema, "strict": True}}
     return body
+
+
+def build(model, turns, system, params):
     """IR turns to a streaming responses body; system is the top-level instructions.
 
     A turn carrying "raw" is replayed verbatim, and an image becomes a data: URL.

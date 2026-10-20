@@ -358,8 +358,9 @@ def dic(prompt,
                            help="offer a python function as a tool; repeatable") = None,
         mcp:          flag(long="--mcp", action="append", metavar="WORDS|URL",
                            help="offer the tools of an MCP server: a command"
-                                " run by a bash that has dic.sh sourced, so"
-                                " `sandbox server` jails it; or a URL to POST"
+                                " dic runs sandboxed, whose leading words are"
+                                " the sandbox's own"
+                                " (`--share-net mcp-fetch`); or a URL to POST"
                                 " to; repeatable") = None,
         mcp_url:      flag(long="--mcp-url", action="append", metavar="URL",
                            help="--mcp with the guess left out, for a URL"

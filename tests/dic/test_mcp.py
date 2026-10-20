@@ -9,7 +9,7 @@ same one.  What these tests assert on is what a user sees: the tools the
 model was offered, the row that was written, the message the second round
 carried back, and the spec the row stored.
 """
-import base64, collections, http.server, json, os, shlex, sys, threading
+import base64, collections, http.server, json, os, shlex, shutil, sys, threading
 import urllib.parse
 import time as _time
 
@@ -17,12 +17,19 @@ import pytest
 
 from dic.client import dic
 from dic.store import config_dir, db
+from dic.tty import DicError
 
 
 ECHO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                     os.pardir, "fixtures", "mcp", "echo.py")
 
 Hit = collections.namedtuple("Hit", "headers body")
+
+# The packaged sandbox is bwrap, so every test of a stdio server needs one:
+# a machine without bwrap cannot run a jailed command at all, and dic says so
+# rather than running it unjailed.
+NEEDS_BWRAP = pytest.mark.skipif(
+    not shutil.which("bwrap"), reason="the packaged sandbox is bwrap")
 
 
 # ------------------------------------------------------- the replies, in full
@@ -244,9 +251,10 @@ def test_continue_re_offers_the_rows_tools_without_opening_the_server(
     assert len(mcp_server.received) == opened
 
 
+@NEEDS_BWRAP
 def test_a_stdio_child_inherits_dics_environment(streams, env, models, llm,
                                                  monkeypatch):
-    """A command is a child process, and what is exported is what it reads."""
+    """A command is a jailed child process, and what is exported is what it reads."""
     monkeypatch.setenv("ECHO_ENV", "from-dic")
     say(streams, env, "hi", model="fake",
         mcp_shell=[f"{shlex.quote(sys.executable)} {shlex.quote(ECHO)}"])
@@ -276,6 +284,40 @@ def test_a_urls_userinfo_becomes_basic_auth(streams, env, models, llm,
 
 
 def test_a_server_that_will_not_start_refuses_a_fresh_call(
+@NEEDS_BWRAP
+def test_a_stdio_server_is_jailed_and_only_its_own_words_widen_the_jail(
+        streams, env, models, llm):
+    """dic puts the sandbox in front itself; `--share-net` is the one knob.
+
+    The child does not have to speak MCP for this to be worth asserting:
+    what the test reads is what the child itself reports, and the host it
+    dials is the fake LLM's own listener -- so a connection that answers is
+    one the jail let through and one that is refused is one it stopped.  The
+    second half is the control the first half needs: a jail that was never
+    there at all would read exactly like one that held.
+    """
+    port = urllib.parse.urlsplit(llm.api_base).port
+    report = ("import socket, sys\n"
+              "try:\n"
+              "    socket.create_connection(('127.0.0.1', %d), timeout=3)\n"
+              "    print('network: reached', file=sys.stderr)\n"
+              "except OSError:\n"
+              "    print('network: blocked', file=sys.stderr)\n" % port)
+    child = f"{shlex.quote(sys.executable)} -c {shlex.quote(report)}"
+
+    # the child exits without answering, so the handshake is what fails and
+    # the child's own report is what the error carries
+    with pytest.raises(DicError) as jailed:
+        say(streams, env, "hi", model="fake", mcp_shell=[child])
+    assert "network: blocked" in str(jailed.value)
+
+    with pytest.raises(DicError) as shared:
+        say(streams, env, "hi", model="fake",
+            mcp_shell=[f"--share-net {child}"])
+    assert "network: reached" in str(shared.value)
+
+
+@NEEDS_BWRAP
         streams, env, models, llm):
     """A fresh call cannot be offered part of the servers it named."""
     streams.err.tty = True                   # a terminal gets the warning
@@ -292,6 +334,7 @@ def test_a_server_that_will_not_start_refuses_a_fresh_call(
     assert "tools" not in llm.bodies[0]      # no server answered, nothing offered
 
 
+@NEEDS_BWRAP
 def test_the_servers_are_opened_at_once_and_not_one_after_another(
         streams, env, models, llm):
     """A slow server must not delay the ones behind it: four handshakes, one wait.

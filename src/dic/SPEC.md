@@ -165,18 +165,23 @@ value is told from itself: a scheme makes it a URL and anything else makes it a
 command, with `--mcp-url` and `--mcp-shell` for the value that looks like the
 other one.  There is no file to write and no name to invent: a server is named
 after its host or its basename, and a second server of that name takes a
-number.
+after its host or the command's own name, and a second server of that name takes a
 
 A command is a word list and not a shell line.  It is run by a bash with
-dic.sh sourced, so `--mcp 'sandbox server'` jails one server and
-`--mcp 'sandbox --share-net -- server'` relaxes that jail to the caller's
-own request, without the caller naming a shell either time.  dic does not
-add the `sandbox` call itself: the jail a server needs is the caller's
-decision, and the way to jail every tool at once is to run dic under
-bwrap, exactly as "Tools" says below.  A word that is nothing but
-metacharacters is an error naming the character, because a `|` is a line
-whose author read it as one and a program named `|` does not say so.
-
+A command is a word list and not a shell line, and it is *always* run under
+the sandbox dic ships: the child is a bash of dic's own that sources dic's
+own dic.sh by absolute path, and the program it starts is
+`sandbox -- <words>`.  The jail is therefore not the caller's to forget, and
+not the caller's to switch off by redefining a function or exporting a
+variable -- a child whose `sandbox` is not a function in that file exits
+rather than runs.  The one way to widen it is to say so in the command, whose
+leading `--words` are the sandbox's own arguments: `--mcp '--share-net
+mcp-fetch'` shares the network namespace because an `npx` server has to fetch,
+and `--mcp 'mcp-fetch'` does not.  Writing the target as one quoted string is
+what keeps those words apart, the split being dic's and not the shell's.  A
+word that is nothing but metacharacters is an error naming the character,
+because a `|` is a line whose author read it as one and a program named `|`
+does not say so.
 What comes back is the same three things `--tools` produces -- a name, a
 description and a JSON Schema -- so nothing downstream knows the difference.  A
 server's tools are prefixed `mcp__<server>__<tool>`, because the model asks by

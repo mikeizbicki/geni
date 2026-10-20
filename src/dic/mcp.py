@@ -14,13 +14,20 @@ Two transports, one of each kind:
             one-way event stream
 
 A stdio server is a command, and the child that runs it is a bash with
-dic.sh sourced, so `sandbox server` names a jail without the caller
-naming a shell.  dic does not put the `sandbox` call in front itself: the
-jail a server needs is the caller's decision, and the way to jail every
-tool at once is to run dic under bwrap, exactly as SPEC's "Tools" says.
+A stdio server is a command, and dic runs every one of them under the
+sandbox it ships: the child is a bash of dic's own that sources dic's own
+dic.sh by absolute path, and the program it starts is `sandbox -- <words>`.
+The jail is not the caller's to forget, and not the caller's to switch off
+by redefining a function or exporting a variable -- a child whose `sandbox`
+is not a function in that file exits rather than runs -- so the one way to
+widen it is to say so in the command: its leading `--words` are the
+sandbox's own, and `--mcp '--share-net mcp-fetch'` is a server that may
+reach the network while `--mcp 'mcp-fetch'` is one that may not.
 The target is a word list and never a line, so a `|` or a `$(...)` in it
 is an argument, and a word that is nothing but metacharacters is refused
-by words() rather than handed over as a program's own name.
+by words() rather than handed over as a program's own name.  A word list is
+also why a target with a flag in it is written as one quoted string: the
+split is dic's and not the shell's.
 
 A server is opened when its tools are needed and not before.  A fresh call
 opens every server it names, because it must know what to offer; a call that
@@ -92,20 +99,26 @@ SHELL = frozenset("|&;<>()[]{}`$*?~!")
 
 
 def words(target):
-    """A --mcp command as the word list the child bash receives.
+    """(flags, argv) of one --mcp command: its leading --words are the jail.
 
-    shlex.split is the shell's tokenizer without the shell: quotes group a
-    word, and no character is syntax afterwards.  What is left worth
-    refusing is the word that is nothing but metacharacters -- a line whose
-    author read it as a line -- because handing a program named `|` to
-    bwrap is a failure that does not say what went wrong.
+    A command is a word list and not a shell line, and the split is dic's
+    and not the shell's, which is why a target with a flag in it is written
+    as one quoted string.  The words before the program's own name are the
+    sandbox's own arguments, so `--share-net mcp-fetch` is a server that may
+    reach the network and `mcp-fetch` is one that may not; only the leading
+    run is read that way, so a program's own `-y` stays its own.  What is
+    left worth refusing is the word that is nothing but metacharacters -- a
+    line whose author read it as a line -- because handing a program named
+    `|` to bwrap is a failure that does not say what went wrong.
 
-    >>> words("server --port 3")
-    ['server', '--port', '3']
+    >>> words("mcp-fetch --port 3")
+    ([], ['mcp-fetch', '--port', '3'])
+    >>> words("--share-net mcp-fetch")
+    (['--share-net'], ['mcp-fetch'])
     >>> words("'a b' c")
-    ['a b', 'c']
+    ([], ['a b', 'c'])
     >>> words("python3 -c 'import json; print(1)'")
-    ['python3', '-c', 'import json; print(1)']
+    ([], ['python3', '-c', 'import json; print(1)'])
     >>> words("a | b")
     Traceback (most recent call last):
     ...
@@ -114,42 +127,57 @@ def words(target):
     Traceback (most recent call last):
     ...
     dic.tty.DicError: --mcp: an empty command
+    >>> words("--share-net")
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: --mcp: no command in '--share-net'
     """
     if not target.strip():
         raise DicError("--mcp: an empty command")
-    out = []
+    flags, argv = [], []
     for word in shlex.split(target):
         if word and set(word) <= SHELL:
             raise DicError(f"--mcp: {word[0]!r} in {target!r}: a command is a"
                            " word list, not a shell line (use a script for"
                            " pipes and expansions)")
-        out.append(word)
-    return out
+        if not argv and word.startswith("-"):
+            flags.append(word)
+        else:
+            argv.append(word)
+    if not argv:
+        raise DicError(f"--mcp: no command in {target!r}")
+    return flags, argv
 
 def command(target):
-    """The argv that runs one --mcp command.
+    """The argv that runs one --mcp command under the sandbox dic ships.
 
-    The child is bash and dic.sh is sourced into it, so a command can name
-    anything the user's own shell defines -- `sandbox server` among them --
-    without the caller naming bash.  The target is that program's argument
-    list and not a line: `"$@"` is never re-expanded, so a `|` or a
-    `$(...)` in it is an argument and not syntax.
+    dic puts the sandbox in front of every stdio server it starts: the jail
+    is not the caller's to forget, and not the caller's to switch off by
+    redefining a function or exporting a variable, because the file that
+    defines it is dic's own, named by its absolute path, and a child whose
+    `sandbox` is not a function there exits rather than runs.  The one way
+    to widen the jail is to say so in the target, whose leading --words are
+    the sandbox's own.
 
-    dic does not put `sandbox` in front itself.  The jail a server needs
-    is the caller's decision -- one that reads a token from its own home
-    and one that reads a worktree are not the same jail -- and a child
-    whose environment the wrapper had cleared is not the child a server
-    configured in the ordinary way expects.  Jail every tool at once by
-    running dic under bwrap, exactly as SPEC's "Tools" says.
+    The target is that program's argument list and not a line: `"$@"` is
+    never re-expanded, so a `|` or a `$(...)` in it is an argument and not
+    syntax.
 
-    >>> command("server")[0], command("server")[-1]
-    ('bash', 'server')
-    >>> command("server")[3:5]
-    ['--', 'server']
+    >>> command("server")[0]
+    'bash'
+    >>> command("server")[3:]
+    ['--', 'sandbox', '--', 'server']
+    >>> command("--share-net server")[3:]
+    ['--', 'sandbox', '--share-net', '--', 'server']
     """
-    script = (f"source {shlex.quote(str(files('dic.scripts') / 'dic.sh'))}"
-              " 2>/dev/null\n")
-    return ["bash", "-c", script + '"$@"', "--", *words(target)]
+    flags, argv = words(target)
+    path = shlex.quote(str(files("dic.scripts") / "dic.sh"))
+    script = (f"builtin source {path} 2>/dev/null\n"
+              "builtin declare -F sandbox >/dev/null"
+              ' || { echo "dic: --mcp: the packaged sandbox is missing" >&2;'
+              " exit 127; }\n")
+    return ["bash", "-c", script + 'sandbox "$@"', "--",
+            "sandbox", *flags, "--", *argv]
 
 
 def sanitize(name):
@@ -222,12 +250,14 @@ def name_of(kind, target):
     'localhost'
     >>> name_of("shell", "npx -y @modelcontextprotocol/server-filesystem .")
     'npx'
+    >>> name_of("shell", "--share-net mcp-fetch")
+    'mcp-fetch'
     """
     if kind == "url":
         parts = urllib.parse.urlsplit(target if "//" in target else "//" + target)
         host = parts.hostname or "server"
         return host[4:] if host.startswith("www.") else host
-    return os.path.basename(target.split()[0]) if target.split() else "server"
+    return os.path.basename(words(target)[1][0])
 
 
 def names(pairs):

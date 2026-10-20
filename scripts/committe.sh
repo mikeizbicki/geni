@@ -131,6 +131,14 @@ function committe-headfile() {
     echo "$(git rev-parse --git-dir)/geni/committe/head"
 }
 
+function committe-stdinfile() {
+    # The request on stdin, buffered once at prepare time so that every
+    # bytes retry reads the same bytes.  Written only when stdin is
+    # not a terminal, so its absence is what tells committe-run to
+    # leave fd 0 alone.
+    echo "$(git rev-parse --git-dir)/geni/committe/stdin"
+}
+
 function committe-prepare() {
     # Fork the child session and record the fork point.  The child's ref
     # is a *copy* of the parent's and not a link, so -c, --mid HEAD and a
@@ -144,6 +152,16 @@ function committe-prepare() {
 
     local headfile; headfile=$(committe-headfile)
     mkdir -p "$(dirname "$headfile")"
+
+    # Buffer stdin once, before the first call, so that a bytes retry
+    # resends the same bytes.  A pipe reads once: the first dic call
+    # consumes it to EOF, and a retry that inherited the drained fd
+    # would ask the model with an empty request.  When stdin is a
+    # terminal there is nothing to buffer, so the file is not created
+    # and committe-run leaves fd 0 alone.
+    if [[ ! -t 0 ]]; then
+        cat > "$(committe-stdinfile)" || return 1
+    fi
 
     if dic rev-parse "$COMMITTE_PARENT" > "$headfile" 2>/dev/null; then
         # Not dic-run: a ref move invokes no model, mutates no git tree
@@ -196,11 +214,11 @@ function committe-run() {
     #
     # The model is asked once per attempt and never retried inside this
     # function.  stdin is part of the request when it is not a terminal,
-    # and a pipe reads once: a retry that inherited it would find EOF and
-    # ask the model without the request it was sent.  The bytes retry in
+    # committe-prepare buffered it to $(committe-stdinfile) before this
+    # call, so the first attempt and each bytes retry read the same
+    # bytes from a source that reads more than once.  A bytes retry in
     # committe() re-runs this function with the same arguments and the
-    # same fd, which is why it works only when the request is a word and
-    # not a pipe -- and why it resends the same request and not the same
+    # same buffer, which resends the same request and not the same
     # response: a second sample of a prompt is a second patch.  A
     # provider that made the call deterministic would need `-o seed=N`,
     # at the cost of the prompt cache.
@@ -210,9 +228,17 @@ function committe-run() {
     # shell, so each later fork would nest under the last and the name
     # -- a single filename, with the '/' of the hierarchy escaped --
     # would grow past NAME_MAX.
-    DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" --prepend-prompt \
-        "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
-        > "$(committe-patchfile)"
+    local stdinfile; stdinfile=$(committe-stdinfile)
+    if [[ -f $stdinfile ]]; then
+        DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" --prepend-prompt \
+            "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
+            < "$stdinfile" \
+            > "$(committe-patchfile)"
+    else
+        DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" --prepend-prompt \
+            "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
+            > "$(committe-patchfile)"
+    fi
 }
 
 function committe-has-patch() {

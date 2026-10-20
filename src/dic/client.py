@@ -807,12 +807,13 @@ def dic(prompt,
                       or knobs["model"])
     model = config.resolve(conn, knobs["model"] or config.default_id(conn, env))
     api_type = model.get("api_type", "openai-chat")
-    if (api_type in ("fal", "openai-images", "openai-videos")
+    if (api_type in ("fal", "openai-images", "openai-videos", "typesafe")
             and (knobs["cont"] or knobs["mid"])):
-        # -c and --mid name a conversation, and these backends generate one
-        # asset from one request while keeping only the newest turn: a call
-        # that answered would silently drop the history the row and the
-        # session pointer claim to carry
+        # -c and --mid name a conversation, and these backends keep none:
+        # fal generates one asset from one request and typesafe takes a
+        # caller-supplied state on every call, so a call that answered
+        # would silently drop the history the row and the session pointer
+        # claim to carry
         raise DicError(f"{model['model_id']}: cannot continue:"
                        f" {api_type} has no conversation")
     adaptor = load_adaptor(api_type, env)
@@ -894,6 +895,18 @@ def dic(prompt,
         raise DicError(f"{model['model_id']}: {api_type} has no"
                        " output_format, so --schema cannot be sent")
     # what the answer will be, settled before the call so that a missing or
+    # Strict dialect match: a systemone schema is for typesafe and a
+    # jsonschema or simonw_llm one is for the text adaptors, and there is
+    # no cross-compilation.  A noul compiled to a number loses
+    # calibration, which is the point of the type; a string compiled to a
+    # question has no instruction to carry.  Both directions refuse.
+    if schema_dialect is not None:
+        if api_type == "typesafe" and schema_dialect != schema_mod.SYSTEMONE:
+            raise DicError(f"typesafe: {schema_dialect} is not its dialect")
+        if api_type != "typesafe" and schema_dialect == schema_mod.SYSTEMONE:
+            raise DicError(f"{api_type}: {schema_dialect} is only"
+                           " for typesafe")
+
     # taken --path fails before the network instead of after a whole video.
     # A schema makes it application/json; a manual text/* alongside one
     # drops the schema; --schema='' keeps the JSON mime with no constraint.
@@ -992,6 +1005,19 @@ def dic(prompt,
     if rows and not overrides and rows[-1]["options"]:
         overrides = json.loads(rows[-1]["options"])
     opts = options(model, overrides or ())
+    # typesafe has one request shape: the questions come from --schema and
+    # the guide rails that shape an answer are its own.  The first errors a
+    # new typesafe user hits are a missing schema and two spellings of one
+    # field, and both name what to do instead.
+    if api_type == "typesafe":
+        if opts.get("questions") and schema_value is not None:
+            raise DicError("typesafe: pick one: -o questions or --schema")
+        if schema_value is None and not opts.get("questions"):
+            raise DicError("typesafe requires --schema; try\n"
+                           "     --schema 'billing: noul \"Is this about"
+                           " billing?\"'")
+        if mime in schema_mod.JSONL_MIMES:
+            raise DicError("typesafe: JSONL is not a typesafe shape")
     # a cache breakpoint is a request dic builds and not an option it
     # forwards, so the TTL is settled here: off unless the caller asked for
     # one the model's own price table can rate

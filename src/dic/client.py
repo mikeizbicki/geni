@@ -21,7 +21,7 @@ entry point.
 """
 import json, os, re, sys, time, urllib.parse
 
-from dic import config, net, output, price
+from dic import config, net, output, price, schema
 from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
@@ -572,6 +572,11 @@ def dic(prompt,
     # what the answer will be, settled before the call so that a missing or
     # taken --path fails before the network instead of after a whole video
     mime = knobs["mime_type"] or model.get("output") or "text/plain"
+    if knobs["extract"] and schema.is_json_mime(mime):
+        # -x names the part of the answer to print and a JSON mime names
+        # what the answer is; the two are two answers to one question
+        raise DicError("-x and a JSON mime are two answers to what the"
+                       " answer is")
     sink = None
     if not printing:
         # a printed request writes no file and makes no call, so the sink

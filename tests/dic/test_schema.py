@@ -129,7 +129,6 @@ def test_a_jsonl_mime_without_a_schema_is_refused(streams, env, sse, model):
     with pytest.raises(DicError, match="needs --schema"):
         say(streams, env, "hi", model=model, mime_type="application/x-ndjson")
     assert sse.received == []
-    assert row["mime_type"] == "application/json"
 
 
 def test_a_manual_text_mime_drops_the_schema(

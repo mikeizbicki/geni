@@ -21,8 +21,6 @@ def auth(key):
 # provider's own conformance story, and the row records that it was.
 ENFORCES_SCHEMA = True
 def output_format(body, model, schema, mime):  # noqa: ARG001
-    """Set the text.format this request carries, from --schema or a JSON mime.
-
     """Set the text.format this request carries, from --schema.
 
     The responses API names the constraint under `text.format` rather

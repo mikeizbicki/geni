@@ -38,8 +38,6 @@ def tool_schema(tools):
 # provider's own conformance story, and the row records that it was.
 ENFORCES_SCHEMA = True
 def output_format(body, model, schema, mime):  # noqa: ARG001
-    """Set the response_format this request carries, from --schema or a JSON mime.
-
     """Set the response_format this request carries, from --schema.
 
     A schema is `strict: true`, which is the whole point of the shape the

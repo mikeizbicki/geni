@@ -183,7 +183,9 @@ def wrap(schema, mime_type):
     if schema is None or mime_type not in JSONL_MIMES:
         return schema, None
     return {"type": "object",
-            "properties": {JSONL_KEY: {"type": "array", "items": schema}},
+            "properties": {JSONL_KEY: {
+                "type": "array", "items": schema,
+                "description": "One object per item the prompt asks for."}},
             "required": [JSONL_KEY],
             "additionalProperties": False}, 1
 

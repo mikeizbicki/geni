@@ -370,7 +370,10 @@ def output_format(body, model, schema, mime):  # noqa: ARG001
     if schema is None:
         return body
     body.setdefault("tools", []).append({
-        "name": OUTPUT_TOOL, "description": "Return the answer.",
+        "name": OUTPUT_TOOL,
+        "description": ("Return the answer, shaped by input_schema.  Any"
+                        " array in it holds one element per item the"
+                        " prompt asks for."),
         "input_schema": schema})
     body["tool_choice"] = ({"type": "tool", "name": OUTPUT_TOOL}
                            if len(body["tools"]) == 1 else {"type": "any"})

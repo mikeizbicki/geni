@@ -406,6 +406,27 @@ def options(model, overrides):
 CACHE_WRITE = "in.cache_write."
 
 
+def split_attachment(value):
+    """(name, path) of one -a value: NAME=FILE, or FILE's own basename.
+
+    NAME is the slot or placeholder the backend looks for; a bare FILE
+    takes its basename, which is what makes `-a pic.png` bind `pic.png`
+    without a second word.  A name the file itself can be is left alone,
+    so a path that contains '=' is still a path.
+
+    >>> split_attachment("image_url=frame.png")
+    ('image_url', 'frame.png')
+    >>> split_attachment("docs/report.pdf")
+    ('report.pdf', 'docs/report.pdf')
+    """
+    if os.path.exists(value):
+        return os.path.basename(value), value
+    name, sep, path = value.partition("=")
+    if not sep:
+        return os.path.basename(value), value
+    return name, path
+
+
 def ttl_seconds(ttl):
     """A cache TTL as seconds, so that the shortest sorts first.
 
@@ -588,8 +609,10 @@ def dic(prompt,
                              help="prepend TEXT to the prompt, above the"
                                   " command-line words and any stdin;"
                                   " repeatable") = None,
-        attachment:   flag(short="-a", action="append", metavar="FILE",
-                           help="attach a file") = None,
+        attachment:   flag(short="-a", action="append", metavar="[NAME=]FILE",
+                           help="attach a file; NAME names the slot or"
+                                " placeholder it lands in, and defaults to"
+                                " the file's own basename") = None,
         option:       flag(short="-o", action="append", metavar="KEY=VALUE",
                            help="override a model option") = None,
         cache:        flag(long="--cache", metavar="TTL",
@@ -910,9 +933,15 @@ def dic(prompt,
         system = env.get("DIC_SYSTEM") or model.get("system")
 
     # a printed request writes no row for an attachment to live in, so the
-    # file is read here and nothing is recorded
-    attached = [file_block(path) if printing else store_attachment(conn, path)
-                for path in knobs["attachment"] or ()]
+    # file is read here and nothing is recorded.  Each -a is NAME=FILE or a
+    # bare FILE: NAME is the slot the backend looks for and defaults to the
+    # file's basename, so the explicit form is only for where the basename
+    # is not what the backend wants.
+    named_files = [split_attachment(value)
+                   for value in knobs["attachment"] or ()]
+    attached = [file_block(path, name=name) if printing
+                else store_attachment(conn, path, name)
+                for name, path in named_files]
     turns.append({"role": "user",
                   "blocks": [dict(att) for att in attached]
                             + [{"type": "text", "text": prompt}]})

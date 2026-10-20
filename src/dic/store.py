@@ -654,7 +654,7 @@ def resolve_ref(conn, ref, env):
                    f" and {rows[1]['mid']}")
 
 
-def file_block(path, mime_type=None):
+def file_block(path, mime_type=None, name=None):
     """A file as an IR block: its name and type, and its bytes read now.
 
     The file is the truth, so it is read here and never stored; a path that
@@ -671,10 +671,11 @@ def file_block(path, mime_type=None):
             data = f.read()
     except OSError as e:
         raise DicError(f"cannot read {path}: {e}") from None
-    return {"type": "image", "mime_type": mime_type, "path": path, "data": data}
+    return {"type": "image", "mime_type": mime_type, "path": path,
+            "data": data, "name": name or os.path.basename(path)}
 
 
-def store_attachment(conn, path):
+def store_attachment(conn, path, name=None):
     """Record a file as an attachment and return it as an IR block.
 
     The file is never copied: an attachment and an output are the same kind of
@@ -696,7 +697,7 @@ def store_attachment(conn, path):
     aid = ulid()
     conn.execute("INSERT INTO attachments VALUES (?,?,?,?)",
                  (aid, path, digest, mime_type))
-    return dict(file_block(path, mime_type), aid=aid)
+    return dict(file_block(path, mime_type, name), aid=aid)
 
 
 def turns_from_rows(conn, rows, api_type):

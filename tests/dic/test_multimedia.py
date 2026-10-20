@@ -265,12 +265,13 @@ def test_a_fal_job_uploads_its_attachment_then_downloads_the_asset(
     source, out = tmp_path / "in.png", tmp_path / "gen.png"
     source.write_bytes(IMAGE)
 
-    dic("paint it blue", model="fake+fal", attachment=[str(source)],
+    dic("paint it blue", model="fake+fal",
+        attachment=[f"image_urls={source}"],
         path=str(out), env=env, out=streams.out, err=streams.err)
 
     assert sent(server, "PUT", "/upload")[0].body == IMAGE   # prepare ran first
     create = sent(server, "POST", "/fal-ai")[0].body
-    assert create["image_urls"] == [server.api_base + "/asset"]
+    assert create["image_urls"] == server.api_base + "/asset"
     assert server.polls["fal"] == 2
     assert (tmp_path / "gen-0.png").read_bytes() == IMAGE
     assert tree(env)[0]["status"] == 200

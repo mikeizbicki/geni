@@ -782,6 +782,12 @@ def show(conn, env, ref=None):
     if not row:
         raise DicError(f"no such mid: {mid}")
     extra = [("API:", row["api_type"])]
+    if row["schema"]:
+        extra.append(("Schema:", json.dumps(json.loads(row["schema"]))))
+    if row["dialect"]:
+        extra.append(("Dialect:", row["dialect"]))
+    if row["mime_type"]:
+        extra.append(("Mime:", row["mime_type"]))
     if row["system"]:
         extra.append(("System:", prompt_line(row["system"])))
     attached = [a[0] for a in (

@@ -22,6 +22,7 @@ entry point.
 import json, os, re, sys, time, urllib.parse
 
 from dic import config, net, output, price
+from dic import schema as schema_mod
 from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
@@ -31,6 +32,15 @@ from dic.tty import (INFO, PAYLOAD, RESET, DicError, Line, osc52, pv_update,
                      report, summary, use_color)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The protocols whose structured output dic can check independently: every
+# text protocol asks the model in a way the schema itself describes, so
+# repair and validation are both on by default.  typesafe shapes its
+# answers itself, so it validates locally and does not repair.
+REPAIRS_AUTO = frozenset({"openai-chat", "openai-responses",
+                          "anthropic-messages"})
+VALIDATES_AUTO = frozenset({"openai-chat", "openai-responses",
+                            "anthropic-messages", "typesafe"})
 
 # How many times one call may ask for tools before dic stops asking: a model
 # that loops is a bug and not a conversation, and a call is not an infinite
@@ -121,6 +131,210 @@ def events(api_base, path, headers, body, stamps, line=None):
                 yield json.loads(data)
 
 
+def repairs_auto(api_type, dialect):
+    """Whether this protocol and dialect default repair on.
+
+    A dialect dic cannot compile into a protocol's own shape never gets to
+    repair: the schema would be prose the model never agreed to.
+
+    >>> repairs_auto("openai-chat", None), repairs_auto("typesafe", "systemone")
+    (True, False)
+    >>> repairs_auto("fal", None)
+    False
+    """
+    if dialect == schema_mod.SYSTEMONE:
+        return False
+    return api_type in REPAIRS_AUTO
+
+
+def validates_auto(api_type):
+    """Whether this protocol and dialect default validation on.
+
+    Every text protocol validates against jsonschema -- they were all
+    asked with the same schema -- and systemone validates locally, with
+    no import, because the provider already shaped the answers.
+
+    >>> validates_auto("openai-chat"), validates_auto("typesafe")
+    (True, True)
+    >>> validates_auto("fal")
+    False
+    """
+    return api_type in VALIDATES_AUTO
+
+
+def resolve_toggle(value, default, what, model):
+    """A --repair or --validate value as a bool, with auto resolved.
+
+    auto is the default and resolves per protocol; an explicit on where
+    the protocol cannot is an error, because a silently skipped repair or
+    validation is a call the caller believes is checked and is not.
+
+    >>> resolve_toggle(None, True, "repair", {"model_id": "m"})
+    True
+    >>> resolve_toggle("off", True, "repair", {"model_id": "m"})
+    False
+    >>> resolve_toggle("auto", False, "validate", {"model_id": "m"})
+    False
+    >>> resolve_toggle("on", False, "repair",
+    ...                {"model_id": "m", "api_type": "fal"})
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: m: --repair=on, and fal cannot repair
+    """
+    if value in (None, "auto"):
+        return default
+    if value not in ("on", "off"):
+        raise DicError(f"--{what} must be on, off or auto, not {value!r}")
+    if value == "on" and not default:
+        raise DicError(f"{model['model_id']}: --{what}=on, and"
+                       f" {model.get('api_type') or 'openai-chat'}"
+                       f" cannot {what}")
+    return value == "on"
+
+
+def answer_from_calls(calls, output_tool):
+    """The output tool's arguments as the answer, or None.
+
+    A protocol with no response_format carries a --schema as a forced
+    tool, so the answer is that call's arguments, which the wire already
+    delivers as an object.  None when there is no such tool to look for,
+    or the model did not call it this round.
+
+    >>> answer_from_calls([{"name": "output", "arguments": {"a": 1}}],
+    ...                   "output")
+    {'a': 1}
+    >>> answer_from_calls([{"name": "ls", "arguments": {}}], "output") is None
+    True
+    >>> answer_from_calls([], None) is None
+    True
+    """
+    if output_tool is None:
+        return None
+    for call in calls:
+        if call["name"] == output_tool:
+            return call["arguments"]
+    return None
+
+
+def repair_json(text):
+    """(text, what): the JSON in the answer, fenced or broken, or text as-is.
+
+    The fallback chain is code_block then json.loads, and only when both
+    have failed is json_repair imported: the import is off the hot path in
+    the strong sense, because cost and failure correlate.  The third step
+    is the only repair dependency.
+
+    >>> repair_json('{"a": 1}')
+    ('{"a": 1}', None)
+    >>> repair_json('```json\\n{"a": 1}\\n```')
+    ('{"a": 1}\\n', 'code_block')
+    >>> repair_json('no json here')[0]
+    'no json here'
+    """
+    fenced = code_block(text)
+    try:
+        json.loads(fenced)
+    except ValueError:
+        pass
+    else:
+        return fenced, ("code_block" if fenced != text else None)
+    try:
+        import json_repair
+    except ImportError:
+        return text, None
+    try:
+        fixed = json_repair.repair_json(text)
+        json.loads(fixed)
+    except Exception:
+        return text, None
+    return fixed, "json_repair"
+
+
+def validate_json(schema, dialect, text):
+    """() -> [errors]: validation of one answer against one schema.
+
+    Two dialects, two checks.  jsonschema is imported whenever the caller
+    asked for a jsonschema or simonw_llm dialect, and a validator that
+    silently ignored anyOf would be a false pass, so there is no subset
+    validator and no hand-rolled walk.  systemone validates locally, with
+    no import: every question asked has an answer, and every answer's
+    type matches its question's, which is what the provider's own shaping
+    leaves for dic to check.
+
+    >>> validate_json({"type": "object"}, "jsonschema", '{"a": 1}')
+    []
+    >>> validate_json({"questions": {"b": {"type": "noul"}}}, "systemone",
+    ...               '{"b": {"type": "noul", "noul": 0.9}}')
+    []
+    >>> validate_json({"questions": {"b": {"type": "noul"}}}, "systemone",
+    ...               '{"b": {"type": "score", "score": 1}}')
+    ['b: expected a noul answer']
+    >>> validate_json({"questions": {"b": {"type": "noul"}}}, "systemone", '{}')
+    ['b: no answer']
+    """
+    try:
+        answer = json.loads(text)
+    except ValueError as e:
+        return [f"answer is not JSON: {e}"]
+    if dialect == schema_mod.SYSTEMONE:
+        return _systemone_errors(schema, answer)
+    return _jsonschema_errors(schema, answer)
+
+
+def _systemone_errors(schema, answer):
+    """Local validation of a systemone answer, with no jsonschema import.
+
+    >>> _systemone_errors({"questions": {"a": {"type": "noul"}}},
+    ...                   {"a": {"type": "noul", "noul": 0.5}})
+    []
+    >>> _systemone_errors({"questions": {"a": {"type": "noul"}}}, "x")
+    ['answer is not an object']
+    """
+    if not isinstance(answer, dict):
+        return ["answer is not an object"]
+    questions = schema.get("questions") or {}
+    errors = []
+    for name, question in questions.items():
+        if name not in answer:
+            errors.append(f"{name}: no answer")
+            continue
+        got = answer[name]
+        if not isinstance(got, dict) or got.get("type") != question.get("type"):
+            errors.append(f"{name}: expected a {question.get('type')} answer")
+    return errors
+
+
+def _jsonschema_errors(schema, answer):
+    """jsonschema validation, against a validator that cannot fetch.
+
+    FormatChecker is passed because `format` is annotation-only without
+    it, and a date-time that is not one should fail.  A remote $ref is an
+    error: following one is a network fetch from a config file, which is
+    a side effect dic's security model says it does not have.
+    """
+    _refuse_remote_refs(schema)
+    try:
+        from jsonschema import Draft202012Validator, FormatChecker
+    except ImportError as e:
+        raise DicError(f"validation needs jsonschema: {e}") from None
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    return [f"{'/'.join(str(p) for p in e.path) or '.'}: {e.message}"
+            for e in validator.iter_errors(answer)]
+
+
+def _refuse_remote_refs(node):
+    """A remote $ref is an error: it is a fetch, and dic has no side effects."""
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith(("http://", "https://")):
+            raise DicError(f"--schema: remote $ref is an error: {ref}")
+        for value in node.values():
+            _refuse_remote_refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            _refuse_remote_refs(value)
+
+
 def code_block(text):
     """The body of the first fenced code block in text, or text unchanged.
 
@@ -131,6 +345,41 @@ def code_block(text):
     """
     match = re.search(r"```[^\n]*\n(.*?)```", text, re.S)
     return match.group(1) if match else text
+
+
+def jsonl_records(text, repairs=True):
+    """A JSONL answer as one record per line: the container object unwrapped.
+
+    No provider's structured output accepts a top-level array, so a stream
+    of records is asked for as one object with them under `jsonl`; this is
+    where that object is opened into the lines a reader counts.  A fence is
+    common even under a strict schema, so the answer is unwrapped from its
+    code block first and repaired after that if it still will not parse.
+
+    A line is one JSON value, which is what a reader counts at a glance and
+    what a later tool reads one record at a time.
+
+    >>> jsonl_records('{"jsonl": [{"a": 1}, {"b": 2}]}')
+    ('{"a": 1}\\n{"b": 2}\\n', None)
+    >>> jsonl_records('```json\\n{"jsonl": [{"a": 1}]}\\n```')
+    ('{"a": 1}\\n', 'code_block')
+    >>> jsonl_records('{"jsonl": []}')
+    ('', None)
+    """
+    repaired, what = (repair_json(text) if repairs else (text, None))
+    for candidate in (text, repaired):
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        records = parsed.get(schema_mod.JSONL_KEY)
+        if isinstance(records, list):
+            lines = [json.dumps(record, ensure_ascii=False) + "\n"
+                     for record in records]
+            return "".join(lines), what
+    return text, None
 
 
 def options(model, overrides):
@@ -162,6 +411,27 @@ def options(model, overrides):
 # the TTLs it has a rule for here, so the set of TTLs a user may name is the
 # set of cache writes dic can pay for and nothing else.
 CACHE_WRITE = "in.cache_write."
+
+
+def split_attachment(value):
+    """(name, path) of one -a value: NAME=FILE, or FILE's own basename.
+
+    NAME is the slot or placeholder the backend looks for; a bare FILE
+    takes its basename, which is what makes `-a pic.png` bind `pic.png`
+    without a second word.  A name the file itself can be is left alone,
+    so a path that contains '=' is still a path.
+
+    >>> split_attachment("image_url=frame.png")
+    ('image_url', 'frame.png')
+    >>> split_attachment("docs/report.pdf")
+    ('report.pdf', 'docs/report.pdf')
+    """
+    if os.path.exists(value):
+        return os.path.basename(value), value
+    name, sep, path = value.partition("=")
+    if not sep:
+        return os.path.basename(value), value
+    return name, path
 
 
 def ttl_seconds(ttl):
@@ -346,8 +616,10 @@ def dic(prompt,
                              help="prepend TEXT to the prompt, above the"
                                   " command-line words and any stdin;"
                                   " repeatable") = None,
-        attachment:   flag(short="-a", action="append", metavar="FILE",
-                           help="attach a file") = None,
+        attachment:   flag(short="-a", action="append", metavar="[NAME=]FILE",
+                           help="attach a file; NAME names the slot or"
+                                " placeholder it lands in, and defaults to"
+                                " the file's own basename") = None,
         option:       flag(short="-o", action="append", metavar="KEY=VALUE",
                            help="override a model option") = None,
         cache:        flag(long="--cache", metavar="TTL",
@@ -375,7 +647,21 @@ def dic(prompt,
                            help="continue from a message: a mid, its prefix,"
                                 " or a ref like HEAD~3") = None,
         mime_type:    flag(long="--mime-type", metavar="TYPE",
-                           help="the mime type of the answer") = None,
+                           help="the mime type of the answer; a full type"
+                                " such as text/csv, or a bare name such as"
+                                " json, jsonl or png") = None,
+        schema:       flag(long="--schema", metavar="REF",
+                           help="a JSON Schema, a path to one, or a"
+                                " shorthand in the llm or systemone"
+                                " dialect: constrain the answer to it") = None,
+        repair:       flag(long="--repair", metavar="MODE", group=OUTPUT,
+                           help="repair a JSON answer that is fenced or"
+                                " broken: on, off, or auto (the default,"
+                                " per protocol)") = None,
+        validate:     flag(long="--validate", metavar="MODE", group=OUTPUT,
+                           help="check a JSON answer against the schema:"
+                                " on, off, or auto (the default, per"
+                                " protocol)") = None,
         # ----- post-process the output -----
         path:         flag(long="--path", metavar="FILE", group=OUTPUT,
                            help="write the answer to FILE, atomically") = None,
@@ -510,6 +796,15 @@ def dic(prompt,
                       or knobs["model"])
     model = config.resolve(conn, knobs["model"] or config.default_id(conn, env))
     api_type = model.get("api_type", "openai-chat")
+    if (api_type in ("fal", "openai-images", "openai-videos", "typesafe")
+            and (knobs["cont"] or knobs["mid"])):
+        # -c and --mid name a conversation, and these backends keep none:
+        # fal generates one asset from one request and typesafe takes a
+        # caller-supplied state on every call, so a call that answered
+        # would silently drop the history the row and the session pointer
+        # claim to carry
+        raise DicError(f"{model['model_id']}: cannot continue:"
+                       f" {api_type} has no conversation")
     adaptor = load_adaptor(api_type, env)
     key_name = model.get("api_key_name")
     if not key_name:
@@ -565,14 +860,111 @@ def dic(prompt,
         from dic import tool
         tools = tuple(tool.resolve(specs or [])) + tuple(mcp_tools)
 
+    # The schema is inherited by -c like -m, -s and -o are: --schema names
+    # one, else the row's, else $DIC_SCHEMA, else the model's own key.  A
+    # schema is a request, so an adaptor that cannot send one refuses here
+    # rather than answering a call the caller believes is constrained.
+    schema_text = knobs["schema"]
+    schema_value, schema_dialect = None, None
+    if schema_text is None:
+        if rows and rows[-1]["schema"]:
+            schema_value = json.loads(rows[-1]["schema"])
+            schema_dialect = rows[-1]["dialect"]
+        elif model.get("schema"):
+            schema_value, schema_dialect = schema_mod.parse(model["schema"])
+    elif schema_text != "":
+        schema_value, schema_dialect = schema_mod.parse(schema_text)
+    if (schema_value is not None
+            and not getattr(adaptor, "output_format", None)):
+        # an attribute that is absent is a refusal: an answer the caller
+        # believes is schema-shaped and is not is the one failure this
+        # feature exists to prevent.  --schema='' is no schema at all, so
+        # it is not refused here, and a bare JSON mime is asked of every
+        # adaptor that can ask it.
+        raise DicError(f"{model['model_id']}: {api_type} has no"
+                       " output_format, so --schema cannot be sent")
     # what the answer will be, settled before the call so that a missing or
-    # taken --path fails before the network instead of after a whole video
-    mime = knobs["mime_type"] or model.get("output") or "text/plain"
+    # Strict dialect match: a systemone schema is for typesafe and a
+    # jsonschema or simonw_llm one is for the text adaptors, and there is
+    # no cross-compilation.  A noul compiled to a number loses
+    # calibration, which is the point of the type; a string compiled to a
+    # question has no instruction to carry.  Both directions refuse.
+    if schema_dialect is not None:
+        if api_type == "typesafe" and schema_dialect != schema_mod.SYSTEMONE:
+            raise DicError(f"typesafe: {schema_dialect} is not its dialect")
+        if api_type != "typesafe" and schema_dialect == schema_mod.SYSTEMONE:
+            raise DicError(f"{api_type}: {schema_dialect} is only"
+                           " for typesafe")
+
+    # taken --path fails before the network instead of after a whole video.
+    # A schema makes it application/json, so a JSON mime restates what it
+    # already makes and a text/* mime that is not JSON drops it; anything
+    # else contradicts it.  --schema='' keeps the JSON mime with no
+    # constraint.  A bare --mime-type -- json, png -- is the right half
+    # of one, resolved here so both spellings name one request.
+    asked_mime = (schema_mod.resolve_mime(knobs["mime_type"])
+                  if knobs["mime_type"] else None)
+    if (asked_mime and schema_value is not None
+            and not schema_mod.is_json_mime(asked_mime)):
+        if asked_mime.startswith("text/"):
+            schema_value, schema_dialect = None, None
+        else:
+            raise DicError(f"--mime-type {asked_mime} contradicts a schema")
+    mime = (asked_mime
+            or ("application/json" if schema_value is not None else None)
+            or model.get("output")
+            or "text/plain")
+    # A JSON mime promises that the answer is JSON and that it is the answer
+    # the caller asked for, and a schema is the only thing that says either;
+    # no provider takes one without it, so the ask is refused here rather
+    # than at the API, where a bare json_object failed and a JSONL ask had
+    # nothing to wrap.
+    if schema_value is None and schema_mod.is_json_mime(mime):
+        raise DicError(f"--mime-type {mime} needs --schema: no provider"
+                       " takes a JSON mime without one")
+    if knobs["extract"] and schema_mod.is_json_mime(mime):
+        # -x names the part of the answer to print and a JSON mime names
+        # what the answer is; the two are two answers to one question
+        raise DicError("-x and a JSON mime are two answers to what the"
+                       " answer is")
+    # A JSONL mime is the container, and JSON Schema cannot describe a
+    # stream of documents: the records are asked for in one object under a
+    # key, because no provider's structured output accepts a top-level
+    # array.  The wire schema is what is sent; the row keeps the caller's
+    # own beside a container fact, so the wire shape differs from the
+    # asked-for schema and neither lies about the other.
+    wire_schema, container = schema_mod.wrap(schema_value, mime)
+    # repair and validate resolve per (api_type, dialect), so the common
+    # case is zero configuration; an explicit on where the protocol cannot
+    # is an error, because a call the caller believes is checked and is not
+    # is the one failure this feature exists to prevent
+    repairs = resolve_toggle(knobs["repair"],
+                             repairs_auto(api_type, schema_dialect),
+                             "repair", model)
+    validates = resolve_toggle(knobs["validate"],
+                               validates_auto(api_type),
+                               "validate", model)
+    # both facts start empty: a call that is not a schema call writes them
+    # NULL, and a schema call that repairs or validates fills them in
+    repaired, errors = None, []
+    # The output tool is how a protocol with no response_format carries a
+    # schema: its arguments are the answer and its call ends the loop.  It
+    # is never a tool the user offered, and a protocol with no OUTPUT_TOOL
+    # has no such channel.
+    output_tool = (getattr(adaptor, "OUTPUT_TOOL", None)
+                   if schema_value is not None
+                   and getattr(adaptor, "output_format", None) else None)
+    # the text channel dictates with strict:true and the tool channel asks;
+    # the row records which, so a provider that quietly walked a schema
+    # back is visible in the row rather than hidden by it
+    enforced = (1 if getattr(adaptor, "ENFORCES_SCHEMA", False) else 0
+                if schema_value is not None
+                and getattr(adaptor, "output_format", None) else None)
     sink = None
     if not printing:
         # a printed request writes no file and makes no call, so the sink
         # and the --path check that guards it have nothing to guard
-        if mime.startswith("text/"):
+        if schema_mod.printable(mime):
             output.check_free(knobs["path"], knobs["force"])
         else:
             if not knobs["path"]:
@@ -592,9 +984,15 @@ def dic(prompt,
         system = env.get("DIC_SYSTEM") or model.get("system")
 
     # a printed request writes no row for an attachment to live in, so the
-    # file is read here and nothing is recorded
-    attached = [file_block(path) if printing else store_attachment(conn, path)
-                for path in knobs["attachment"] or ()]
+    # file is read here and nothing is recorded.  Each -a is NAME=FILE or a
+    # bare FILE: NAME is the slot the backend looks for and defaults to the
+    # file's basename, so the explicit form is only for where the basename
+    # is not what the backend wants.
+    named_files = [split_attachment(value)
+                   for value in knobs["attachment"] or ()]
+    attached = [file_block(path, name=name) if printing
+                else store_attachment(conn, path, name)
+                for name, path in named_files]
     turns.append({"role": "user",
                   "blocks": [dict(att) for att in attached]
                             + [{"type": "text", "text": prompt}]})
@@ -608,6 +1006,19 @@ def dic(prompt,
     if rows and not overrides and rows[-1]["options"]:
         overrides = json.loads(rows[-1]["options"])
     opts = options(model, overrides or ())
+    # typesafe has one request shape: the questions come from --schema and
+    # the guide rails that shape an answer are its own.  The first errors a
+    # new typesafe user hits are a missing schema and two spellings of one
+    # field, and both name what to do instead.
+    if api_type == "typesafe":
+        if opts.get("questions") is not None and schema_value is not None:
+            raise DicError("typesafe: pick one: -o questions or --schema")
+        if schema_value is None and not opts.get("questions"):
+            raise DicError("typesafe requires --schema; try\n"
+                           "     --schema 'billing: noul \"Is this about"
+                           " billing?\"'")
+        if mime in schema_mod.JSONL_MIMES:
+            raise DicError("typesafe: JSONL is not a typesafe shape")
     # a cache breakpoint is a request dic builds and not an option it
     # forwards, so the TTL is settled here: off unless the caller asked for
     # one the model's own price table can rate
@@ -642,7 +1053,22 @@ def dic(prompt,
             line.wait()
             turns = prepare(model, api_key, turns, opts)
             line.first_token()
-    body = adaptor.build(model, turns, system, opts)
+
+    def request_body():
+        """build() and the output_format hook, for this round's turns.
+
+        The hook fires before --print=json/--print=curl, so a printed
+        request carries the directive and not one that lacks it.  A tool
+        loop rebuilds the body every round, so the hook fires on every
+        rebuild and not only the first: a later round without it would be
+        a schema call that stopped asking for the schema the moment the
+        model used a tool.
+        """
+        built = adaptor.build(model, turns, system, opts)
+        hook = getattr(adaptor, "output_format", None)
+        return hook(built, model, wire_schema, mime) if hook else built
+
+    body = request_body()
     headers = {"content-type": "application/json", "accept": "text/event-stream"}
     headers.update(adaptor.auth(api_key))
     headers.update(model.get("headers") or {})
@@ -771,7 +1197,13 @@ def dic(prompt,
                              "parameters": t["parameters"]} for t in tools],
                 "mcp": mcp_map}) if tools else None,
             json.dumps(pairs) if pairs else None,
-            json.dumps(overrides) if overrides else None))
+            json.dumps(overrides) if overrides else None,
+            json.dumps(schema_value) if schema_value is not None else None,
+            schema_dialect,
+            mime,
+            container,      # 1 when an array wrapped the schema, else NULL
+            repaired,       # the repair that ran, or NULL
+            enforced))      # 1 dictated, 0 asked, NULL when no schema
         if recorder is not None:
             # one row per round that produced bytes, and none for one that did
             # not: a round's samples are measured from that round's own start
@@ -860,7 +1292,11 @@ def dic(prompt,
                 printed.append(chunk)
                 if pv_resp is not None:
                     pv_update(pv_resp, chunk)
-                if not knobs["extract"]:
+                # JSONL buffers rather than streams: the fence has to be
+                # found before a record can be yielded, and finding it
+                # means the whole answer -- the reformat happens once,
+                # below, and what reaches stdout is the records
+                if not knobs["extract"] and not container:
                     if paint and painted != kind:
                         sink.write((RESET if painted is not None else "") + PAYLOAD)
                         painted = kind
@@ -878,7 +1314,15 @@ def dic(prompt,
                 # wire status; a stream that ran to its end is a 200
                 wire["status"] = 200
             keep(wire)
-            asked = adaptor.calls(acc) if tools else ()
+            asked = adaptor.calls(acc) if (tools or output_tool) else ()
+            # The output tool's arguments are the answer: this round is
+            # the last one, whatever else the model asked for beside it,
+            # because the answer arrives on that call and on no text
+            # delta -- a tool run beside it would be work for an answer
+            # that has already been given.
+            answer = answer_from_calls(asked, output_tool)
+            if answer is not None:
+                asked = []
             if asked and index + 1 >= MAX_TOOL_ROUNDS:
                 raise DicError(f"the model has asked for tools"
                                f" {MAX_TOOL_ROUNDS} rounds running; giving up")
@@ -908,6 +1352,23 @@ def dic(prompt,
             usage, cost, items, source = billing(acc)
             rounds.append((usage, cost, items))
             raw = adaptor.finish(acc)
+            if answer is not None:
+                # the protocol's text stream carried no answer, so the
+                # object the tool call returned is the whole of it: it is
+                # serialized into the same chunks a text delta would have
+                # gone into, and response_raw keeps the tool_use block
+                # above for a later audit and for replay within this
+                # provider.
+                call_answer = json.dumps(answer, ensure_ascii=False)
+                chunks.append(call_answer)
+                printed.append(call_answer)
+                if not knobs["extract"] and not container:
+                    if paint and painted != "":
+                        sink.write((RESET if painted is not None else "")
+                                   + PAYLOAD)
+                        painted = ""
+                    sink.write(call_answer)
+                break
             if not asked:
                 break
             # this round asked for tools, so it is not the last one: it is
@@ -923,7 +1384,7 @@ def dic(prompt,
             turns.append({"role": "user", "blocks": [
                 {"type": "tool_result", "id": r["id"], "content": r["content"]}
                 for r in results]})
-            body = adaptor.build(model, turns, system, opts)
+            body = request_body()
             index += 1
     except KeyboardInterrupt:
         # A ^C is the caller's, not dic's: close what this call opened and let
@@ -982,9 +1443,21 @@ def dic(prompt,
     wire["t_done"] = stamps["t_done"] = time.time_ns()
     keep(wire)
     response = "".join(printed)
+    if container:
+        # JSONL: the mime asked for one value per line and the record
+        # boundaries are the container, not the model's own newlines.
+        # The reformat happens here because the fence has to be found
+        # before any record can be yielded, and `chunks` becomes the
+        # reformatted text so the row's response is what stdout carries.
+        response, what = jsonl_records(response, repairs)
+        if what:
+            repaired = repaired or what
+        chunks = [response]
     text = response
     if knobs["extract"]:
         text = code_block(response)
+        sink.write(PAYLOAD + text + RESET if paint else text)
+    elif container:
         sink.write(PAYLOAD + text + RESET if paint else text)
     else:
         if painted is not None:
@@ -992,6 +1465,26 @@ def dic(prompt,
         if response and not response.endswith("\n"):
             sink.write("\n")
             text += "\n"
+    # Repair first, then validate, on the printed text: this is the one rule
+    # that makes the two features compose, and a schema is what says either
+    # is worth doing at all.  A prose call owes neither and pays for neither.
+    if schema_value is not None and schema_mod.is_json_mime(mime):
+        if container:
+            # JSONL: the wire was an array, each element is one record,
+            # and the caller's schema is what each record is checked
+            # against -- the array is dic's wrap and never the schema.
+            # The lines are the ones stdout carries, so the error names
+            # one a reader can count.
+            if validates:
+                errors = [f"line {n}: {error}"
+                          for n, line in enumerate(text.splitlines(), 1)
+                          for error in validate_json(schema_value,
+                                                     schema_dialect, line)]
+        else:
+            if repairs:
+                text, repaired = repair_json(text)
+            if validates:
+                errors = validate_json(schema_value, schema_dialect, text)
     paths = sink.close()
     outputs = [{"path": p, "mime_type": mime} for p in paths[seen:]]
     if clipboard:
@@ -1010,6 +1503,14 @@ def dic(prompt,
     if wire["status"] != 200:
         raise DicError(f"{wire['status']} {wire.get('error')}")
     session_move(env, mid)
+
+    if errors:
+        # The answer is printed and the pointer has moved: the model must
+        # see its own bad output to correct it, and -c that could not replay
+        # the failure would be a thread that cannot be fixed.  Validation
+        # that did not affect the exit status would be theatre.
+        raise DicError("validation failed, the answer is above:\n"
+                       + "\n".join(f"  {error}" for error in errors))
 
     out.flush()
 

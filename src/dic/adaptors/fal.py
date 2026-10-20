@@ -34,64 +34,52 @@ def auth(key):
     return {"Authorization": "Key " + key}
 
 
-# Every fal model names its own inputs, and this table is the one place that
-# admits it.  "files" is the argument each attachment goes in, in the order
-# they were given with -a; "image_urls" collects every remaining one because
-# that argument is a list.  "extra" is what the model wants on every call,
-# which -o still overrides; a model absent here is called with its prompt
-# alone, since dic forwards a provider's fields rather than validating them.
+# Every fal model names its own parameters, and this table is the one place
+# that admits it.  "extra" is what the model wants on every call, which -o
+# still overrides; a model absent here is called with its prompt alone,
+# since dic forwards a provider's fields rather than validating them.  The
+# slot each attachment lands in is the NAME of its -a, and every fal model
+# therefore reads `-a image_url=frame.png`, not `-a frame.png`.
 MODELS = {
-    "fal-ai/nano-banana/edit":     {"files": ["image_urls"]},
-    "fal-ai/nano-banana-pro/edit": {"files": ["image_urls"]},
-    "fal-ai/nano-banana-2/edit":   {"files": ["image_urls"]},
-    "fal-ai/openai/gpt-image-2":   {"files": ["image_urls"]},
-
     "fal-ai/veo3.1/first-last-frame-to-video":
-        {"files": ["first_frame_url", "last_frame_url"],
-         "extra": {"duration": "8s", "aspect_ratio": "16:9",
+        {"extra": {"duration": "8s", "aspect_ratio": "16:9",
                    "resolution": "720p", "generate_audio": False}},
     "fal-ai/veo3.1/fast/first-last-frame-to-video":
-        {"files": ["first_frame_url", "last_frame_url"],
-         "extra": {"duration": "8s", "aspect_ratio": "16:9",
+        {"extra": {"duration": "8s", "aspect_ratio": "16:9",
                    "resolution": "720p", "generate_audio": False}},
-
     "fal-ai/kling-video/v3/pro/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
+        {"extra": {"duration": 5}},
     "fal-ai/kling-video/v3/standard/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
+        {"extra": {"duration": 5}},
     "fal-ai/kling-video/v2.6/pro/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
+        {"extra": {"duration": 5}},
     "fal-ai/kling-video/v2.6/standard/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
+        {"extra": {"duration": 5}},
     "fal-ai/kling-video/v2.5-turbo/pro/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
+        {"extra": {"duration": 5}},
     "fal-ai/kling-video/v2.5-turbo/standard/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
+        {"extra": {"duration": 5}},
     "fal-ai/bytedance/seedance-2.0/image-to-video":
-        {"files": ["image_url"], "extra": {"duration": 5}},
-
+        {"extra": {"duration": 5}},
     "fal-ai/kling-video/o1/image-to-video":
-        {"files": ["start_image_url", "end_image_url"], "extra": {"duration": "5"}},
+        {"extra": {"duration": "5"}},
     "fal-ai/kling-video/o3/pro/image-to-video":
-        {"files": ["image_url", "end_image_url"], "extra": {"duration": "5"}},
+        {"extra": {"duration": "5"}},
     "fal-ai/kling-video/o3/standard/image-to-video":
-        {"files": ["image_url", "end_image_url"], "extra": {"duration": "5"}},
-
+        {"extra": {"duration": "5"}},
     "fal-ai/veed/fabric-1.0":
-        {"files": ["image_url", "audio_url"], "extra": {"resolution": "480p"}},
+        {"extra": {"resolution": "480p"}},
     "fal-ai/creatify/aurora":
-        {"files": ["image_url", "audio_url"], "extra": {"resolution": "480p"}},
+        {"extra": {"resolution": "480p"}},
     "fal-ai/bytedance/omnihuman/v1.5":
-        {"files": ["image_url", "audio_url"], "extra": {"resolution": "1080p"}},
-    "fal-ai/kling-video/v1/pro/ai-avatar":
-        {"files": ["image_url", "audio_url"]},
-    "fal-ai/kling-video/v1/standard/ai-avatar":
-        {"files": ["image_url", "audio_url"]},
-
-    "fal-ai/pixverse/sound-effects":   {"files": ["video_url"]},
-    "fal-ai/mmaudio-v2":               {"files": ["video_url"]},
-    "fal-ai/cassetteai/video-sound-effects-generator": {"files": ["video_url"]},
-    "fal-ai/mirelo-ai/sfx-v1/video-to-video":          {"files": ["video_url"]},
+        {"extra": {"resolution": "1080p"}},
+    "fal-ai/kling-video/v1/pro/ai-avatar":     {},
+    "fal-ai/kling-video/v1/standard/ai-avatar": {},
+ 
+    "fal-ai/pixverse/sound-effects":   {},
+    "fal-ai/mmaudio-v2":               {},
+    "fal-ai/cassetteai/video-sound-effects-generator": {},
+    "fal-ai/mirelo-ai/sfx-v1/video-to-video":          {},
 }
 
 
@@ -166,13 +154,15 @@ def prepare(model, key, turns, params):  # noqa: ARG001
 
 
 def build(model, turns, system, params):  # noqa: ARG001
-    """The fal arguments for one call: the spec's shape, the options, the files.
+    """The fal arguments for one call: the prompt, the options, the files.
 
-    The newest turn's text is the prompt, its attachments land in the
-    argument names the model's spec gives them, and -o and the config's
-    options are merged on top of the spec's defaults so a caller can say
-    `-o duration=10` where the model wants an integer and `-o prompt=...`
-    where it wants none.
+    The newest turn's text is the prompt and each of its attachments lands
+    at the argument -a named, since a fal model reads its input under an
+    argument name of its own and only the caller knows which one.  A NAME
+    given twice collects its URLs into a list, which is how a model that
+    takes many images of one kind is asked for them.  -o and the config's
+    options merge on top of the spec's defaults, so a caller can say
+    `-o duration=10` where the model wants an integer.
 
     >>> build({"model_name": "fal-ai/nano-banana"}, [], None, {})
     {}
@@ -183,15 +173,14 @@ def build(model, turns, system, params):  # noqa: ARG001
     args.update(params)
     if prompt:
         args["prompt"] = prompt
-    names = list(spec.get("files") or [])
-    if names and names[-1] == "image_urls":
-        args["image_urls"] = [b["url"] for b in files]
-        return args
-    if files and len(files) != len(names):
-        raise DicError(f"{model['model_name']} takes {len(names)} attachment(s),"
-                       f" got {len(files)}")
-    for name, block in zip(names, files):
-        args[name] = block["url"]
+    for block in files:
+        name, url = block["name"], block["url"]
+        if isinstance(args.get(name), list):
+            args[name].append(url)
+        elif name in args:
+            args[name] = [args[name], url]
+        else:
+            args[name] = url
     return args
 
 

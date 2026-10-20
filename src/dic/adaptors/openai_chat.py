@@ -34,8 +34,28 @@ def tool_schema(tools):
              "function": {"name": t["name"], "description": t["description"],
                           "parameters": t["parameters"]}}
             for t in tools]
+# A schema here is dictated: `response_format` with `strict: true` is the
+# provider's own conformance story, and the row records that it was.
+ENFORCES_SCHEMA = True
+def output_format(body, model, schema, mime):  # noqa: ARG001
+    """Set the response_format this request carries, from --schema.
 
+    A schema is `strict: true`, which is the whole point of the shape the
+    shorthand already compiles to; a text mime carries nothing and the
+    body is left as build() made it.  A JSON mime without a schema never
+    reaches here: the client refuses one, because no provider takes it.
 
+    >>> output_format({"model": "m"}, {}, {"type": "object"}, "application/json")
+    {'model': 'm', 'response_format': {'type': 'json_schema', 'json_schema': {'name': 'response', 'schema': {'type': 'object'}, 'strict': True}}}
+    >>> output_format({"model": "m"}, {}, None, "text/plain")
+    {'model': 'm'}
+    """
+    if schema is not None:
+        body["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "response", "schema": schema,
+                            "strict": True}}
+    return body
 def build(model, turns, system, params):
     """IR turns to a streaming chat-completions body; system is a leading message.
 

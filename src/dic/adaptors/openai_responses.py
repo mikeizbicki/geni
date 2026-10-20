@@ -17,6 +17,28 @@ def auth(key):
     """
     return {"Authorization": "Bearer " + key}
 
+# A schema here is dictated: `text.format` with `strict: true` is the
+# provider's own conformance story, and the row records that it was.
+ENFORCES_SCHEMA = True
+def output_format(body, model, schema, mime):  # noqa: ARG001
+    """Set the text.format this request carries, from --schema.
+
+    The responses API names the constraint under `text.format` rather
+    than at the top level, and takes the schema's name beside it; a text
+    mime carries nothing and the body is left as build() made it.  A JSON
+    mime without a schema never reaches here: the client refuses one,
+    because no provider takes it.
+
+    >>> output_format({}, {}, {"type": "object"}, "application/json")
+    {'text': {'format': {'type': 'json_schema', 'name': 'response', 'schema': {'type': 'object'}, 'strict': True}}}
+    >>> output_format({"model": "m"}, {}, None, "text/plain")
+    {'model': 'm'}
+    """
+    if schema is not None:
+        body["text"] = {"format": {"type": "json_schema", "name": "response",
+                                   "schema": schema, "strict": True}}
+    return body
+
 
 def build(model, turns, system, params):
     """IR turns to a streaming responses body; system is the top-level instructions.

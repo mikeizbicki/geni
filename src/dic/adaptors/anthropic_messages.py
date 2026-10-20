@@ -335,3 +335,46 @@ def finish(acc):
             block.pop("_json")
             block.setdefault("input", {})
     return acc.get("raw", [])
+
+
+# The synthetic tool that carries a --schema: Anthropic has no
+# response_format, so structured output is forced tool use, and the answer
+# is read out of the tool_use block rather than out of the text stream.
+OUTPUT_TOOL = "output"
+
+# Anthropic tool input has no `strict`, so a schema here is asked rather
+# than dictated, and the row records that it was.
+ENFORCES_SCHEMA = False
+
+
+def output_format(body, model, schema, mime):  # noqa: ARG001
+    """Ask for the schema the one way this protocol has: forced tool use.
+
+    Anthropic has no response_format, so a schema becomes a synthetic tool
+    whose input_schema is the schema itself, and the answer is read out of
+    the tool_use block rather than out of the text stream.  When it is the
+    only tool it is forced by name; when --tools offered others, the choice
+    is `any` and the loop ends on the output tool rather than on no tool at
+    all, because one function can be forced and a tool loop already spends
+    tool_choice.
+
+    >>> b = output_format({"model": "m"}, {}, {"type": "object"}, "application/json")
+    >>> b["tool_choice"], b["tools"][0]["name"]
+    ({'type': 'tool', 'name': 'output'}, 'output')
+    >>> b = output_format({"tools": [{"name": "ls"}]}, {}, {"type": "object"}, "application/json")
+    >>> b["tool_choice"]
+    {'type': 'any'}
+    >>> output_format({"model": "m"}, {}, None, "application/json")
+    {'model': 'm'}
+    """
+    if schema is None:
+        return body
+    body.setdefault("tools", []).append({
+        "name": OUTPUT_TOOL,
+        "description": ("Return the answer, shaped by input_schema.  Any"
+                        " array in it holds one element per item the"
+                        " prompt asks for."),
+        "input_schema": schema})
+    body["tool_choice"] = ({"type": "tool", "name": OUTPUT_TOOL}
+                           if len(body["tools"]) == 1 else {"type": "any"})
+    return body

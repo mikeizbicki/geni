@@ -283,7 +283,6 @@ def test_a_urls_userinfo_becomes_basic_auth(streams, env, models, llm,
     assert json.loads(row["mcp"]) == [["url", secret]]
 
 
-def test_a_server_that_will_not_start_refuses_a_fresh_call(
 @NEEDS_BWRAP
 def test_a_stdio_server_is_jailed_and_only_its_own_words_widen_the_jail(
         streams, env, models, llm):
@@ -318,6 +317,7 @@ def test_a_stdio_server_is_jailed_and_only_its_own_words_widen_the_jail(
 
 
 @NEEDS_BWRAP
+def test_a_server_that_will_not_start_refuses_a_fresh_call(
         streams, env, models, llm):
     """A fresh call cannot be offered part of the servers it named."""
     streams.err.tty = True                   # a terminal gets the warning

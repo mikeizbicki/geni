@@ -399,6 +399,45 @@ def code_block(text):
     return match.group(1) if match else text
 
 
+def jsonl_records(text, repairs=True):
+    """Split a JSONL answer into complete records, one per line.
+
+    A fence is stripped first, because a JSON answer arrives fenced far
+    more often than not, and a fence in front of the first `{` would
+    keep the splitter from ever seeing a top-level value.  A value that
+    never closed is the residual buffer: it is what the model was
+    writing when it stopped, so repair is offered it before it is
+    accepted as a record of its own.  The result always ends with a
+    newline, so stdout carries one record per line and the row's
+    response keeps the same bytes.
+
+    >>> jsonl_records('{"a": 1}\\n{"b": 2}\\n')
+    ('{"a": 1}\\n{"b": 2}\\n', None)
+    >>> jsonl_records('{"a": 1}{"b": 2}')
+    ('{"a": 1}\\n{"b": 2}\\n', None)
+    >>> jsonl_records('```json\\n{"a": 1}\\n```')
+    ('{"a": 1}\\n', 'code_block')
+    >>> jsonl_records('')
+    ('', None)
+    >>> jsonl_records("  ")
+    ('', None)
+    """
+    fenced = code_block(text)
+    repaired = "code_block" if fenced != text else None
+    splitter = Splitter()
+    records = splitter.feed(fenced)
+    residual = splitter.buffer.strip()
+    if residual:
+        fixed, what = (repair_json(residual) if repairs
+                       else (residual, None))
+        if what:
+            records.append(fixed.strip())
+            repaired = repaired or what
+        else:
+            records.append(residual)
+    return "".join(record + "\n" for record in records), repaired
+
+
 def options(model, overrides):
     """The model's default options with KEY=VALUE overrides applied.
 
@@ -1291,7 +1330,11 @@ def dic(prompt,
                 printed.append(chunk)
                 if pv_resp is not None:
                     pv_update(pv_resp, chunk)
-                if not knobs["extract"]:
+                # JSONL buffers rather than streams: the fence has to be
+                # found before a record can be yielded, and finding it
+                # means the whole answer -- the reformat happens once,
+                # below, and what reaches stdout is the records
+                if not knobs["extract"] and not container:
                     if paint and painted != kind:
                         sink.write((RESET if painted is not None else "") + PAYLOAD)
                         painted = kind
@@ -1438,9 +1481,21 @@ def dic(prompt,
     wire["t_done"] = stamps["t_done"] = time.time_ns()
     keep(wire)
     response = "".join(printed)
+    if container:
+        # JSONL: the mime asked for one value per line and the record
+        # boundaries are the container, not the model's own newlines.
+        # The reformat happens here because the fence has to be found
+        # before any record can be yielded, and `chunks` becomes the
+        # reformatted text so the row's response is what stdout carries.
+        response, what = jsonl_records(response, repairs)
+        if what:
+            repaired = repaired or what
+        chunks = [response]
     text = response
     if knobs["extract"]:
         text = code_block(response)
+        sink.write(PAYLOAD + text + RESET if paint else text)
+    elif container:
         sink.write(PAYLOAD + text + RESET if paint else text)
     else:
         if painted is not None:
@@ -1452,10 +1507,22 @@ def dic(prompt,
     # that makes the two features compose, and a schema is what says either
     # is worth doing at all.  A prose call owes neither and pays for neither.
     if schema_value is not None and schema_mod.is_json_mime(mime):
-        if repairs:
-            text, repaired = repair_json(text)
-        if validates:
-            errors = validate_json(schema_value, schema_dialect, text)
+        if container:
+            # JSONL: the wire was an array, each element is one record,
+            # and the caller's schema is what each record is checked
+            # against -- the array is dic's wrap and never the schema.
+            # The lines are the ones stdout carries, so the error names
+            # one a reader can count.
+            if validates:
+                errors = [f"line {n}: {error}"
+                          for n, line in enumerate(text.splitlines(), 1)
+                          for error in validate_json(schema_value,
+                                                     schema_dialect, line)]
+        else:
+            if repairs:
+                text, repaired = repair_json(text)
+            if validates:
+                errors = validate_json(schema_value, schema_dialect, text)
     paths = sink.close()
     outputs = [{"path": p, "mime_type": mime} for p in paths[seen:]]
     if clipboard:

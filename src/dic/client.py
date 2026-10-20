@@ -122,6 +122,58 @@ def events(api_base, path, headers, body, stamps, line=None):
                 yield json.loads(data)
 
 
+class Splitter:
+    """A JSONL stream split into complete top-level values as they arrive.
+
+    Split on brace and bracket depth, string- and escape-aware, so a value
+    is yielded the moment its depth returns to zero and the happy path
+    streams record by record without holding the whole answer.  A value cut
+    off mid-string or mid-object is held rather than yielded half, and a
+    caller that never sees it complete hands the buffer on when the stream
+    ends.
+
+    >>> s = Splitter()
+    >>> s.feed('{"a": 1}\\n{"b": 2}\\n')
+    ['{"a": 1}', '{"b": 2}']
+    >>> s.feed('{"a": "}{"}')
+    ['{"a": "}{"}']
+    >>> s.feed('{"unclosed')
+    []
+    >>> s.buffer
+    '{"unclosed'
+    """
+
+    def __init__(self):
+        self.buffer = ""
+        self.depth = 0
+        self.in_string = False
+        self.escape = False
+
+    def feed(self, text):
+        """Append text; yield every complete top-level value it now holds."""
+        out = []
+        for ch in text:
+            self.buffer += ch
+            if self.in_string:
+                if self.escape:
+                    self.escape = False
+                elif ch == "\\":
+                    self.escape = True
+                elif ch == '"':
+                    self.in_string = False
+                continue
+            if ch == '"':
+                self.in_string = True
+            elif ch in "[{":
+                self.depth += 1
+            elif ch in "]}":
+                self.depth -= 1
+                if self.depth == 0:
+                    out.append(self.buffer.strip())
+                    self.buffer = ""
+        return out
+
+
 def code_block(text):
     """The body of the first fenced code block in text, or text unchanged.
 
@@ -617,6 +669,13 @@ def dic(prompt,
         # what the answer is; the two are two answers to one question
         raise DicError("-x and a JSON mime are two answers to what the"
                        " answer is")
+    # A JSONL mime is the container, and a schema is JSON Schema, which
+    # cannot describe a stream of documents: the array is how a
+    # schema-shaped backend is asked for many records.  The wire schema is
+    # what is sent; the row keeps the caller's own beside a container fact,
+    # so the wire shape differs from the asked-for schema and neither lies
+    # about the other.
+    wire_schema, container = schema_mod.wrap(schema_value, mime)
     sink = None
     if not printing:
         # a printed request writes no file and makes no call, so the sink
@@ -697,7 +756,7 @@ def dic(prompt,
         # request carries the directive and not one that lacks it: the
         # directive is part of the request and the printed request is the
         # request
-        body = adaptor.output_format(body, model, schema_value, mime)
+        body = adaptor.output_format(body, model, wire_schema, mime)
     headers = {"content-type": "application/json", "accept": "text/event-stream"}
     headers.update(adaptor.auth(api_key))
     headers.update(model.get("headers") or {})
@@ -830,7 +889,7 @@ def dic(prompt,
             json.dumps(schema_value) if schema_value is not None else None,
             schema_dialect,
             mime,
-            None,           # container: the JSONL array wrap is a later commit
+            container,      # 1 when an array wrapped the schema, else NULL
             None,           # repaired: no repair runs yet
             None))          # enforced: no adaptor reports it yet
         if recorder is not None:

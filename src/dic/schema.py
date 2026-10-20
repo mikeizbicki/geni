@@ -154,6 +154,31 @@ def printable(mime_type):
     return mime_type.startswith("text/") or is_json_mime(mime_type)
 
 
+def wrap(schema, mime_type):
+    """(schema, container): the schema as sent, and whether an array wraps it.
+
+    A schema is JSON Schema, which cannot describe a stream of documents:
+    a JSONL mime is expressed as an array of the schema's type, and each
+    element is what the schema constrains.  `container` is 1 when the
+    wrap ran and None when it did not, so the row can say the wire shape
+    differed from the schema the caller wrote.
+
+    >>> wrap({"type": "object"}, "application/json")
+    ({'type': 'object'}, None)
+    >>> wrap({"type": "object"}, "application/x-ndjson")
+    ({'type': 'array', 'items': {'type': 'object'}}, 1)
+    >>> wrap({"type": "object"}, "application/jsonl")
+    ({'type': 'array', 'items': {'type': 'object'}}, 1)
+    >>> wrap(None, "application/x-ndjson")
+    (None, None)
+    >>> wrap({"type": "object"}, "text/plain")
+    ({'type': 'object'}, None)
+    """
+    if schema is None or mime_type not in JSONL_MIMES:
+        return schema, None
+    return {"type": "array", "items": schema}, 1
+
+
 # ------------------------------------------------------------- the shorthands
 
 

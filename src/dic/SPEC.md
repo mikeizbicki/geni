@@ -167,14 +167,15 @@ other one.  There is no file to write and no name to invent: a server is named
 after its host or its basename, and a second server of that name takes a
 number.
 
-A command is a word list and not a shell line, and it runs under
-`sandbox`.  What the caller typed is the argument list of the `sandbox`
-function dic.sh defines, so `--mcp '--share-net -- server'` relaxes the
-jail to the caller's own request while `--mcp server` does not, and a
-`|`, a `;` or a `$(...)` is an error naming the character rather than a
-second command outside the jail.  Nothing in dic names a way around the
-wrapper, so there is no variable, no flag and no target that runs a
-server unsandboxed.
+A command is a word list and not a shell line.  It is run by a bash with
+dic.sh sourced, so `--mcp 'sandbox server'` jails one server and
+`--mcp 'sandbox --share-net -- server'` relaxes that jail to the caller's
+own request, without the caller naming a shell either time.  dic does not
+add the `sandbox` call itself: the jail a server needs is the caller's
+decision, and the way to jail every tool at once is to run dic under
+bwrap, exactly as "Tools" says below.  A word that is nothing but
+metacharacters is an error naming the character, because a `|` is a line
+whose author read it as one and a program named `|` does not say so.
 
 What comes back is the same three things `--tools` produces -- a name, a
 description and a JSON Schema -- so nothing downstream knows the difference.  A

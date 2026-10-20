@@ -13,12 +13,14 @@ Two transports, one of each kind:
     http    the streamable transport: one POST, answered by JSON or by a
             one-way event stream
 
-A stdio server is a command, and every command runs under `sandbox`: the
-child is a bash that has sourced dic.sh, and what the user typed after
---mcp is that function's argument list.  There is therefore no variable,
-no flag and no spelling that runs a server unsandboxed -- a target that
-names the jail a second time is a `sandbox: command not found`, and a `|`
-in the line is refused by words() rather than run outside it.
+A stdio server is a command, and the child that runs it is a bash with
+dic.sh sourced, so `sandbox server` names a jail without the caller
+naming a shell.  dic does not put the `sandbox` call in front itself: the
+jail a server needs is the caller's decision, and the way to jail every
+tool at once is to run dic under bwrap, exactly as SPEC's "Tools" says.
+The target is a word list and never a line, so a `|` or a `$(...)` in it
+is an argument, and a word that is nothing but metacharacters is refused
+by words() rather than handed over as a program's own name.
 
 A server is opened when its tools are needed and not before.  A fresh call
 opens every server it names, because it must know what to offer; a call that
@@ -75,33 +77,35 @@ CALL_S = 300
 SAFE = frozenset("abcdefghijklmnopqrstuvwxyz"
                  "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
-# The bytes a --mcp command cannot mean.
+# The characters a shell reads as syntax: a `|` is a pipe, a `;` separates
+# commands, a `>` is a redirection, a `$(...)` is a substitution.  A word
+# that is *nothing but* these is one of them, the caller wrote a line, and
+# dic cannot honor it: the target is an argument list, and a pipe is a
+# second command outside whatever jail the caller asked for.  A word that
+# merely CONTAINS one is an argument -- a python script passed to `python3
+# -c` is full of semicolons and braces, and inside an argument they mean
+# what the script means.
 #
-# After shlex.split a word is an argv element, so none of these is syntax
-# any more -- `a | b` is three words and the second is a pipe character.
-# That is exactly why they are refused: a caller who wrote a pipe meant a
-# pipe, and a word that arrives with shell syntax still in it is a word
-# whose author read the line differently than dic did.  Failing names the
-# disagreement; passing it through to bwrap hides it.  `=` is not here
-# because `FOO=bar` is the assignment sandbox() peels, and `-` is not
-# because a bwrap flag is the vocabulary being typed.
-SHELL = frozenset("|&;<>()$`\\*?[]{}~!")
+# `=` is not here, because `FOO=bar` is an argument; `-` is not, because a
+# leading flag is how the wrapper is told what has to be relaxed.
+SHELL = frozenset("|&;<>()[]{}`$*?~!")
 
 
 def words(target):
-    """A --mcp command as the word list sandbox() receives.
+    """A --mcp command as the word list the child bash receives.
 
     shlex.split is the shell's tokenizer without the shell: quotes group a
-    word and nothing else is syntax, so what comes back is a list of
-    arguments and not a line.  A metacharacter that survives into one is
-    therefore a disagreement about what the line means -- a pipe whose
-    author expected a pipe -- and is refused rather than handed to bwrap
-    as a program named `|`.
+    word, and no character is syntax afterwards.  What is left worth
+    refusing is the word that is nothing but metacharacters -- a line whose
+    author read it as a line -- because handing a program named `|` to
+    bwrap is a failure that does not say what went wrong.
 
     >>> words("server --port 3")
     ['server', '--port', '3']
     >>> words("'a b' c")
     ['a b', 'c']
+    >>> words("python3 -c 'import json; print(1)'")
+    ['python3', '-c', 'import json; print(1)']
     >>> words("a | b")
     Traceback (most recent call last):
     ...
@@ -115,30 +119,28 @@ def words(target):
         raise DicError("--mcp: an empty command")
     out = []
     for word in shlex.split(target):
-        bad = sorted(SHELL.intersection(word))
-        if bad:
-            raise DicError(f"--mcp: {bad[0]!r} in {target!r}: a command is a"
+        if word and set(word) <= SHELL:
+            raise DicError(f"--mcp: {word[0]!r} in {target!r}: a command is a"
                            " word list, not a shell line (use a script for"
                            " pipes and expansions)")
         out.append(word)
     return out
 
-
 def command(target):
-    """The argv that runs one --mcp command, under sandbox.
+    """The argv that runs one --mcp command.
 
-    The child is bash, dic.sh is sourced into it, and `sandbox` runs the
-    target -- always, and with the target as positional arguments rather
-    than as a line.  There is therefore no spelling that skips the jail:
-    a target that names the jail a second time is a `sandbox: command not
-    found`, and a `|` is a DicError from words().  `"$@"` is never
-    re-expanded, so no byte of the target is syntax by the time anything
-    reads it.
+    The child is bash and dic.sh is sourced into it, so a command can name
+    anything the user's own shell defines -- `sandbox server` among them --
+    without the caller naming bash.  The target is that program's argument
+    list and not a line: `"$@"` is never re-expanded, so a `|` or a
+    `$(...)` in it is an argument and not syntax.
 
-    A leading NAME=value and a leading --flag are the wrapper's own
-    vocabulary: sandbox() peels the assignment into --setenv, and bwrap
-    applies a flag after its defaults, so `--share-net -- server` is a
-    relaxation the caller typed and not one dic inferred.
+    dic does not put `sandbox` in front itself.  The jail a server needs
+    is the caller's decision -- one that reads a token from its own home
+    and one that reads a worktree are not the same jail -- and a child
+    whose environment the wrapper had cleared is not the child a server
+    configured in the ordinary way expects.  Jail every tool at once by
+    running dic under bwrap, exactly as SPEC's "Tools" says.
 
     >>> command("server")[0], command("server")[-1]
     ('bash', 'server')
@@ -147,7 +149,7 @@ def command(target):
     """
     script = (f"source {shlex.quote(str(files('dic.scripts') / 'dic.sh'))}"
               " 2>/dev/null\n")
-    return ["bash", "-c", script + 'sandbox "$@"', "--", *words(target)]
+    return ["bash", "-c", script + '"$@"', "--", *words(target)]
 
 
 def sanitize(name):
@@ -177,11 +179,11 @@ def specs(auto=None, urls=None, shells=None):
     """The --mcp, --mcp-url and --mcp-shell values, as [kind, target] pairs.
 
     The kind is the one fact about a spec that cannot be read back off it, so
-    it is stored with it.  A command is validated here and not when its
-    first tool is called: a `|` in the line is a disagreement about what
-    the line means, and the caller who typed it is the one who can fix it.
-    What the pair stores is the string, so the word list a later call uses
-    is the one built then.
+    it is stored with it.  A command is checked by words() here and not
+    when its first tool is called: `a | b` is a line, and the caller who
+    typed it is the one who can fix it, before the network and before the
+    model is told the tools exist.  What the pair stores is the string, so
+    the word list a later call uses is the one built then.
 
     >>> specs("npx -y s", "https://x/mcp", "just a command")
     [['shell', 'npx -y s'], ['url', 'https://x/mcp'], ['shell', 'just a command']]
@@ -211,8 +213,8 @@ def name_of(kind, target):
     There is no config file and so no name to read, so a server is named
     after what it was given: a URL by its host and a command by its basename,
     which is the name a person would have written anyway.  A `www.` is a
-    convention and not a name, so it is left off, and a leading --flag or
-    NAME=value is the wrapper's and not the program's, so it is walked past.
+    convention and not a name, so it is left off, and a leading flag or
+    assignment is not the program, so it is walked past.
 
     >>> name_of("url", "https://www.mcp.example.com/mcp?a=1")
     'mcp.example.com'
@@ -220,19 +222,12 @@ def name_of(kind, target):
     'localhost'
     >>> name_of("shell", "npx -y @modelcontextprotocol/server-filesystem .")
     'npx'
-    >>> name_of("shell", "--share-net -- websearch")
-    'websearch'
     """
     if kind == "url":
         parts = urllib.parse.urlsplit(target if "//" in target else "//" + target)
         host = parts.hostname or "server"
         return host[4:] if host.startswith("www.") else host
-    for word in words(target):
-        head, sep, _ = word.partition("=")
-        if word.startswith("-") or (sep and head.isidentifier()):
-            continue
-        return os.path.basename(word)
-    return "server"
+    return os.path.basename(target.split()[0]) if target.split() else "server"
 
 
 def names(pairs):
@@ -354,7 +349,7 @@ class Server:
             raise DicError(f"mcp: {self.name}: cannot start: {e}") from None
         threading.Thread(target=self.read, daemon=True).start()
         threading.Thread(target=self.read_err, daemon=True).start()
-        self.say(3, f"mcp: {self.name}: sandbox {self.target}")
+        self.say(3, f"mcp: {self.name}: started {self.target}")
 
     def read(self):
         """Every line the child writes, until it closes its own stdout.

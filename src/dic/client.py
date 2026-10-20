@@ -506,6 +506,14 @@ def dic(prompt,
                       or knobs["model"])
     model = config.resolve(conn, knobs["model"] or config.default_id(conn, env))
     api_type = model.get("api_type", "openai-chat")
+    if (api_type in ("fal", "openai-images", "openai-videos")
+            and (knobs["cont"] or knobs["mid"])):
+        # -c and --mid name a conversation, and these backends generate one
+        # asset from one request while keeping only the newest turn: a call
+        # that answered would silently drop the history the row and the
+        # session pointer claim to carry
+        raise DicError(f"{model['model_id']}: cannot continue:"
+                       f" {api_type} has no conversation")
     adaptor = load_adaptor(api_type, env)
     key_name = model.get("api_key_name")
     if not key_name:

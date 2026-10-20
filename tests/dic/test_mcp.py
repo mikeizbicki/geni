@@ -274,17 +274,26 @@ def test_continue_re_offers_the_rows_tools_without_opening_the_server(
 
 
 @NEEDS_BWRAP
-def test_a_stdio_child_inherits_dics_environment(streams, env, models, llm,
-                                                 monkeypatch):
-    """A command is a jailed child process, and what is exported is what it reads."""
+def test_a_servers_own_assignment_is_set_and_dic_own_env_is_not(
+        streams, env, models, llm, monkeypatch):
+    """A NAME=value sets what the child reads; what dic exported, it does not.
+
+    The sandbox clears the environment, so `--mcp 'K=v cmd'` is the whole of
+    how a server gets a secret now, and the second assertion is why that is
+    safe: an API key dic was started with is not a variable the server can
+    read, and what it reads is what the caller wrote on its own line.
+    """
     monkeypatch.setenv("ECHO_ENV", "from-dic")
     say(streams, env, "hi", model="fake",
-        mcp_shell=[f"{shlex.quote(sys.executable)} {shlex.quote(ECHO)}"])
+        mcp_shell=[f"ECHO_ENV=set-here {shlex.quote(sys.executable)}"
+                   f" {shlex.quote(ECHO)}"])
 
     (offered,) = llm.bodies[0]["tools"]
     name = offered["function"]["name"]
     assert name.startswith("mcp__") and name.endswith("__echo")
-    assert "from-dic" in offered["function"]["description"]
+    description = offered["function"]["description"]
+    assert "set-here" in description
+    assert "from-dic" not in description
 
 
 def test_a_urls_userinfo_becomes_basic_auth(streams, env, models, llm,

@@ -104,17 +104,23 @@ def words(target):
     A command is a word list and not a shell line, and the split is dic's
     and not the shell's, which is why a target with a flag in it is written
     as one quoted string.  The words before the program's own name are the
-    sandbox's own arguments, so `--share-net mcp-fetch` is a server that may
-    reach the network and `mcp-fetch` is one that may not; only the leading
-    run is read that way, so a program's own `-y` stays its own.  What is
-    left worth refusing is the word that is nothing but metacharacters -- a
-    line whose author read it as a line -- because handing a program named
-    `|` to bwrap is a failure that does not say what went wrong.
+    sandbox's own, and they are of two kinds: its flags, so
+    `--share-net mcp-fetch` is a server that may reach the network while
+    `mcp-fetch` is one that may not; and its assignments, so
+    `GH_TOKEN=x mcp-server-github` is a server whose own credential is set
+    in the jail, whose environment is otherwise empty because the sandbox
+    clears it.  Only the leading run is read that way, so a program's own
+    `-y` stays its own.  What is left worth refusing is the word that is
+    nothing but metacharacters -- a line whose author read it as a line --
+    because handing a program named `|` to bwrap is a failure that does not
+    say what went wrong.
 
     >>> words("mcp-fetch --port 3")
     ([], ['mcp-fetch', '--port', '3'])
     >>> words("--share-net mcp-fetch")
     (['--share-net'], ['mcp-fetch'])
+    >>> words("GH_TOKEN=x --share-net mcp-server-github")
+    (['GH_TOKEN=x', '--share-net'], ['mcp-server-github'])
     >>> words("'a b' c")
     ([], ['a b', 'c'])
     >>> words("python3 -c 'import json; print(1)'")
@@ -140,7 +146,8 @@ def words(target):
             raise DicError(f"--mcp: {word[0]!r} in {target!r}: a command is a"
                            " word list, not a shell line (use a script for"
                            " pipes and expansions)")
-        if not argv and word.startswith("-"):
+        assigned = "=" in word and word.partition("=")[0].isidentifier()
+        if not argv and (word.startswith("-") or assigned):
             flags.append(word)
         else:
             argv.append(word)
@@ -161,14 +168,17 @@ def command(target):
 
     The target is that program's argument list and not a line: `"$@"` is
     never re-expanded, so a `|` or a `$(...)` in it is an argument and not
-    syntax.
+    syntax.  The script's own last line is `sandbox "$@"`, and what that
+    receives is the caller's words with one `--` between the leading run and
+    the command, so a command beginning with `-` is never read as another of
+    the sandbox's own options.
 
     >>> command("server")[0]
     'bash'
-    >>> command("server")[3:]
-    ['--', 'sandbox', '--', 'server']
-    >>> command("--share-net server")[3:]
-    ['--', 'sandbox', '--share-net', '--', 'server']
+    >>> command("server")[4:]
+    ['--', 'server']
+    >>> command("--share-net server")[4:]
+    ['--share-net', '--', 'server']
     """
     flags, argv = words(target)
     path = shlex.quote(str(files("dic.scripts") / "dic.sh"))
@@ -176,8 +186,7 @@ def command(target):
               "builtin declare -F sandbox >/dev/null"
               ' || { echo "dic: --mcp: the packaged sandbox is missing" >&2;'
               " exit 127; }\n")
-    return ["bash", "-c", script + 'sandbox "$@"', "--",
-            "sandbox", *flags, "--", *argv]
+    return ["bash", "-c", script + 'sandbox "$@"', "--", *flags, "--", *argv]
 
 
 def sanitize(name):

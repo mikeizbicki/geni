@@ -359,9 +359,9 @@ def dic(prompt,
         mcp:          flag(long="--mcp", action="append", metavar="WORDS|URL",
                            help="offer the tools of an MCP server: a command"
                                 " dic runs sandboxed, whose leading words are"
-                                " the sandbox's own"
-                                " (`--share-net mcp-fetch`); or a URL to POST"
-                                " to; repeatable") = None,
+                                " the sandbox's own -- `--share-net mcp-fetch`"
+                                " for the network, `K=v cmd` for a secret; or"
+                                " a URL to POST to; repeatable") = None,
         mcp_url:      flag(long="--mcp-url", action="append", metavar="URL",
                            help="--mcp with the guess left out, for a URL"
                                 " that carries no scheme") = None,

@@ -175,10 +175,14 @@ own dic.sh by absolute path, and the program it starts is
 not the caller's to switch off by redefining a function or exporting a
 variable -- a child whose `sandbox` is not a function in that file exits
 rather than runs.  The one way to widen it is to say so in the command, whose
-leading `--words` are the sandbox's own arguments: `--mcp '--share-net
-mcp-fetch'` shares the network namespace because an `npx` server has to fetch,
-and `--mcp 'mcp-fetch'` does not.  Writing the target as one quoted string is
-what keeps those words apart, the split being dic's and not the shell's.  A
+leading run is the sandbox's own, and it has two forms.  A leading NAME=value
+is *set inside* the jail, so `--mcp 'GH_TOKEN=x mcp-server-github'` is a
+server whose own credential is the one it reads, and dic's environment -- an
+API key included -- is what the cleared one keeps out.  A leading `-word` is
+the sandbox's own argument, so `--mcp '--share-net mcp-fetch'` shares the
+network namespace because an `npx` server has to fetch and `--mcp 'mcp-fetch'`
+does not.  Writing the target as one quoted string is what keeps those words
+apart, the split being dic's and not the shell's.  A
 word that is nothing but metacharacters is an error naming the character,
 because a `|` is a line whose author read it as one and a program named `|`
 does not say so.
@@ -200,9 +204,10 @@ is the bridge's cargo.
 Both transports are spoken: a command is a child process, one JSON-RPC message
 to a line of its stdout, and a URL is a POST whose answer is JSON or a one-way
 event stream.  The child is a bash that has sourced dic.sh, which is how the
-command reaches the `sandbox` function, and it inherits dic's environment,
-which is how a server gets a secret; its own stderr is kept, because a shell
-that could not run the program says why there and a broken pipe does not.  A
+command reaches the `sandbox` function, and what of the environment it reads
+is what the target's leading assignments set, dic's own being cleared; its
+own stderr is kept, because a shell that could not run the program says why
+there and a broken pipe does not.  A
 HTTP secret rides in the URL, because dic stores the spec it was given and
 never a credential of its own.  Every wait is bounded, and an expiry names the
 method and the number of seconds it waited.

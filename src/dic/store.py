@@ -26,7 +26,7 @@ from dic.tty import DicError
 # version of dic migrates another one: dic is pre-release, so an older file is
 # not upgraded but reported with the rm that removes it, because a database
 # that is only nearly right fails later as a confusing sqlite error.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS messages (
     tools TEXT,                  -- the tools this round offered, verbatim
     mcp TEXT,                    -- the MCP servers this round connected to
     options TEXT,                -- the -o overrides this round was sent with
+    schema TEXT,                 -- the caller's JSON Schema, or NULL
+    dialect TEXT,                -- jsonschema | simonw_llm | systemone
+    mime_type TEXT,              -- the resolved answer mime, so JSONL replays
+    container INTEGER,           -- 1 when a JSONL array wrap was sent
+    repaired TEXT,               -- the repair that ran, or NULL
+    enforced INTEGER,            -- 1/0 when the provider said, NULL when not
     model_id TEXT,
     api_type TEXT,
     session TEXT,                -- the DIC_SESSION this row was written under
@@ -148,7 +154,8 @@ COLUMNS = ("mid", "round", "user", "system", "response", "response_raw",
            "api_type", "session", "upstream", "status", "error", "usage", "cost",
            "cost_items", "price_hash", "t_start", "t_connect", "t_request",
            "t_headers", "t_first", "t_last", "t_done",
-           "tools", "mcp", "options")
+           "tools", "mcp", "options",
+           "schema", "dialect", "mime_type", "container", "repaired", "enforced")
 INSERT = (f"INSERT INTO messages ({', '.join(COLUMNS)})"  # noqa: S608
           f" VALUES ({', '.join('?' * len(COLUMNS))})")
 
@@ -593,7 +600,8 @@ def history(conn, mid):
     model that produced its last turn, unless -m names another.
     """
     columns = ("mid,round,user,system,response,response_raw,prev_mid,model_id,"
-               "api_type,attachments,outputs,tool_results,tools,mcp,options")
+               "api_type,attachments,outputs,tool_results,tools,mcp,options,"
+               "schema,dialect,mime_type")
     qualified = ",".join(f"m.{c}" for c in columns.split(","))
     rows = conn.execute(
         f"WITH RECURSIVE chain({columns}) AS ("  # noqa: S608

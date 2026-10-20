@@ -21,7 +21,8 @@ entry point.
 """
 import json, os, re, sys, time, urllib.parse
 
-from dic import config, net, output, price, schema
+from dic import config, net, output, price
+from dic import schema as schema_mod
 from dic.options import GLOBAL, OUTPUT, DEBUG, flag, resolve
 from dic.store import (INSERT, SESSION_COST, Recorder, config_dir, db,
                        file_block, history, normalize, resolve_ref,
@@ -372,6 +373,10 @@ def dic(prompt,
                                 " or a ref like HEAD~3") = None,
         mime_type:    flag(long="--mime-type", metavar="TYPE",
                            help="the mime type of the answer") = None,
+        schema:       flag(long="--schema", metavar="REF",
+                           help="a JSON Schema, a path to one, or a"
+                                " shorthand in the llm or systemone"
+                                " dialect: constrain the answer to it") = None,
         # ----- post-process the output -----
         path:         flag(long="--path", metavar="FILE", group=OUTPUT,
                            help="write the answer to FILE, atomically") = None,
@@ -569,10 +574,44 @@ def dic(prompt,
         from dic import tool
         tools = tuple(tool.resolve(specs or [])) + tuple(mcp_tools)
 
+    # The schema is inherited by -c like -m, -s and -o are: --schema names
+    # one, else the row's, else $DIC_SCHEMA, else the model's own key.  A
+    # schema is a request, so an adaptor that cannot send one refuses here
+    # rather than answering a call the caller believes is constrained.
+    schema_text = knobs["schema"]
+    schema_value, schema_dialect = None, None
+    if schema_text is None:
+        if rows and rows[-1]["schema"]:
+            schema_value = json.loads(rows[-1]["schema"])
+            schema_dialect = rows[-1]["dialect"]
+        elif model.get("schema"):
+            schema_value, schema_dialect = schema_mod.parse(model["schema"])
+    elif schema_text != "":
+        schema_value, schema_dialect = schema_mod.parse(schema_text)
+    if ((schema_text is not None or schema_value is not None)
+            and not getattr(adaptor, "output_format", None)):
+        # no shipped adaptor has the hook yet, and an attribute that is
+        # absent is a refusal: an answer the caller believes is
+        # schema-shaped and is not is the one failure this exists to prevent
+        raise DicError(f"{model['model_id']}: {api_type} has no"
+                       " output_format, so --schema cannot be sent")
+
     # what the answer will be, settled before the call so that a missing or
-    # taken --path fails before the network instead of after a whole video
-    mime = knobs["mime_type"] or model.get("output") or "text/plain"
-    if knobs["extract"] and schema.is_json_mime(mime):
+    # taken --path fails before the network instead of after a whole video.
+    # A schema makes it application/json; a manual text/* alongside one
+    # drops the schema; --schema='' keeps the JSON mime with no constraint.
+    asked_mime = knobs["mime_type"]
+    if asked_mime and schema_value is not None:
+        if asked_mime.startswith("text/"):
+            schema_value, schema_dialect = None, None
+        elif not schema_mod.is_json_mime(asked_mime):
+            raise DicError(f"--mime-type {asked_mime} contradicts a schema")
+    mime = (asked_mime
+            or ("application/json"
+                if schema_value is not None or schema_text == "" else None)
+            or model.get("output")
+            or "text/plain")
+    if knobs["extract"] and schema_mod.is_json_mime(mime):
         # -x names the part of the answer to print and a JSON mime names
         # what the answer is; the two are two answers to one question
         raise DicError("-x and a JSON mime are two answers to what the"
@@ -780,7 +819,13 @@ def dic(prompt,
                              "parameters": t["parameters"]} for t in tools],
                 "mcp": mcp_map}) if tools else None,
             json.dumps(pairs) if pairs else None,
-            json.dumps(overrides) if overrides else None))
+            json.dumps(overrides) if overrides else None,
+            json.dumps(schema_value) if schema_value is not None else None,
+            schema_dialect,
+            mime,
+            None,           # container: the JSONL array wrap is a later commit
+            None,           # repaired: no repair runs yet
+            None))          # enforced: no adaptor reports it yet
         if recorder is not None:
             # one row per round that produced bytes, and none for one that did
             # not: a round's samples are measured from that round's own start

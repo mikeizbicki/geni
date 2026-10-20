@@ -34,6 +34,9 @@ def tool_schema(tools):
              "function": {"name": t["name"], "description": t["description"],
                           "parameters": t["parameters"]}}
             for t in tools]
+# A schema here is dictated: `response_format` with `strict: true` is the
+# provider's own conformance story, and the row records that it was.
+ENFORCES_SCHEMA = True
 def output_format(body, model, schema, mime):  # noqa: ARG001
     """Set the response_format this request carries, from --schema or a JSON mime.
 

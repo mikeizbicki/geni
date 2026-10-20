@@ -244,6 +244,30 @@ def resolve_toggle(value, default, what, model):
     return value == "on"
 
 
+def answer_from_calls(calls, output_tool):
+    """The output tool's arguments as the answer, or None.
+
+    A protocol with no response_format carries a --schema as a forced
+    tool, so the answer is that call's arguments, which the wire already
+    delivers as an object.  None when there is no such tool to look for,
+    or the model did not call it this round.
+
+    >>> answer_from_calls([{"name": "output", "arguments": {"a": 1}}],
+    ...                   "output")
+    {'a': 1}
+    >>> answer_from_calls([{"name": "ls", "arguments": {}}], "output") is None
+    True
+    >>> answer_from_calls([], None) is None
+    True
+    """
+    if output_tool is None:
+        return None
+    for call in calls:
+        if call["name"] == output_tool:
+            return call["arguments"]
+    return None
+
+
 def repair_json(text):
     """(text, what): the JSON in the answer, fenced or broken, or text as-is.
 
@@ -909,6 +933,19 @@ def dic(prompt,
     # both facts start empty: a call that is not a schema call writes them
     # NULL, and a schema call that repairs or validates fills them in
     repaired, errors = None, []
+    # The output tool is how a protocol with no response_format carries a
+    # schema: its arguments are the answer and its call ends the loop.  It
+    # is never a tool the user offered, and a protocol with no OUTPUT_TOOL
+    # has no such channel.
+    output_tool = (getattr(adaptor, "OUTPUT_TOOL", None)
+                   if schema_value is not None
+                   and getattr(adaptor, "output_format", None) else None)
+    # the text channel dictates with strict:true and the tool channel asks;
+    # the row records which, so a provider that quietly walked a schema
+    # back is visible in the row rather than hidden by it
+    enforced = (1 if getattr(adaptor, "ENFORCES_SCHEMA", False) else 0
+                if schema_value is not None
+                and getattr(adaptor, "output_format", None) else None)
     sink = None
     if not printing:
         # a printed request writes no file and makes no call, so the sink
@@ -989,13 +1026,22 @@ def dic(prompt,
             line.wait()
             turns = prepare(model, api_key, turns, opts)
             line.first_token()
-    body = adaptor.build(model, turns, system, opts)
-    if getattr(adaptor, "output_format", None):
-        # the hook fires before --print=json/--print=curl, so a printed
-        # request carries the directive and not one that lacks it: the
-        # directive is part of the request and the printed request is the
-        # request
-        body = adaptor.output_format(body, model, wire_schema, mime)
+
+    def request_body():
+        """build() and the output_format hook, for this round's turns.
+
+        The hook fires before --print=json/--print=curl, so a printed
+        request carries the directive and not one that lacks it.  A tool
+        loop rebuilds the body every round, so the hook fires on every
+        rebuild and not only the first: a later round without it would be
+        a schema call that stopped asking for the schema the moment the
+        model used a tool.
+        """
+        built = adaptor.build(model, turns, system, opts)
+        hook = getattr(adaptor, "output_format", None)
+        return hook(built, model, wire_schema, mime) if hook else built
+
+    body = request_body()
     headers = {"content-type": "application/json", "accept": "text/event-stream"}
     headers.update(adaptor.auth(api_key))
     headers.update(model.get("headers") or {})
@@ -1130,7 +1176,7 @@ def dic(prompt,
             mime,
             container,      # 1 when an array wrapped the schema, else NULL
             repaired,       # the repair that ran, or NULL
-            None))          # enforced: no adaptor reports it yet
+            enforced))      # 1 dictated, 0 asked, NULL when no schema
         if recorder is not None:
             # one row per round that produced bytes, and none for one that did
             # not: a round's samples are measured from that round's own start
@@ -1237,7 +1283,15 @@ def dic(prompt,
                 # wire status; a stream that ran to its end is a 200
                 wire["status"] = 200
             keep(wire)
-            asked = adaptor.calls(acc) if tools else ()
+            asked = adaptor.calls(acc) if (tools or output_tool) else ()
+            # The output tool's arguments are the answer: this round is
+            # the last one, whatever else the model asked for beside it,
+            # because the answer arrives on that call and on no text
+            # delta -- a tool run beside it would be work for an answer
+            # that has already been given.
+            answer = answer_from_calls(asked, output_tool)
+            if answer is not None:
+                asked = []
             if asked and index + 1 >= MAX_TOOL_ROUNDS:
                 raise DicError(f"the model has asked for tools"
                                f" {MAX_TOOL_ROUNDS} rounds running; giving up")
@@ -1267,6 +1321,23 @@ def dic(prompt,
             usage, cost, items, source = billing(acc)
             rounds.append((usage, cost, items))
             raw = adaptor.finish(acc)
+            if answer is not None:
+                # the protocol's text stream carried no answer, so the
+                # object the tool call returned is the whole of it: it is
+                # serialized into the same chunks a text delta would have
+                # gone into, and response_raw keeps the tool_use block
+                # above for a later audit and for replay within this
+                # provider.
+                call_answer = json.dumps(answer, ensure_ascii=False)
+                chunks.append(call_answer)
+                printed.append(call_answer)
+                if not knobs["extract"]:
+                    if paint and painted != "":
+                        sink.write((RESET if painted is not None else "")
+                                   + PAYLOAD)
+                        painted = ""
+                    sink.write(call_answer)
+                break
             if not asked:
                 break
             # this round asked for tools, so it is not the last one: it is
@@ -1282,7 +1353,7 @@ def dic(prompt,
             turns.append({"role": "user", "blocks": [
                 {"type": "tool_result", "id": r["id"], "content": r["content"]}
                 for r in results]})
-            body = adaptor.build(model, turns, system, opts)
+            body = request_body()
             index += 1
     except KeyboardInterrupt:
         # A ^C is the caller's, not dic's: close what this call opened and let

@@ -17,6 +17,9 @@ def auth(key):
     """
     return {"Authorization": "Bearer " + key}
 
+# A schema here is dictated: `text.format` with `strict: true` is the
+# provider's own conformance story, and the row records that it was.
+ENFORCES_SCHEMA = True
 def output_format(body, model, schema, mime):  # noqa: ARG001
     """Set the text.format this request carries, from --schema or a JSON mime.
 

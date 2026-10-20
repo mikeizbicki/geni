@@ -298,10 +298,10 @@ def test_a_stdio_server_is_jailed_and_only_its_own_words_widen_the_jail(
     port = urllib.parse.urlsplit(llm.api_base).port
     report = ("import socket, sys\n"
               "try:\n"
-              "    socket.create_connection(('127.0.0.1', %d), timeout=3)\n"
+              f"    socket.create_connection(('127.0.0.1', {port}), timeout=3)\n"
               "    print('network: reached', file=sys.stderr)\n"
               "except OSError:\n"
-              "    print('network: blocked', file=sys.stderr)\n" % port)
+              "    print('network: blocked', file=sys.stderr)\n")
     child = f"{shlex.quote(sys.executable)} -c {shlex.quote(report)}"
 
     # the child exits without answering, so the handshake is what fails and

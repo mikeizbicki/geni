@@ -33,6 +33,15 @@ from dic.tty import (INFO, PAYLOAD, RESET, DicError, Line, osc52, pv_update,
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# The protocols whose structured output dic can check independently: every
+# text protocol asks the model in a way the schema itself describes, so
+# repair and validation are both on by default.  typesafe shapes its
+# answers itself, so it validates locally and does not repair.
+REPAIRS_AUTO = frozenset({"openai-chat", "openai-responses",
+                          "anthropic-messages"})
+VALIDATES_AUTO = frozenset({"openai-chat", "openai-responses",
+                            "anthropic-messages", "typesafe"})
+
 # How many times one call may ask for tools before dic stops asking: a model
 # that loops is a bug and not a conversation, and a call is not an infinite
 # budget.
@@ -172,6 +181,186 @@ class Splitter:
                     out.append(self.buffer.strip())
                     self.buffer = ""
         return out
+
+
+def repairs_auto(api_type, dialect):
+    """Whether this protocol and dialect default repair on.
+
+    A dialect dic cannot compile into a protocol's own shape never gets to
+    repair: the schema would be prose the model never agreed to.
+
+    >>> repairs_auto("openai-chat", None), repairs_auto("typesafe", "systemone")
+    (True, False)
+    >>> repairs_auto("fal", None)
+    False
+    """
+    if dialect == schema_mod.SYSTEMONE:
+        return False
+    return api_type in REPAIRS_AUTO
+
+
+def validates_auto(api_type):
+    """Whether this protocol and dialect default validation on.
+
+    Every text protocol validates against jsonschema -- they were all
+    asked with the same schema -- and systemone validates locally, with
+    no import, because the provider already shaped the answers.
+
+    >>> validates_auto("openai-chat"), validates_auto("typesafe")
+    (True, True)
+    >>> validates_auto("fal")
+    False
+    """
+    return api_type in VALIDATES_AUTO
+
+
+def resolve_toggle(value, default, what, model):
+    """A --repair or --validate value as a bool, with auto resolved.
+
+    auto is the default and resolves per protocol; an explicit on where
+    the protocol cannot is an error, because a silently skipped repair or
+    validation is a call the caller believes is checked and is not.
+
+    >>> resolve_toggle(None, True, "repair", {"model_id": "m"})
+    True
+    >>> resolve_toggle("off", True, "repair", {"model_id": "m"})
+    False
+    >>> resolve_toggle("auto", False, "validate", {"model_id": "m"})
+    False
+    >>> resolve_toggle("on", False, "repair",
+    ...                {"model_id": "m", "api_type": "fal"})
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: m: --repair=on, and fal cannot repair
+    """
+    if value in (None, "auto"):
+        return default
+    if value not in ("on", "off"):
+        raise DicError(f"--{what} must be on, off or auto, not {value!r}")
+    if value == "on" and not default:
+        raise DicError(f"{model['model_id']}: --{what}=on, and"
+                       f" {model.get('api_type') or 'openai-chat'}"
+                       f" cannot {what}")
+    return value == "on"
+
+
+def repair_json(text):
+    """(text, what): the JSON in the answer, fenced or broken, or text as-is.
+
+    The fallback chain is code_block then json.loads, and only when both
+    have failed is json_repair imported: the import is off the hot path in
+    the strong sense, because cost and failure correlate.  The third step
+    is the only repair dependency.
+
+    >>> repair_json('{"a": 1}')
+    ('{"a": 1}', None)
+    >>> repair_json('```json\\n{"a": 1}\\n```')
+    ('{"a": 1}\\n', 'code_block')
+    >>> repair_json('no json here')[0]
+    'no json here'
+    """
+    fenced = code_block(text)
+    try:
+        json.loads(fenced)
+    except ValueError:
+        pass
+    else:
+        return fenced, ("code_block" if fenced != text else None)
+    try:
+        import json_repair
+    except ImportError:
+        return text, None
+    try:
+        fixed = json_repair.repair_json(text)
+        json.loads(fixed)
+    except Exception:
+        return text, None
+    return fixed, "json_repair"
+
+
+def validate_json(schema, dialect, text):
+    """() -> [errors]: validation of one answer against one schema.
+
+    Two dialects, two checks.  jsonschema is imported whenever the caller
+    asked for a jsonschema or simonw_llm dialect, and a validator that
+    silently ignored anyOf would be a false pass, so there is no subset
+    validator and no hand-rolled walk.  systemone validates locally, with
+    no import: every question asked has an answer, and every answer's
+    type matches its question's, which is what the provider's own shaping
+    leaves for dic to check.
+
+    >>> validate_json({"type": "object"}, "jsonschema", '{"a": 1}')
+    []
+    >>> validate_json({"questions": {"b": {"type": "noul"}}}, "systemone",
+    ...               '{"b": {"type": "noul", "noul": 0.9}}')
+    []
+    >>> validate_json({"questions": {"b": {"type": "noul"}}}, "systemone",
+    ...               '{"b": {"type": "score", "score": 1}}')
+    ['b: expected a noul answer']
+    >>> validate_json({"questions": {"b": {"type": "noul"}}}, "systemone", '{}')
+    ['b: no answer']
+    """
+    try:
+        answer = json.loads(text)
+    except ValueError as e:
+        return [f"answer is not JSON: {e}"]
+    if dialect == schema_mod.SYSTEMONE:
+        return _systemone_errors(schema, answer)
+    return _jsonschema_errors(schema, answer)
+
+
+def _systemone_errors(schema, answer):
+    """Local validation of a systemone answer, with no jsonschema import.
+
+    >>> _systemone_errors({"questions": {"a": {"type": "noul"}}},
+    ...                   {"a": {"type": "noul", "noul": 0.5}})
+    []
+    >>> _systemone_errors({"questions": {"a": {"type": "noul"}}}, "x")
+    ['answer is not an object']
+    """
+    if not isinstance(answer, dict):
+        return ["answer is not an object"]
+    questions = schema.get("questions") or {}
+    errors = []
+    for name, question in questions.items():
+        if name not in answer:
+            errors.append(f"{name}: no answer")
+            continue
+        got = answer[name]
+        if not isinstance(got, dict) or got.get("type") != question.get("type"):
+            errors.append(f"{name}: expected a {question.get('type')} answer")
+    return errors
+
+
+def _jsonschema_errors(schema, answer):
+    """jsonschema validation, against a validator that cannot fetch.
+
+    FormatChecker is passed because `format` is annotation-only without
+    it, and a date-time that is not one should fail.  A remote $ref is an
+    error: following one is a network fetch from a config file, which is
+    a side effect dic's security model says it does not have.
+    """
+    _refuse_remote_refs(schema)
+    try:
+        from jsonschema import Draft202012Validator, FormatChecker
+    except ImportError as e:
+        raise DicError(f"validation needs jsonschema: {e}") from None
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    return [f"{'/'.join(str(p) for p in e.path) or '.'}: {e.message}"
+            for e in validator.iter_errors(answer)]
+
+
+def _refuse_remote_refs(node):
+    """A remote $ref is an error: it is a fetch, and dic has no side effects."""
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith(("http://", "https://")):
+            raise DicError(f"--schema: remote $ref is an error: {ref}")
+        for value in node.values():
+            _refuse_remote_refs(value)
+    elif isinstance(node, list):
+        for value in node:
+            _refuse_remote_refs(value)
 
 
 def code_block(text):
@@ -429,6 +618,14 @@ def dic(prompt,
                            help="a JSON Schema, a path to one, or a"
                                 " shorthand in the llm or systemone"
                                 " dialect: constrain the answer to it") = None,
+        repair:       flag(long="--repair", metavar="MODE", group=OUTPUT,
+                           help="repair a JSON answer that is fenced or"
+                                " broken: on, off, or auto (the default,"
+                                " per protocol)") = None,
+        validate:     flag(long="--validate", metavar="MODE", group=OUTPUT,
+                           help="check a JSON answer against the schema:"
+                                " on, off, or auto (the default, per"
+                                " protocol)") = None,
         # ----- post-process the output -----
         path:         flag(long="--path", metavar="FILE", group=OUTPUT,
                            help="write the answer to FILE, atomically") = None,
@@ -676,6 +873,19 @@ def dic(prompt,
     # so the wire shape differs from the asked-for schema and neither lies
     # about the other.
     wire_schema, container = schema_mod.wrap(schema_value, mime)
+    # repair and validate resolve per (api_type, dialect), so the common
+    # case is zero configuration; an explicit on where the protocol cannot
+    # is an error, because a call the caller believes is checked and is not
+    # is the one failure this feature exists to prevent
+    repairs = resolve_toggle(knobs["repair"],
+                             repairs_auto(api_type, schema_dialect),
+                             "repair", model)
+    validates = resolve_toggle(knobs["validate"],
+                               validates_auto(api_type),
+                               "validate", model)
+    # both facts start empty: a call that is not a schema call writes them
+    # NULL, and a schema call that repairs or validates fills them in
+    repaired, errors = None, []
     sink = None
     if not printing:
         # a printed request writes no file and makes no call, so the sink
@@ -890,7 +1100,7 @@ def dic(prompt,
             schema_dialect,
             mime,
             container,      # 1 when an array wrapped the schema, else NULL
-            None,           # repaired: no repair runs yet
+            repaired,       # the repair that ran, or NULL
             None))          # enforced: no adaptor reports it yet
         if recorder is not None:
             # one row per round that produced bytes, and none for one that did
@@ -1112,6 +1322,14 @@ def dic(prompt,
         if response and not response.endswith("\n"):
             sink.write("\n")
             text += "\n"
+    # Repair first, then validate, on the printed text: this is the one rule
+    # that makes the two features compose, and a schema is what says either
+    # is worth doing at all.  A prose call owes neither and pays for neither.
+    if schema_value is not None and schema_mod.is_json_mime(mime):
+        if repairs:
+            text, repaired = repair_json(text)
+        if validates:
+            errors = validate_json(schema_value, schema_dialect, text)
     paths = sink.close()
     outputs = [{"path": p, "mime_type": mime} for p in paths[seen:]]
     if clipboard:
@@ -1130,6 +1348,14 @@ def dic(prompt,
     if wire["status"] != 200:
         raise DicError(f"{wire['status']} {wire.get('error')}")
     session_move(env, mid)
+
+    if errors:
+        # The answer is printed and the pointer has moved: the model must
+        # see its own bad output to correct it, and -c that could not replay
+        # the failure would be a thread that cannot be fixed.  Validation
+        # that did not affect the exit status would be theatre.
+        raise DicError("validation failed, the answer is above:\n"
+                       + "\n".join(f"  {error}" for error in errors))
 
     out.flush()
 

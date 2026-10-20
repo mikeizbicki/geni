@@ -1,0 +1,14 @@
+#!/bin/bash
+# Fake git-apply-fuzzy for the committe tests.  The tool under test is
+# committe's orchestration -- fork, run, apply, commit, merge -- and not
+# git-apply-fuzzy's fuzzy matcher, and the fixture patches are well
+# formed, so `git apply --recount` is what the SPEC says a patch from a
+# model is applied with anyway.  It is here rather than reached through
+# PATH because the real one is a python console entry point, and a
+# developer's venv may have been installed from a tree that is no longer
+# the one under test.  --index stages what it applies, because that is
+# what committe's record step relies on: it commits without a `git add`
+# of its own.
+set -u
+
+exec git apply --index --recount "$@"

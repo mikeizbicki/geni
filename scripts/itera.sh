@@ -226,7 +226,7 @@ itera-run() {
             return "$status"
         fi
         if itera-run-tests; then
-            #dic-info "itera: green after $round round(s)"
+            dic-info "itera: green after $round round(s)"
             return 0
         fi
         round=$((round + 1))

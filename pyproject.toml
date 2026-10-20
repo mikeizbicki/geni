@@ -12,6 +12,7 @@ dev = ["ruff>=0.6", "bandit[toml]>=1.7"]
 dic = "dic.__main__:main"
 accio = "accio.__main__:main"
 git-apply-fuzzy = "git_apply_fuzzy.__main__:main"
+# see pyproject.toml for the package layout
 
 [build-system]
 requires = ["setuptools>=61"]

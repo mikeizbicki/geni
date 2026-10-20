@@ -54,11 +54,14 @@ it.  A missing bats, or a `tests/shell` with no suites in it, is a failure
 and not a skip: an empty collection reads as a green run that covered less
 than it claims.
 
-Two things are faked in a shell test and nothing else is.  `tests/bin/dic`
-replays a recorded reply, and `tests/bin/bwrap` records the argument list
-`sandbox()` builds.  The temporary `git init` repository the test tears
-down, the `git` a developer has, the script under test, and the shell that
-runs them are all real.
+Three things are faked in a shell test and nothing else is.  `tests/bin/dic`
+replays a recorded reply, `tests/bin/bwrap` records the argument list
+`sandbox()` builds, and `tests/bin/git-apply-fuzzy` applies a patch with
+`git apply --recount`, so a committe case does not depend on the python
+entry point being installed in whatever environment the suite happens to
+run in.  The temporary `git init` repository the test tears down, the
+`git` a developer has, the script under test, and the shell that runs
+them are all real.
 
 `tests/bin/bwrap` is there because a real jail cannot be made from inside
 `sandbox pytest`: the outer sandbox installs a filter that refuses the

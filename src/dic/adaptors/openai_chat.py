@@ -40,15 +40,15 @@ ENFORCES_SCHEMA = True
 def output_format(body, model, schema, mime):  # noqa: ARG001
     """Set the response_format this request carries, from --schema or a JSON mime.
 
+    """Set the response_format this request carries, from --schema.
+
     A schema is `strict: true`, which is the whole point of the shape the
-    shorthand already compiles to; a JSON mime without a schema is the
-    weakest ask, a bare json_object; a text mime carries neither and the
-    body is left as build() made it.
+    shorthand already compiles to; a text mime carries nothing and the
+    body is left as build() made it.  A JSON mime without a schema never
+    reaches here: the client refuses one, because no provider takes it.
 
     >>> output_format({"model": "m"}, {}, {"type": "object"}, "application/json")
     {'model': 'm', 'response_format': {'type': 'json_schema', 'json_schema': {'name': 'response', 'schema': {'type': 'object'}, 'strict': True}}}
-    >>> output_format({}, {}, None, "application/json")
-    {'response_format': {'type': 'json_object'}}
     >>> output_format({"model": "m"}, {}, None, "text/plain")
     {'model': 'm'}
     """
@@ -57,11 +57,7 @@ def output_format(body, model, schema, mime):  # noqa: ARG001
             "type": "json_schema",
             "json_schema": {"name": "response", "schema": schema,
                             "strict": True}}
-    elif mime.endswith("/json") or mime.endswith("+json"):
-        body["response_format"] = {"type": "json_object"}
     return body
-
-
 def build(model, turns, system, params):
     """IR turns to a streaming chat-completions body; system is a leading message.
 

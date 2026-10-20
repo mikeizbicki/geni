@@ -1351,7 +1351,7 @@ def dic(prompt,
                 call_answer = json.dumps(answer, ensure_ascii=False)
                 chunks.append(call_answer)
                 printed.append(call_answer)
-                if not knobs["extract"]:
+                if not knobs["extract"] and not container:
                     if paint and painted != "":
                         sink.write((RESET if painted is not None else "")
                                    + PAYLOAD)

@@ -44,6 +44,12 @@ SYSTEMONE_LEAVES = ("noul", "choice", "score", "box")
 # both, and either is how a caller asks for one JSON value per line.
 JSONL_MIMES = ("application/x-ndjson", "application/jsonl")
 
+# The one key a JSONL answer's records are asked under.  Every provider's
+# structured output requires a schema's root to be an object and none of
+# them accepts a top-level array, so a stream of records is asked for as
+# one object with them in it; dic unwraps that object on receipt.
+JSONL_KEY = "jsonl"
+
 
 def parse(text):
     """(schema, dialect) for a --schema value.
@@ -155,28 +161,31 @@ def printable(mime_type):
 
 
 def wrap(schema, mime_type):
-    """(schema, container): the schema as sent, and whether an array wraps it.
+    """(schema, container): the schema as sent, and whether an object wraps it.
 
-    A schema is JSON Schema, which cannot describe a stream of documents:
-    a JSONL mime is expressed as an array of the schema's type, and each
-    element is what the schema constrains.  `container` is 1 when the
-    wrap ran and None when it did not, so the row can say the wire shape
-    differed from the schema the caller wrote.
+    A schema is JSON Schema, which cannot describe a stream of documents,
+    and no provider's structured output accepts a top-level array: a JSONL
+    answer is therefore asked for as one object with the records under
+    `jsonl`, and each element is what the caller's schema constrains.
+    `container` is 1 when the wrap ran and None when it did not, so the row
+    can say the wire shape differed from what the caller wrote.
 
     >>> wrap({"type": "object"}, "application/json")
     ({'type': 'object'}, None)
-    >>> wrap({"type": "object"}, "application/x-ndjson")
-    ({'type': 'array', 'items': {'type': 'object'}}, 1)
-    >>> wrap({"type": "object"}, "application/jsonl")
-    ({'type': 'array', 'items': {'type': 'object'}}, 1)
-    >>> wrap(None, "application/x-ndjson")
-    (None, None)
     >>> wrap({"type": "object"}, "text/plain")
     ({'type': 'object'}, None)
+    >>> wrap(None, "application/x-ndjson")
+    (None, None)
+    >>> wrapped, container = wrap({"type": "object"}, "application/jsonl")
+    >>> container, wrapped["properties"]["jsonl"]["items"]
+    (1, {'type': 'object'})
     """
     if schema is None or mime_type not in JSONL_MIMES:
         return schema, None
-    return {"type": "array", "items": schema}, 1
+    return {"type": "object",
+            "properties": {JSONL_KEY: {"type": "array", "items": schema}},
+            "required": [JSONL_KEY],
+            "additionalProperties": False}, 1
 
 
 # ------------------------------------------------------------- the shorthands

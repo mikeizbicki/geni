@@ -131,58 +131,6 @@ def events(api_base, path, headers, body, stamps, line=None):
                 yield json.loads(data)
 
 
-class Splitter:
-    """A JSONL stream split into complete top-level values as they arrive.
-
-    Split on brace and bracket depth, string- and escape-aware, so a value
-    is yielded the moment its depth returns to zero and the happy path
-    streams record by record without holding the whole answer.  A value cut
-    off mid-string or mid-object is held rather than yielded half, and a
-    caller that never sees it complete hands the buffer on when the stream
-    ends.
-
-    >>> s = Splitter()
-    >>> s.feed('{"a": 1}\\n{"b": 2}\\n')
-    ['{"a": 1}', '{"b": 2}']
-    >>> s.feed('{"a": "}{"}')
-    ['{"a": "}{"}']
-    >>> s.feed('{"unclosed')
-    []
-    >>> s.buffer
-    '{"unclosed'
-    """
-
-    def __init__(self):
-        self.buffer = ""
-        self.depth = 0
-        self.in_string = False
-        self.escape = False
-
-    def feed(self, text):
-        """Append text; yield every complete top-level value it now holds."""
-        out = []
-        for ch in text:
-            self.buffer += ch
-            if self.in_string:
-                if self.escape:
-                    self.escape = False
-                elif ch == "\\":
-                    self.escape = True
-                elif ch == '"':
-                    self.in_string = False
-                continue
-            if ch == '"':
-                self.in_string = True
-            elif ch in "[{":
-                self.depth += 1
-            elif ch in "]}":
-                self.depth -= 1
-                if self.depth == 0:
-                    out.append(self.buffer.strip())
-                    self.buffer = ""
-        return out
-
-
 def repairs_auto(api_type, dialect):
     """Whether this protocol and dialect default repair on.
 
@@ -400,42 +348,38 @@ def code_block(text):
 
 
 def jsonl_records(text, repairs=True):
-    """Split a JSONL answer into complete records, one per line.
+    """A JSONL answer as one record per line: the container object unwrapped.
 
-    A fence is stripped first, because a JSON answer arrives fenced far
-    more often than not, and a fence in front of the first `{` would
-    keep the splitter from ever seeing a top-level value.  A value that
-    never closed is the residual buffer: it is what the model was
-    writing when it stopped, so repair is offered it before it is
-    accepted as a record of its own.  The result always ends with a
-    newline, so stdout carries one record per line and the row's
-    response keeps the same bytes.
+    No provider's structured output accepts a top-level array, so a stream
+    of records is asked for as one object with them under `jsonl`; this is
+    where that object is opened into the lines a reader counts.  A fence is
+    common even under a strict schema, so the answer is unwrapped from its
+    code block first and repaired after that if it still will not parse.
 
-    >>> jsonl_records('{"a": 1}\\n{"b": 2}\\n')
+    A line is one JSON value, which is what a reader counts at a glance and
+    what a later tool reads one record at a time.
+
+    >>> jsonl_records('{"jsonl": [{"a": 1}, {"b": 2}]}')
     ('{"a": 1}\\n{"b": 2}\\n', None)
-    >>> jsonl_records('{"a": 1}{"b": 2}')
-    ('{"a": 1}\\n{"b": 2}\\n', None)
-    >>> jsonl_records('```json\\n{"a": 1}\\n```')
+    >>> jsonl_records('```json\\n{"jsonl": [{"a": 1}]}\\n```')
     ('{"a": 1}\\n', 'code_block')
-    >>> jsonl_records('')
-    ('', None)
-    >>> jsonl_records("  ")
+    >>> jsonl_records('{"jsonl": []}')
     ('', None)
     """
-    fenced = code_block(text)
-    repaired = "code_block" if fenced != text else None
-    splitter = Splitter()
-    records = splitter.feed(fenced)
-    residual = splitter.buffer.strip()
-    if residual:
-        fixed, what = (repair_json(residual) if repairs
-                       else (residual, None))
-        if what:
-            records.append(fixed.strip())
-            repaired = repaired or what
-        else:
-            records.append(residual)
-    return "".join(record + "\n" for record in records), repaired
+    repaired, what = (repair_json(text) if repairs else (text, None))
+    for candidate in (text, repaired):
+        try:
+            parsed = json.loads(candidate)
+        except ValueError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        records = parsed.get(schema_mod.JSONL_KEY)
+        if isinstance(records, list):
+            lines = [json.dumps(record, ensure_ascii=False) + "\n"
+                     for record in records]
+            return "".join(lines), what
+    return text, None
 
 
 def options(model, overrides):
@@ -956,21 +900,28 @@ def dic(prompt,
         elif not schema_mod.is_json_mime(asked_mime):
             raise DicError(f"--mime-type {asked_mime} contradicts a schema")
     mime = (asked_mime
-            or ("application/json"
-                if schema_value is not None or schema_text == "" else None)
+            or ("application/json" if schema_value is not None else None)
             or model.get("output")
             or "text/plain")
+    # A JSON mime promises that the answer is JSON and that it is the answer
+    # the caller asked for, and a schema is the only thing that says either;
+    # no provider takes one without it, so the ask is refused here rather
+    # than at the API, where a bare json_object failed and a JSONL ask had
+    # nothing to wrap.
+    if schema_value is None and schema_mod.is_json_mime(mime):
+        raise DicError(f"--mime-type {mime} needs --schema: no provider"
+                       " takes a JSON mime without one")
     if knobs["extract"] and schema_mod.is_json_mime(mime):
         # -x names the part of the answer to print and a JSON mime names
         # what the answer is; the two are two answers to one question
         raise DicError("-x and a JSON mime are two answers to what the"
                        " answer is")
-    # A JSONL mime is the container, and a schema is JSON Schema, which
-    # cannot describe a stream of documents: the array is how a
-    # schema-shaped backend is asked for many records.  The wire schema is
-    # what is sent; the row keeps the caller's own beside a container fact,
-    # so the wire shape differs from the asked-for schema and neither lies
-    # about the other.
+    # A JSONL mime is the container, and JSON Schema cannot describe a
+    # stream of documents: the records are asked for in one object under a
+    # key, because no provider's structured output accepts a top-level
+    # array.  The wire schema is what is sent; the row keeps the caller's
+    # own beside a container fact, so the wire shape differs from the
+    # asked-for schema and neither lies about the other.
     wire_schema, container = schema_mod.wrap(schema_value, mime)
     # repair and validate resolve per (api_type, dialect), so the common
     # case is zero configuration; an explicit on where the protocol cannot

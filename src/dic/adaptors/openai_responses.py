@@ -21,25 +21,24 @@ def auth(key):
 # provider's own conformance story, and the row records that it was.
 ENFORCES_SCHEMA = True
 def output_format(body, model, schema, mime):  # noqa: ARG001
-    """Set the text.format this request carries, from --schema or a JSON mime.
+    """Set the text.format this request carries, from --schema.
 
-    The responses API names the constraint under `text.format` rather than
-    at the top level, and takes the schema's name beside it; a bare JSON
-    mime without one is json_object, and a text mime carries neither.
+    The responses API names the constraint under `text.format` rather
+    than at the top level, and takes the schema's name beside it; a text
+    mime carries nothing and the body is left as build() made it.  A JSON
+    mime without a schema never reaches here: the client refuses one,
+    because no provider takes it.
 
     >>> output_format({}, {}, {"type": "object"}, "application/json")
     {'text': {'format': {'type': 'json_schema', 'name': 'response', 'schema': {'type': 'object'}, 'strict': True}}}
-    >>> output_format({}, {}, None, "application/json")
-    {'text': {'format': {'type': 'json_object'}}}
     >>> output_format({"model": "m"}, {}, None, "text/plain")
     {'model': 'm'}
     """
     if schema is not None:
         body["text"] = {"format": {"type": "json_schema", "name": "response",
                                    "schema": schema, "strict": True}}
-    elif mime.endswith("/json") or mime.endswith("+json"):
-        body["text"] = {"format": {"type": "json_object"}}
     return body
+
 
 def build(model, turns, system, params):
     """IR turns to a streaming responses body; system is the top-level instructions.

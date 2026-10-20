@@ -116,15 +116,19 @@ def test_a_continue_inherits_the_row_s_schema(
 
 # --------------------------------------------------------------- the mimes
 
+def test_a_json_mime_without_a_schema_is_refused(streams, env, sse, model):
+    # a JSON mime promises an answer is JSON and that it is the one asked
+    # for, and a schema is the only thing that says either; no provider
+    # takes a JSON mime without one, so it is refused before the network
+    with pytest.raises(DicError, match="needs --schema"):
+        say(streams, env, "hi", model=model, mime_type="application/json")
+    assert sse.received == []
 
-def test_an_empty_schema_keeps_a_json_mime_and_no_constraint(
-        streams, env, sse, model):
-    say(streams, env, "hi", model=model, schema="")
 
-    assert sse.received[-1].body["response_format"] == {"type": "json_object"}
-    row = tree(env)[0]
-    assert row["schema"] is None
-    assert row["mime_type"] == "application/json"
+def test_a_jsonl_mime_without_a_schema_is_refused(streams, env, sse, model):
+    with pytest.raises(DicError, match="needs --schema"):
+        say(streams, env, "hi", model=model, mime_type="application/x-ndjson")
+    assert sse.received == []
 
 
 def test_a_manual_text_mime_drops_the_schema(
@@ -272,20 +276,24 @@ def test_a_remote_ref_is_refused(streams, env, sse, model, events):
 
 def test_a_jsonl_mime_wraps_the_schema_and_records_the_container(
         streams, env, sse, model, events):
-    sse.events = events('{"a": 1}\n{"a": 2}\n')
+    # every provider requires a schema's root to be an object and none
+    # accepts a top-level array, so the records are asked for in one
+    sse.events = events('{"jsonl": [{"a": 1}, {"a": 2}]}')
     say(streams, env, "hi", model=model, schema=SCHEMA,
         mime_type="application/x-ndjson",
         repair="off", validate="off")
 
     wire = sse.received[-1].body["response_format"]["json_schema"]["schema"]
-    assert wire["type"] == "array"
-    assert wire["items"] == json.loads(SCHEMA)
+    assert wire["type"] == "object"
+    assert wire["properties"]["jsonl"]["items"] == json.loads(SCHEMA)
 
     row = tree(env)[0]
     assert row["container"] == 1
     assert row["mime_type"] == "application/x-ndjson"
     # the caller's own schema is what the row keeps, not the wire wrap
     assert json.loads(row["schema"]) == json.loads(SCHEMA)
+    # and stdout is one record per line, which is what the mime asked for
+    assert streams.out.getvalue() == '{"a": 1}\n{"a": 2}\n'
 
 
 # ---------------------------------------------------------------- anthropic

@@ -9,7 +9,8 @@ same one.  What these tests assert on is what a user sees: the tools the
 model was offered, the row that was written, the message the second round
 carried back, and the spec the row stored.
 """
-import base64, collections, http.server, json, os, shlex, shutil, sys, threading
+import base64, collections, http.server, json, os, shlex, shutil, subprocess
+import sys, threading
 import urllib.parse
 import time as _time
 
@@ -25,11 +26,32 @@ ECHO = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 Hit = collections.namedtuple("Hit", "headers body")
 
-# The packaged sandbox is bwrap, so every test of a stdio server needs one:
-# a machine without bwrap cannot run a jailed command at all, and dic says so
-# rather than running it unjailed.
+def _jail_works():
+    """Whether a nested jail can be made here: `sandbox pytest` refuses one.
+
+    bwrap being installed is not the same as a nested bwrap being permitted:
+    pytest is usually run inside `sandbox pytest`, and an outer sandbox
+    installs a filter that refuses the `unshare` and `mount` a nested jail
+    is made of, so the probe is a real jail and not the binary's name.
+    What dic hands bwrap is testable anywhere; what bwrap does with it needs
+    a jail that can actually be made.
+    """
+    if not shutil.which("bwrap"):
+        return False
+    probe = ["bwrap", "--unshare-all", "--ro-bind", "/", "/", "--", "true"]
+    try:
+        subprocess.run(probe, check=True, capture_output=True, timeout=10)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+# The packaged sandbox is bwrap, so every test of a stdio server needs a jail
+# that can actually be made: a machine without bwrap cannot run one at all,
+# and a nested one inside `sandbox pytest` is refused before it starts, so
+# both cases are a skip rather than a failure of the test's own assertion.
 NEEDS_BWRAP = pytest.mark.skipif(
-    not shutil.which("bwrap"), reason="the packaged sandbox is bwrap")
+    not _jail_works(), reason="a nested jail cannot be made here")
 
 
 # ------------------------------------------------------- the replies, in full

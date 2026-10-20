@@ -232,28 +232,6 @@ function committe-question() {
 
 # ------------------------------------------------------------------ record
 
-function committe-apply-patch() {
-    # One traced step: the applier picks which tool is tried first, and
-    # an `auto` fallback says so on stderr rather than in a second trace.
-    # git-apply-fuzzy's per-hunk report belongs to the model and not to
-    # the terminal, so it is quiet here.
-    local patch_file=$1 applier=$2
-    case $applier in
-        exact)
-            git apply --quiet --index --recount --ignore-whitespace "$patch_file"
-            ;;
-        fuzzy)
-            git-apply-fuzzy -q "$patch_file"
-            ;;
-        *)
-            if ! git apply --quiet --index --recount --ignore-whitespace "$patch_file" 2>/dev/null; then
-                dic-warn "committe-warning: git apply failed; retrying with git-apply-fuzzy"
-                git-apply-fuzzy -q "$patch_file"
-            fi
-            ;;
-    esac
-}
-
 function committe-record() {
     # Apply, commit, and merge -- the only step that moves a ref.  The
     # applier escalation for --retry-mode patch lives here and not in
@@ -261,7 +239,7 @@ function committe-record() {
     local applier=$COMMITTE_APPLIER
     local attempt=0
     while :; do
-        if dic-run committe-apply-patch "$(committe-patchfile)" "$applier"; then
+        if dic-run git apply-fuzzy -q "$(committe-patchfile)"; then
             break
         fi
         if [[ $COMMITTE_RETRY_MODE != patch ]] \

@@ -29,7 +29,7 @@ run sh -c "echo 'pytest --doctest-modules .' > test.sh"
 run chmod a+x test.sh
 run git add test.sh
 run git commit -m 'add test.sh'
-run itera --allow-red 'create a file primes.py that computes the first 100 primes'
+run committe 'create a file primes.py that computes the first 100 primes'
 run python3 -m doctest primes.py
-run itera -c 'add doctests (write full file)'
+run itera --allow-red -c 'add doctests (write full file)'
 run python3 -m doctest primes.py

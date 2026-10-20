@@ -156,7 +156,19 @@ def models(env, sse):
                    "fake+anthropic": {"api_type": "anthropic-messages",
                                       "price": {"in.cache_write.5m":
                                                 {"rate": 2.5}}},
-                   "fake+responses": {"api_type": "openai-responses"}}, f)
+                   "fake+responses": {"api_type": "openai-responses"},
+                   # a protocol with no output_format field, so the schema
+                   # tests can assert the refusal before the network, and a
+                   # call that needs --path can be tested for the same
+                   # reason
+                   "fake+images": {"api_type": "openai-images",
+                                   "model_name": "gpt-image-1",
+                                   "output": "image/png"},
+                   # typesafe: its own dialect and its own wire shape, so
+                   # the refusals are what a test can reach without a
+                   # second server; every schema test here refuses early
+                   "fake+typesafe": {"api_type": "typesafe",
+                                     "model_name": "jev-latest"}}, f)
     env["FAKE_API_KEY"] = "test-key"
 
 

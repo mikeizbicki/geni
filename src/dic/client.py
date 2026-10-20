@@ -1002,7 +1002,7 @@ def dic(prompt,
     if not printing:
         # a printed request writes no file and makes no call, so the sink
         # and the --path check that guards it have nothing to guard
-        if mime.startswith("text/"):
+        if schema_mod.printable(mime):
             output.check_free(knobs["path"], knobs["force"])
         else:
             if not knobs["path"]:
@@ -1049,7 +1049,7 @@ def dic(prompt,
     # new typesafe user hits are a missing schema and two spellings of one
     # field, and both name what to do instead.
     if api_type == "typesafe":
-        if opts.get("questions") and schema_value is not None:
+        if opts.get("questions") is not None and schema_value is not None:
             raise DicError("typesafe: pick one: -o questions or --schema")
         if schema_value is None and not opts.get("questions"):
             raise DicError("typesafe requires --schema; try\n"

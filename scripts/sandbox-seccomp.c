@@ -133,12 +133,14 @@ static const int surface[] = {
   __NR_request_key,
   __NR_keyctl,
 
-  /* Mounting is bwrap's job, and it is finished before this filter loads,
-   * so a call here can only be an attempt to leave. */
-  __NR_mount,
-  __NR_umount2,
-  __NR_pivot_root,
-  __NR_unshare,
+  /* setns is how a process would *leave* the namespace it was put in, so
+   * it stays refused.  Mounting and namespace creation are how a nested
+   * jail is made, and they are allowed: this filter loads after the outer
+   * bwrap has finished, so the payload already has a private user and
+   * mount namespace, and a mount or an unshare here reaches nothing the
+   * outer jail did not already contain -- it builds a smaller room inside
+   * the one it is in.  A test that itself calls sandbox, run under
+   * `sandbox pytest`, is the case that needs both. */
   __NR_setns,
 
   /* Machine-wide state, which a payload has no business changing. */

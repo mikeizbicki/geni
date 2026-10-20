@@ -34,6 +34,29 @@ def tool_schema(tools):
              "function": {"name": t["name"], "description": t["description"],
                           "parameters": t["parameters"]}}
             for t in tools]
+def output_format(body, model, schema, mime):  # noqa: ARG001
+    """Set the response_format this request carries, from --schema or a JSON mime.
+
+    A schema is `strict: true`, which is the whole point of the shape the
+    shorthand already compiles to; a JSON mime without a schema is the
+    weakest ask, a bare json_object; a text mime carries neither and the
+    body is left as build() made it.
+
+    >>> output_format({"model": "m"}, {}, {"type": "object"}, "application/json")
+    {'model': 'm', 'response_format': {'type': 'json_schema', 'json_schema': {'name': 'response', 'schema': {'type': 'object'}, 'strict': True}}}
+    >>> output_format({}, {}, None, "application/json")
+    {'response_format': {'type': 'json_object'}}
+    >>> output_format({"model": "m"}, {}, None, "text/plain")
+    {'model': 'm'}
+    """
+    if schema is not None:
+        body["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "response", "schema": schema,
+                            "strict": True}}
+    elif mime.endswith("/json") or mime.endswith("+json"):
+        body["response_format"] = {"type": "json_object"}
+    return body
 
 
 def build(model, turns, system, params):

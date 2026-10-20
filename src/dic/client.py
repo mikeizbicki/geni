@@ -588,14 +588,15 @@ def dic(prompt,
             schema_value, schema_dialect = schema_mod.parse(model["schema"])
     elif schema_text != "":
         schema_value, schema_dialect = schema_mod.parse(schema_text)
-    if ((schema_text is not None or schema_value is not None)
+    if (schema_value is not None
             and not getattr(adaptor, "output_format", None)):
-        # no shipped adaptor has the hook yet, and an attribute that is
-        # absent is a refusal: an answer the caller believes is
-        # schema-shaped and is not is the one failure this exists to prevent
+        # an attribute that is absent is a refusal: an answer the caller
+        # believes is schema-shaped and is not is the one failure this
+        # feature exists to prevent.  --schema='' is no schema at all, so
+        # it is not refused here, and a bare JSON mime is asked of every
+        # adaptor that can ask it.
         raise DicError(f"{model['model_id']}: {api_type} has no"
                        " output_format, so --schema cannot be sent")
-
     # what the answer will be, settled before the call so that a missing or
     # taken --path fails before the network instead of after a whole video.
     # A schema makes it application/json; a manual text/* alongside one
@@ -691,6 +692,12 @@ def dic(prompt,
             turns = prepare(model, api_key, turns, opts)
             line.first_token()
     body = adaptor.build(model, turns, system, opts)
+    if getattr(adaptor, "output_format", None):
+        # the hook fires before --print=json/--print=curl, so a printed
+        # request carries the directive and not one that lacks it: the
+        # directive is part of the request and the printed request is the
+        # request
+        body = adaptor.output_format(body, model, schema_value, mime)
     headers = {"content-type": "application/json", "accept": "text/event-stream"}
     headers.update(adaptor.auth(api_key))
     headers.update(model.get("headers") or {})

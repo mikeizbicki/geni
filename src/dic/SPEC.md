@@ -160,12 +160,21 @@ not a conversation.
 
 ### MCP servers
 
-`--mcp CMD|URL` offers the tools of an MCP server, and is repeatable.  The
+`--mcp WORDS|URL` offers the tools of an MCP server, and is repeatable.  The
 value is told from itself: a scheme makes it a URL and anything else makes it a
 command, with `--mcp-url` and `--mcp-shell` for the value that looks like the
 other one.  There is no file to write and no name to invent: a server is named
 after its host or its basename, and a second server of that name takes a
 number.
+
+A command is a word list and not a shell line, and it runs under
+`sandbox`.  What the caller typed is the argument list of the `sandbox`
+function dic.sh defines, so `--mcp '--share-net -- server'` relaxes the
+jail to the caller's own request while `--mcp server` does not, and a
+`|`, a `;` or a `$(...)` is an error naming the character rather than a
+second command outside the jail.  Nothing in dic names a way around the
+wrapper, so there is no variable, no flag and no target that runs a
+server unsandboxed.
 
 What comes back is the same three things `--tools` produces -- a name, a
 description and a JSON Schema -- so nothing downstream knows the difference.  A
@@ -184,12 +193,13 @@ is the bridge's cargo.
 
 Both transports are spoken: a command is a child process, one JSON-RPC message
 to a line of its stdout, and a URL is a POST whose answer is JSON or a one-way
-event stream.  The child inherits dic's environment, which is how it gets a
-secret, and its own stderr is kept, because a shell that could not run the
-program says why there and a broken pipe does not.  A HTTP secret rides in the
-URL, because dic stores the spec it was given and never a credential of its
-own.  Every wait is bounded, and an expiry names the method and the number of
-seconds it waited.
+event stream.  The child is a bash that has sourced dic.sh, which is how the
+command reaches the `sandbox` function, and it inherits dic's environment,
+which is how a server gets a secret; its own stderr is kept, because a shell
+that could not run the program says why there and a broken pipe does not.  A
+HTTP secret rides in the URL, because dic stores the spec it was given and
+never a credential of its own.  Every wait is bounded, and an expiry names the
+method and the number of seconds it waited.
 
 Tools ship in categories, one module each, so `dic.tools.fs:*` is a category
 and `dic.tools.fs:ls` is one tool in it.  Importing that module is the cost,

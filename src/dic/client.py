@@ -356,15 +356,17 @@ def dic(prompt,
         tools:        flag(long="--tools", action="append",
                            metavar="MODULE:FUNC",
                            help="offer a python function as a tool; repeatable") = None,
-        mcp:          flag(long="--mcp", action="append", metavar="CMD|URL",
-                           help="offer the tools of an MCP server, told from"
-                                " a command by its scheme; repeatable") = None,
+        mcp:          flag(long="--mcp", action="append", metavar="WORDS|URL",
+                           help="offer the tools of an MCP server: a command"
+                                " run under sandbox, or a URL to POST to;"
+                                " repeatable") = None,
         mcp_url:      flag(long="--mcp-url", action="append", metavar="URL",
                            help="--mcp with the guess left out, for a URL"
                                 " that carries no scheme") = None,
-        mcp_shell:    flag(long="--mcp-shell", action="append", metavar="CMD",
+        mcp_shell:    flag(long="--mcp-shell", action="append", metavar="WORDS",
                            help="--mcp with the guess left out, for a"
-                                " command that begins with a scheme") = None,
+                                " command that begins with a scheme; a word"
+                                " list, never a shell line") = None,
         cont:         flag(short="-c", long="--continue", action="bool",
                            help="continue this session's last conversation") = False,
         mid:          flag(long="--mid", metavar="REF",

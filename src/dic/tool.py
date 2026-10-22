@@ -27,7 +27,12 @@ message is handed to the model as the result, so the model can correct itself.
 `dic.tool` is imported only when --tools is given, so an invocation that
 offers no tools pays for none of this.  An MCP server is these same three
 things -- a name, a description, a schema -- arriving over a pipe instead of
-over an import, and is TODO: see SPEC.md, "Tools".
+over an import: `dic.mcp` yields records of exactly the shape `resolve()`
+returns -- `name`, `description`, `parameters` -- so the schema builder, the
+tool loop and the stored row need no MCP case.  `dic.mcp` (with its `shlex`,
+`subprocess`, `http.client` and `threading` imports) is itself imported
+lazily, only when `--mcp` names a server, so a tool-less invocation pays for
+none of it either.
 """
 import importlib, inspect, json, types
 from pathlib import Path

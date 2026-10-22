@@ -1119,8 +1119,6 @@ def dic(prompt,
         # and the next thing written starts below them
         line.close()
 
-    paint = use_color(out, env) and knobs["path"] is None
-
     def keep(wire):
         """Fold one round's timings into the call's, each phase counted once.
 

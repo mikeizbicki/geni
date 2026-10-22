@@ -13,7 +13,6 @@ Two transports, one of each kind:
     http    the streamable transport: one POST, answered by JSON or by a
             one-way event stream
 
-A stdio server is a command, and the child that runs it is a bash with
 A stdio server is a command, and dic runs every one of them under the
 sandbox it ships: the child is a bash of dic's own that sources dic's own
 dic.sh by absolute path, and the program it starts is `sandbox -- <words>`.

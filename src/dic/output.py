@@ -134,3 +134,97 @@ class Sink:
         if self.file is not None:
             self.file.close()
             self.file = None
+
+
+class Reindent:
+    """A streaming reindenter for one JSON answer: text in, pretty text out.
+
+    A JSON answer is printed as it arrives, so reindenting it cannot mean
+    feeding the whole document to json.dumps.  It means a DFA over the
+    characters instead: a stack of the containers still open and whether
+    each is empty, a flag for the string state, and the separator the next
+    token needs.  The document is already well-formed -- the provider was
+    asked with a strict schema -- so nothing here parses a value; it only
+    moves whitespace.
+
+    Everything before the first brace is skipped, so a fenced answer is
+    reindented without being stripped first: the fence is prose, and prose
+    is not JSON.  The trailing newline the answer needs is what close()
+    writes, because whitespace between tokens is what the DFA drops.
+
+    >>> p = Reindent()
+    >>> p.feed('{"a": [1, ') + p.feed('2]}') + p.close()
+    '{\\n  "a": [\\n    1,\\n    2\\n  ]\\n}\\n'
+    >>> p = Reindent()
+    >>> p.feed('```json\\n{"a": true}\\n```') + p.close()
+    '{\\n  "a": true\\n}\\n'
+    >>> Reindent().close()
+    ''
+    """
+
+    def __init__(self):
+        self.stack = []          # True while the container still holds nothing
+        self.in_string = False
+        self.escape = False
+        self.started = False     # the first `{` or `[` has arrived
+        self.pending = ""        # what the next value token is preceded by
+
+    def feed(self, text):
+        """Reindent one more piece of the answer and return what to print."""
+        out = []
+        for ch in text:
+            self._step(ch, out)
+        return "".join(out)
+
+    def close(self):
+        """The newline the answer ends with, or nothing if none began."""
+        return "\n" if self.started else ""
+
+    def _step(self, ch, out):
+        if self.in_string:
+            out.append(ch)
+            if self.escape:
+                self.escape = False
+            elif ch == "\\":
+                self.escape = True
+            elif ch == '"':
+                self.in_string = False
+            return
+        if self.started and not self.stack:
+            return              # the document ended at its outermost closer
+        if not self.started:
+            if ch in "{[":
+                self.started = True
+                out.append(ch)
+                self.stack.append(True)
+                self.pending = "\n  "
+            return
+        if ch == '"':
+            self._value(out)
+            self.in_string = True
+            out.append(ch)
+        elif ch in "{[":
+            self._value(out)
+            out.append(ch)
+            self.stack.append(True)
+            self.pending = "\n" + "  " * len(self.stack)
+        elif ch in "}]":
+            if not self.stack.pop():
+                out.append("\n" + "  " * len(self.stack))
+            out.append(ch)
+        elif ch == ",":
+            out.append(ch)
+            self.pending = "\n" + "  " * len(self.stack)
+        elif ch == ":":
+            out.append(": ")
+            self.pending = ""
+        elif ch not in " \t\n\r":
+            self._value(out)
+            out.append(ch)
+
+    def _value(self, out):
+        """Put the separator the next value needs in front of it."""
+        out.append(self.pending)
+        self.pending = ""
+        if self.stack:
+            self.stack[-1] = False

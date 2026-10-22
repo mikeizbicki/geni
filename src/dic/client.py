@@ -672,6 +672,10 @@ def dic(prompt,
                                 " (the default on a terminal)") = None,
         extract:      flag(short="-x", action="bool", group=OUTPUT,
                            help="print only the first fenced code block") = False,
+        pretty:       flag(action="yes/no", group=OUTPUT,
+                           help="reindent a JSON answer as it prints (the"
+                                " default for JSON; DIC_PRETTY=0 turns it"
+                                " off)") = None,
         # ----- debugging -----
         print_:       flag(long="--print", metavar="WHAT", env=False,
                            group=DEBUG,
@@ -934,6 +938,14 @@ def dic(prompt,
     # own beside a container fact, so the wire shape differs from the
     # asked-for schema and neither lies about the other.
     wire_schema, container = schema_mod.wrap(schema_value, mime)
+    # A JSON answer is reindented as it prints: --pretty is the default for
+    # a mime that is one document, and --no-pretty (or DIC_PRETTY=0/false)
+    # turns it off.  A JSONL answer is a line per record and reindenting it
+    # would break the one thing its mime promises, so it is never pretty.
+    off = knobs["pretty"] is not None and not knobs["pretty"]
+    pretty_printer = (output.Reindent()
+                      if schema_mod.is_json_mime(mime) and not container
+                      and not off else None)
     # repair and validate resolve per (api_type, dialect), so the common
     # case is zero configuration; an explicit on where the protocol cannot
     # is an error, because a call the caller believes is checked and is not
@@ -1292,11 +1304,16 @@ def dic(prompt,
                 printed.append(chunk)
                 if pv_resp is not None:
                     pv_update(pv_resp, chunk)
+                # the pretty text and the row's own text are two texts: the
+                # meter counted the bytes the stream carried, the row keeps
+                # them, and stdout is shown the reindented form
+                if pretty_printer is not None:
+                    chunk = pretty_printer.feed(chunk)
                 # JSONL buffers rather than streams: the fence has to be
                 # found before a record can be yielded, and finding it
                 # means the whole answer -- the reformat happens once,
                 # below, and what reaches stdout is the records
-                if not knobs["extract"] and not container:
+                if chunk and not knobs["extract"] and not container:
                     if paint and painted != kind:
                         sink.write((RESET if painted is not None else "") + PAYLOAD)
                         painted = kind
@@ -1362,12 +1379,14 @@ def dic(prompt,
                 call_answer = json.dumps(answer, ensure_ascii=False)
                 chunks.append(call_answer)
                 printed.append(call_answer)
-                if not knobs["extract"] and not container:
+                shown = (pretty_printer.feed(call_answer)
+                         if pretty_printer is not None else call_answer)
+                if shown and not knobs["extract"] and not container:
                     if paint and painted != "":
                         sink.write((RESET if painted is not None else "")
                                    + PAYLOAD)
                         painted = ""
-                    sink.write(call_answer)
+                    sink.write(shown)
                 break
             if not asked:
                 break
@@ -1462,7 +1481,14 @@ def dic(prompt,
     else:
         if painted is not None:
             sink.write(RESET)
-        if response and not response.endswith("\n"):
+        if pretty_printer is not None:
+            # the reindenter ends the answer with its own newline: the DFA
+            # drops whitespace, so a response that ended in one has none
+            # for the test below to find
+            tail = pretty_printer.close()
+            sink.write(tail)
+            text += tail
+        elif response and not response.endswith("\n"):
             sink.write("\n")
             text += "\n"
     # Repair first, then validate, on the printed text: this is the one rule

@@ -54,12 +54,19 @@ def streams():
 
 @pytest.fixture
 def env(tmp_path):
-    """An environment pointing every path dic writes at a throwaway directory."""
+    """An environment pointing every path dic writes at a throwaway directory.
+
+    DIC_PRETTY=0 is here and not in each test's call: the small answers
+    these tests assert on read better compact, a JSON answer is pretty by
+    default in a shell, and one variable at the fixture is the whole
+    difference.  A test that wants the default pops it.
+    """
     home = tmp_path / "home"
     home.mkdir()
     return {"HOME": str(home),
             "XDG_RUNTIME_DIR": str(tmp_path / "run"),
-            "DIC_SESSION": "test"}
+            "DIC_SESSION": "test",
+            "DIC_PRETTY": "0"}
 
 
 Request = collections.namedtuple("Request", "path headers body")

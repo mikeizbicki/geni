@@ -324,3 +324,12 @@ def test_anthropic_carries_the_schema_as_a_forced_tool(streams, env, sse,
     assert row["enforced"] == 0
     (block,) = json.loads(row["response_raw"])
     assert (block["type"], block["name"]) == ("tool_use", "output")
+
+
+def test_a_json_answer_is_pretty_by_default(streams, env, sse, model, events):
+    env.pop("DIC_PRETTY")       # the fixture turns it off for its neighbours
+    sse.events = events('{"a": 1}')
+
+    say(streams, env, "hi", model=model, schema=SCHEMA)
+
+    assert streams.out.getvalue() == '{\n  "a": 1\n}\n'

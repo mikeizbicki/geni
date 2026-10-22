@@ -19,6 +19,8 @@
  *      number, and a syscall number means a different thing under a
  *      different ABI.  A payload from another ABI would be judged by
  *      numbers it does not use, so it is killed rather than filtered.
+ *      x32 shares x86_64's architecture word, so this check cannot see it:
+ *      its mark is the bit its numbers carry, tested once one is loaded.
  *
  *   2. io_uring, next.  io_uring performs file and socket work in kernel
  *      context.  It does not call open(2) or socket(2), so a rule that
@@ -69,6 +71,13 @@
 /* EPERM in the encoding seccomp wants: the action in the high bits and the
  * error number in the low ones. */
 #define DENIED (SECCOMP_RET_ERRNO | (EPERM & SECCOMP_RET_DATA))
+
+/* The bit an x32 syscall number carries.  x32 reports x86_64's
+ * AUDIT_ARCH_*, so the architecture check above cannot separate the two,
+ * and the bit in the number is the only mark that can.  On every other
+ * architecture no syscall number sets it, so the rule built from it is
+ * dead there rather than wrong. */
+#define X32_BIT 0x40000000U
 
 /* Room for the rules below twice over, and a fixed array so that writing a
  * few hundred bytes never allocates. */
@@ -185,6 +194,17 @@ build (void)
   filter[n++] = (struct sock_filter) BPF_STMT (BPF_LD | BPF_W | BPF_ABS,
                                                offsetof (struct seccomp_data,
                                                          nr));
+
+  /* x32 reports x86_64's architecture word, so the check above lets it
+   * through, and sets a bit in every syscall number it makes that no rule
+   * below names -- every comparison misses and the payload reaches the
+   * final ALLOW.  The number is where the bit is tested, because the
+   * architecture word carries the same bit for its own reasons. */
+  filter[n++] = (struct sock_filter) BPF_JUMP (BPF_JMP | BPF_JSET | BPF_K,
+                                               X32_BIT, 0, 1);
+  filter[n++] = (struct sock_filter) BPF_STMT (BPF_RET | BPF_K,
+                                               SECCOMP_RET_KILL_PROCESS);
+
   for (i = 0; i < sizeof surface / sizeof *surface; i++)
     deny (surface[i]);
 

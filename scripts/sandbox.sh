@@ -324,15 +324,21 @@ sandbox() {
     # share memory, and /tmp where anything leaves a scratch file.
     args+=(--tmpfs /tmp --tmpfs /var/tmp --tmpfs /run --tmpfs /dev/shm)
 
-    # The one path that is writable, and it is the directory the shell is
-    # already in.  bwrap creates the missing parents inside the jail, so
+    # The directory the shell is already in, and the one path of the
+    # caller's own tree the jail mounts.  The bind states the path and the
+    # read-only bind over it takes the writing away, because bwrap applies
+    # its arguments left to right and the last one wins -- so the tree is
+    # in the map, a tool call is side effect free, and a caller who wants
+    # to write adds the bind back with its own arguments, which come last.
+    # bwrap creates the missing parents inside the jail, so
     # /home/me/proj appears on its own and the rest of /home/me does not.
     args+=(--bind "$PWD" "$PWD")
+    args+=(--ro-bind "$PWD" "$PWD")
 
     # The interpreter can live outside $PWD: in a git worktree it sits in
     # the main worktree, and bwrap then cannot execvp the test runner
     # because that path was never mounted.  Bring in that one path
-    # read-only, unless it is already inside $PWD and writable there.
+    # read-only, unless it is already inside $PWD and mounted with it.
     if [[ -n ${VIRTUAL_ENV:-} && -d $VIRTUAL_ENV ]]; then
         case $VIRTUAL_ENV/ in
             "$PWD"/*) ;;

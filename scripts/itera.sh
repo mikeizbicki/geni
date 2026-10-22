@@ -6,9 +6,6 @@
 # never reaches a provider itself.
 #
 #     itera [--max N] [--test CMD] [--allow-red] 'request'
-#     itera --continue
-#     itera --abort
-#     itera --skip
 #
 # itera is a four-step harness (see scripts/AGENTS.md):
 #
@@ -24,8 +21,7 @@
 # one commit and fast-forwards the original branch with it.  The original
 # worktree is never modified until that fast-forward, so a failure leaves
 # it exactly where it started -- nothing to undo -- and the interrupted
-# work in the loop worktree, where --continue resumes from it.  --abort
-# removes the worktree and the branch.
+# work in the loop worktree, which itera-rollback names.
 #
 # itera does not fork DIC_SESSION: each round's committe does that itself,
 # and it does it at its own prepare, so round 1's -c reads the session the
@@ -104,26 +100,6 @@ itera-record-time() {
     printf '%.3f\n' "$1" >> "$file"
 }
 
-# ---------------------------------------------------------------- state
-
-# Where a run keeps the facts about itself.  Worktree-local and not
-# repo-shared, because the original branch and the original head are facts
-# about this checkout and not about the project.  One directory and not one
-# per token: a second itera in the same worktree would be a second HEAD,
-# which git does not allow, so the directory names the worktree.
-itera-state-dir() {
-    local dir
-    # --path-format=absolute, because a `cd` into the loop worktree
-    # happens after this is read: the plain form answers relative to
-    # the cwd that asked, and the answer asked in the original worktree
-    # names nothing in the loop worktree.  [[ -f $ITERA_STDINFILE ]]
-    # turns false, round 1 takes the branch with no redirect, and
-    # committe reads fd 0 -- a heredoc itera already drained -- instead
-    # of the request.
-    dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
-    printf '%s\n' "$dir/geni/itera"
-}
-
 # Where the loop worktree goes.  --git-common-dir is the main .git, so a
 # run started in a geni worktree and one started in the tree it branched
 # from put their loop worktrees in the same place, and a branch cut from
@@ -133,51 +109,6 @@ itera-worktree-path() {
     local dir
     dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
     printf '%s\n' "$dir/geni/itera/worktrees/$1"
-}
-
-# The request on itera's own stdin, buffered once at entry.  itera's
-# pre-flight test runs before committe reads fd 0, and a test that reads
-# stdin -- or that hands it to a program which does -- would leave
-# committe at EOF and the model with only its own instructions.  The
-# buffer lives in the state directory --continue and --abort already
-# read, and round 1 is the only round that reads it.
-itera-stdinfile() {
-    local dir
-    dir=$(itera-state-dir) || return 1
-    printf '%s\n' "$dir/stdin"
-}
-
-# Record what a later --continue or --abort needs.  One file per fact, so a
-# half-written state is a missing file and not a malformed one.
-itera-state-write() {
-    mkdir -p "$ITERA_RUNDIR" || return 1
-    printf '%s\n' "$ITERA_ORIGINAL_BRANCH" > "$ITERA_RUNDIR/original-branch"
-    printf '%s\n' "$ITERA_ORIGINAL_HEAD" > "$ITERA_RUNDIR/original-head"
-    printf '%s\n' "$ITERA_ORIGINAL_WORKTREE" > "$ITERA_RUNDIR/original-worktree"
-    printf '%s\n' "$ITERA_BRANCH" > "$ITERA_RUNDIR/branch"
-    printf '%s\n' "$ITERA_WORKTREE" > "$ITERA_RUNDIR/worktree"
-    printf '%s\n' "$test_cmd" > "$ITERA_RUNDIR/test-cmd"
-    printf '%s\n' "$ITERA_REQUEST" > "$ITERA_RUNDIR/request"
-}
-
-# Read what itera-prepare recorded, or refuse.  $1 names what the caller
-# wanted to do, so the message says which command has nothing to work on.
-itera-state-read() {
-    ITERA_RUNDIR=$(itera-state-dir) || return 1
-    local f
-    for f in original-branch original-head original-worktree branch worktree test-cmd; do
-        if [[ ! -f "$ITERA_RUNDIR/$f" ]]; then
-            dic-error "itera-error: no itera state; nothing to $1"
-            return 1
-        fi
-    done
-    ITERA_ORIGINAL_BRANCH=$(cat "$ITERA_RUNDIR/original-branch")
-    ITERA_ORIGINAL_HEAD=$(cat "$ITERA_RUNDIR/original-head")
-    ITERA_ORIGINAL_WORKTREE=$(cat "$ITERA_RUNDIR/original-worktree")
-    ITERA_BRANCH=$(cat "$ITERA_RUNDIR/branch")
-    ITERA_WORKTREE=$(cat "$ITERA_RUNDIR/worktree")
-    test_cmd=$(cat "$ITERA_RUNDIR/test-cmd")
-    ITERA_REQUEST=$(cat "$ITERA_RUNDIR/request" 2>/dev/null || echo "")
 }
 
 # -------------------------------------------------------------- validate
@@ -221,44 +152,25 @@ itera-prepare() {
         dic-error 'itera-error: detached HEAD; check out a branch first'
         return 1
     }
-    # A defensive stop: --continue is for a loop branch, and --abort is
-    # for getting back from one, so a fresh run must not be started on
-    # one -- if it is, itera-record's landing would make the loop branch
-    # the original, which is not what anyone means.
-    if [[ $branch == geni/itera-* ]]; then
-        dic-error "itera-error: HEAD is already on a loop branch ($branch)"
-        dic-hint  "itera-hint: 'itera --continue' to resume, 'itera --abort' to discard"
-        return 1
-    fi
     ITERA_ORIGINAL_BRANCH=$branch
     ITERA_ORIGINAL_HEAD=$(git rev-parse HEAD) || return 1
     ITERA_ORIGINAL_WORKTREE=$PWD
     token=$(worktree-token "$branch")
     ITERA_BRANCH="geni/itera-$token"
     ITERA_WORKTREE=$(itera-worktree-path "$token") || return 1
-    ITERA_RUNDIR=$(itera-state-dir) || return 1
-
-    # A live run is one whose state file still names its branch.  The
-    # second itera in this worktree would overwrite it, and the overwrite
-    # is silent, so it is refused here and not left to surface as a
-    # detached HEAD later.
-    if [[ -f "$ITERA_RUNDIR/branch" ]]; then
-        dic-error 'itera-error: an itera run is already in progress'
-        dic-hint  "itera-hint: 'itera --continue' to resume, 'itera --abort' to discard"
-        return 1
-    fi
 
     # A crashed run leaves its worktree behind, and git worktree add
-    # refuses a path that already exists.  The bytes are the user's to
-    # delete, so the script names the command and stops.
+    # refuses a path that already exists.  The path is unique per branch
+    # and per second, so an existing one is a leftover and not a live
+    # run -- nothing here says which, now that --continue and --abort are
+    # gone -- and the bytes are the user's to delete, so the script names
+    # the command and stops.
     git worktree prune >/dev/null 2>&1 || true
     if [[ -e $ITERA_WORKTREE ]]; then
         dic-error "itera-error: $ITERA_WORKTREE already exists"
         dic-hint  "itera-hint: remove it with: rm -rf $ITERA_WORKTREE"
         return 1
     fi
-
-    itera-state-write || return 1
 
     dic-run git worktree add -b "$ITERA_BRANCH" \
         "$ITERA_WORKTREE" "$ITERA_ORIGINAL_HEAD" || {
@@ -413,100 +325,11 @@ itera-finish() {
 
 # Run a function with the loop worktree as its cwd.  A subshell, because
 # these scripts are sourced and a cd in the caller's shell would move the
-# user; the subshell also loses itera_test_output, so a caller that needs
-# it -- itera-continue, itera-skip -- puts the whole sequence inside one
-# call and not two.
+# user, and itera is the only caller: the buffering that produced the
+# request has already run by the time this is called, so nothing it
+# reads through the subshell is lost.
 itera-run-in-worktree() {
     ( cd "$ITERA_WORKTREE" && "$@" )
-}
-
-# ------------------------------------------------------ resume and abort
-
-# Discard the run: remove the loop worktree and delete the loop branch.
-# The original worktree is untouched, because it was never modified, so
-# there is nothing here to undo -- --abort only names what it discards.
-itera-abort() {
-    itera-state-read abort || return 1
-    if [[ -d $ITERA_WORKTREE ]]; then
-        dic-run git worktree remove --force "$ITERA_WORKTREE" || {
-            dic-error "itera-error: could not remove $ITERA_WORKTREE"
-            dic-hint  "itera-hint: remove it with: rm -rf $ITERA_WORKTREE"
-            return 1
-        }
-    fi
-    git branch -D "$ITERA_BRANCH" >/dev/null 2>&1 || true
-    rm -rf "$ITERA_RUNDIR" 2>/dev/null || true
-    dic-info "itera-info: aborted; $ITERA_ORIGINAL_BRANCH is untouched"
-    return 0
-}
-
-# Re-enter the loop from where the last run stopped.  The whole sequence
-# is one call into the worktree, because itera-run-tests's output,
-# itera_test_output, is what round 2's committe -c reads.
-itera-continue() {
-    itera-state-read continue || return 1
-    if [[ ! -d $ITERA_WORKTREE ]]; then
-        dic-error "itera-error: $ITERA_WORKTREE is gone; nothing to continue"
-        dic-hint  "itera-hint: 'itera --abort' to clean up the state"
-        return 1
-    fi
-
-    ITERA_LIVE=1
-    trap itera-rollback EXIT
-
-    local status
-    itera-run-in-worktree itera-continue-loop
-    status=$?
-    itera-finish "$status"
-    status=$?
-    trap - EXIT
-    return "$status"
-}
-
-# The test-then-resume shape, run inside the loop worktree: a tree that
-# has since gone green is recorded without a model call, and a tree that
-# is still red re-enters the loop at round 2 -- the round that says
-# `committe -c`.  One function, so itera_test_output survives to round 2.
-itera-continue-loop() {
-    if itera-run-tests; then
-        return 0
-    fi
-    itera-run 2
-}
-
-# Commit the loop worktree and continue.  A manual checkpoint: the user
-# knows better than the tests whether the tree is worth saving, and this
-# is how a round the model left half-done becomes a commit the next round
-# can build on.  One call into the worktree, for the same reason as
-# itera-continue.
-itera-skip() {
-    itera-state-read skip || return 1
-    if [[ ! -d $ITERA_WORKTREE ]]; then
-        dic-error "itera-error: $ITERA_WORKTREE is gone; nothing to skip"
-        dic-hint  "itera-hint: 'itera --abort' to clean up the state"
-        return 1
-    fi
-
-    ITERA_LIVE=1
-    trap itera-rollback EXIT
-
-    local status
-    itera-run-in-worktree itera-skip-loop
-    status=$?
-    itera-finish "$status"
-    status=$?
-    trap - EXIT
-    return "$status"
-}
-
-itera-skip-loop() {
-    dic-run git add -A || return 1
-    if ! dic-run git commit --quiet -m '[geni] itera: manual checkpoint'; then
-        dic-info "itera-info: nothing to commit"
-    else
-        dic-run git show --stat --format= HEAD
-    fi
-    itera-run 2
 }
 
 # Guess the test command from the tree: ./test.sh wins because a project
@@ -599,6 +422,7 @@ itera-run-tests() {
 itera() {
     ITERA_ALLOW_RED=0
     ITERA_LIVE=0
+    ITERA_LIVE=0
     local mode=run
     local -a llm_args=()
     while (( $# )); do
@@ -606,9 +430,6 @@ itera() {
             --max)       ITERA_MAX=$2; shift 2 ;;
             --test)      ITERA_TEST=$2; shift 2 ;;
             --allow-red) ITERA_ALLOW_RED=1; shift ;;
-            --continue)  mode=continue; shift ;;
-            --abort)     mode=abort; shift ;;
-            --skip)      mode=skip; shift ;;
             --)          shift; llm_args+=("$@"); break ;;
             *)           llm_args+=("$1"); shift ;;
         esac
@@ -616,48 +437,51 @@ itera() {
     ITERA_ARGS=("${llm_args[@]}")
     ITERA_REQUEST="${ITERA_ARGS[*]}"
 
-    case $mode in
-        abort)    itera-abort;    return $? ;;
-        continue) itera-continue; return $? ;;
-        skip)     itera-skip;     return $? ;;
-    esac
-
     if (( ${#ITERA_ARGS[@]} == 0 )) && [[ -t 0 ]]; then
         dic-error 'itera-error: no request'
         return 64
     fi
 
+    # Scratch for this run: one mktemp directory, removed when the run
+    # ends.  Not under .git, and not state for a later invocation to
+    # find: --continue and --abort are gone, so nothing here outlives the
+    # run and a second itera in the same worktree has nothing to collide
+    # with.  Absolute, because itera-run reads the buffer after a cd into
+    # the loop worktree.
+    local ITERA_TMP
+    ITERA_TMP=$(mktemp -d "${TMPDIR:-/tmp}/geni-itera.XXXXXXXXXX") || return 1
+    trap 'rm -rf "$ITERA_TMP"' EXIT
+
     # Buffer the request before the pre-flight test can read it.  Same
-    # rationale as committe-prepare's buffering of its own stdin, and the
-    # same shape: the bytes are read once here, so a test that reads fd 0
-    # finds it at EOF and round 1 hands the buffer to committe and not
-    # the drained pipe.  The file is removed first, so a tty-run that
-    # follows a heredoc-run does not inherit the heredoc's bytes.
-    local ITERA_STDINFILE
-    ITERA_STDINFILE=$(itera-stdinfile) || return 1
-    rm -f "$ITERA_STDINFILE"
+    # rationale as committe-prepare's buffering of its own stdin: the
+    # bytes are read once here, so a test that reads fd 0 finds it at
+    # EOF and round 1 hands the buffer to committe and not the drained
+    # pipe.  Left empty on a tty-run, and itera-run's [[ -f ]] then
+    # takes the branch that lets committe inherit fd 0.
+    local ITERA_STDINFILE=
     if [[ ! -t 0 ]]; then
-        mkdir -p "$(dirname "$ITERA_STDINFILE")" || return 1
-        cat > "$ITERA_STDINFILE" || return 1
+        ITERA_STDINFILE="$ITERA_TMP/stdin"
+        cat > "$ITERA_STDINFILE" || { rm -rf "$ITERA_TMP"; return 1; }
     fi
 
-    itera-validate || return $?
-    itera-prepare  || return $?
+    local status
+    itera-validate || { status=$?; rm -rf "$ITERA_TMP"; return "$status"; }
+    itera-prepare  || { status=$?; rm -rf "$ITERA_TMP"; return "$status"; }
 
     # The EXIT trap is the backstop: a signal, or a subshell abort in a
-    # helper, takes the shell down and itera-rollback still runs.  The
-    # explicit call after itera-finish covers the sourced case, where
-    # the shell never exits and EXIT never fires; ITERA_LIVE makes the
-    # two idempotent.
+    # helper, takes the shell down and this still runs.  The explicit
+    # call after itera-finish covers the sourced case, where the shell
+    # never exits and EXIT never fires, and ITERA_LIVE makes the two
+    # idempotent: only the run that reached itera-prepare rolls back.
     ITERA_LIVE=1
-    trap itera-rollback EXIT
+    trap 'rm -rf "$ITERA_TMP"; itera-rollback' EXIT
 
-    local status
     itera-run-in-worktree itera-run
     status=$?
     itera-finish "$status"
     status=$?
     trap - EXIT
+    rm -rf "$ITERA_TMP"
     return "$status"
 }
 

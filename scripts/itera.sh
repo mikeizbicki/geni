@@ -113,7 +113,14 @@ itera-record-time() {
 # which git does not allow, so the directory names the worktree.
 itera-state-dir() {
     local dir
-    dir=$(git rev-parse --git-dir 2>/dev/null) || return 1
+    # --path-format=absolute, because a `cd` into the loop worktree
+    # happens after this is read: the plain form answers relative to
+    # the cwd that asked, and the answer asked in the original worktree
+    # names nothing in the loop worktree.  [[ -f $ITERA_STDINFILE ]]
+    # turns false, round 1 takes the branch with no redirect, and
+    # committe reads fd 0 -- a heredoc itera already drained -- instead
+    # of the request.
+    dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) || return 1
     printf '%s\n' "$dir/geni/itera"
 }
 

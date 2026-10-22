@@ -65,6 +65,11 @@ Tracing:
   -- a redirected stdout is a patchfile or a test's own output, and an
   escape in either is corruption of what the next stage reads
 
+Common problems:
+- agents often forget that dic can take the user prompt either via stdin or cmdline arg;
+  any harness needs to support both of these methods;
+  even after any needed repeats we need to ensure that the correct input prompt gets sent
+
 The four-step harness pattern:
 - NAME-validate   pure: is this run possible at all
 - NAME-prepare    writes only under .git/geni/NAME/

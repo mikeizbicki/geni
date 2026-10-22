@@ -5,6 +5,7 @@ interpreter is already up and every import is already paid -- which is
 exactly the cost this program exists to keep small.  So these tests start a
 process instead, and one of them refuses site-packages outright.
 """
+import os
 import pytest
 
 from dic.store import db
@@ -36,3 +37,18 @@ def test_startup_fits_its_budget(dic_run, env, model):
         "SELECT min(t_request - t_start) FROM messages").fetchone()[0]
     conn.close()
     assert elapsed < STARTUP_MS * 1e6
+
+
+def test_init_names_a_dic_sh_that_is_there(dic_run):
+    """--init names a dic.sh a shell can source, in a checkout as in an install.
+
+    The scripts are the package `dic.scripts` in an install and a sibling
+    directory of src/ in a checkout, and --init has to name them in both,
+    because what it prints is a `source` line a .bashrc evals: a path that
+    is not there is a shell that starts with no dic at all.
+    """
+    line = dic_run("--init").stdout.decode()
+    assert line.startswith("source ")
+    path = line.split()[1].strip("'")
+    assert os.path.basename(path) == "dic.sh"
+    assert os.path.isfile(path)

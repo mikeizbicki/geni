@@ -51,9 +51,9 @@ said is the bridge's cargo.
 import base64, concurrent.futures, http.client, json, os, queue
 import shlex, subprocess, threading, time
 import urllib.parse
-from importlib.resources import files
 
 from dic import net
+from dic.paths import scripts_dir
 from dic.store import http_url
 from dic.tty import DicError
 
@@ -181,7 +181,7 @@ def command(target):
     ['--share-net', '--', 'server']
     """
     flags, argv = words(target)
-    path = shlex.quote(str(files("dic.scripts") / "dic.sh"))
+    path = shlex.quote(os.path.join(scripts_dir(), "dic.sh"))
     script = (f"builtin source {path} 2>/dev/null\n"
               "builtin declare -F sandbox >/dev/null"
               ' || { echo "dic: --mcp: the packaged sandbox is missing" >&2;'

@@ -34,9 +34,9 @@ def init_line():
     and the `itera` family come with it.  A `-f` in argv is forwarded, so
     the shell that asks can reread an edited dic.sh into itself.
     """
-    from importlib.resources import files
+    from dic.paths import scripts_dir
     import shlex
-    path = files("dic.scripts") / "dic.sh"
+    path = os.path.join(scripts_dir(), "dic.sh")
     extra = " -f" if "-f" in sys.argv[1:] else ""
     return f"source {shlex.quote(str(path))}{extra}"
 

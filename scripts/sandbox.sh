@@ -33,6 +33,12 @@
 # not have is an error; a name it has set to the empty string is a value,
 # and it travels.
 #
+# Nothing the calling shell exported reaches the payload.  The payload's
+# own environment is emptied by --clearenv, and bwrap's -- the one
+# /proc/1/environ shows from inside, because bwrap is PID 1 of the
+# namespace the jail mounts /proc in -- is emptied at the exec that
+# starts it, so --envs is the one route a variable has in.
+#
 # The default is a jail that sees almost nothing.  The point is that the
 # files worth stealing -- ~/.ssh, ~/.aws, ~/.config/gh, a database socket
 # -- are not in the jail's map at all, instead of sitting in it behind a
@@ -391,9 +397,16 @@ sandbox() {
     # not to the shell that asked for it; the file loses its name before
     # bwrap starts.  A call with no --envs opens /dev/null instead, which
     # is what keeps this one line and one process.
+    #
+    # env -i is the scrub the header describes: bwrap is what /proc/1
+    # names from inside the jail, so the environment this shell was
+    # started with would be readable there.  PATH survives it so that
+    # bwrap can execvp the payload, and TERM so that a program which reads
+    # it has something sane before the payload's own --setenv.
     ( exec 9<"${envfile:-/dev/null}"
       if [[ -n $envfile ]]; then
           rm -f "$envfile"
       fi
-      exec bwrap "${args[@]}" --seccomp 3 "$@" 3<"$blob" )
+      exec env -i PATH="${PATH:-/usr/bin:/bin}" TERM="${TERM:-dumb}" \
+          bwrap "${args[@]}" --seccomp 3 "$@" 3<"$blob" )
 }

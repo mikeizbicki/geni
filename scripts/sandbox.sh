@@ -9,6 +9,7 @@
 #     sandbox -- make -j
 #     sandbox --ro-bind /home/me/.gitconfig /home/me/.gitconfig -- git log
 #     sandbox --bind /home/me/src /home/me/src -- make -C /home/me/src
+#     sandbox --bind=/home/me/src -- make -C /home/me/src
 #     sandbox --share-net -- cargo build
 #     sandbox --envs=GH_TOKEN --share-net -- gh-mcp
 #     sandbox NO_COLOR=1 -- make -j
@@ -234,6 +235,27 @@ sandbox() {
         done
         shift
     done
+
+    # A `--bind=SRC` is one word where bwrap wants two: bwrap reads its
+    # long options as whole words and does not split on `=`, so
+    # `--bind=src` is an unknown option rather than a binding.  That
+    # makes the spelling free to mean "both sides are SRC", and
+    # --ro-bind=S and --dev-bind=S get the same treatment.  The rewrite
+    # is word-local -- one word in, three out -- so it never has to
+    # decide where bwrap's options end and the payload begins.  A `--`
+    # is bwrap's own end-of-options marker: the walk stops there, so a
+    # `--bind=` the payload itself takes as an argument is left alone.
+    local -a rest=()
+    while (( $# )); do
+        case $1 in
+            --) rest+=("$@"); break ;;
+            --bind=*|--ro-bind=*|--dev-bind=*)
+                rest+=("${1%%=*}" "${1#*=}" "${1#*=}") ;;
+            *)  rest+=("$1") ;;
+        esac
+        shift
+    done
+    set -- "${rest[@]}"
 
     # `local -a` gives this call its own array, so two calls cannot collide
     # and a shell running `set -u` is unaffected.  A bash array passes its

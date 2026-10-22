@@ -202,6 +202,20 @@ def models(env, llm):
     env["FAKE_API_KEY"] = "test-key"
 
 
+@pytest.fixture
+def venv(monkeypatch):
+    """VIRTUAL_ENV set to the interpreter running the tests.
+
+    A stdio MCP server is started through dic's sandbox, and sandbox()
+    binds only $PWD and $VIRTUAL_ENV.  Run from inside `sandbox
+    ./test.sh`, the outer jail has already cleared the environment, so
+    without this the interpreter's own path is not in the map and
+    bwrap's execvp fails before the child starts.
+    """
+    monkeypatch.setenv(
+        "VIRTUAL_ENV", os.path.dirname(os.path.dirname(sys.executable)))
+
+
 def say(streams, env, prompt, **knobs):
     """One dic() call through the test's streams, environment and servers."""
     return dic(prompt, env=env, out=streams.out, err=streams.err, **knobs)
@@ -275,7 +289,7 @@ def test_continue_re_offers_the_rows_tools_without_opening_the_server(
 
 @NEEDS_BWRAP
 def test_a_servers_own_assignment_is_set_and_dic_own_env_is_not(
-        streams, env, models, llm, monkeypatch):
+        streams, env, models, llm, monkeypatch, venv):
     """A NAME=value sets what the child reads; what dic exported, it does not.
 
     The sandbox clears the environment, so `--mcp 'K=v cmd'` is the whole of
@@ -316,7 +330,7 @@ def test_a_urls_userinfo_becomes_basic_auth(streams, env, models, llm,
 
 @NEEDS_BWRAP
 def test_a_stdio_server_is_jailed_and_only_its_own_words_widen_the_jail(
-        streams, env, models, llm):
+        streams, env, models, llm, venv):
     """dic puts the sandbox in front itself; `--share-net` is the one knob.
 
     The child does not have to speak MCP for this to be worth asserting:
@@ -367,7 +381,7 @@ def test_a_server_that_will_not_start_refuses_a_fresh_call(
 
 @NEEDS_BWRAP
 def test_the_servers_are_opened_at_once_and_not_one_after_another(
-        streams, env, models, llm):
+        streams, env, models, llm, venv):
     """A slow server must not delay the ones behind it: four handshakes, one wait.
 
     The command sleeps before it answers `initialize`, so three of them in

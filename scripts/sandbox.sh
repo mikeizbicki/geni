@@ -10,19 +10,28 @@
 #     sandbox --ro-bind /home/me/.gitconfig /home/me/.gitconfig -- git log
 #     sandbox --bind /home/me/src /home/me/src -- make -C /home/me/src
 #     sandbox --share-net -- cargo build
+#     sandbox --envs=GH_TOKEN --share-net -- gh-mcp
 #     sandbox NO_COLOR=1 -- make -j
 #
 # bwrap applies its arguments from left to right and the last one wins, so
 # the function lays down a strict default and you add back exactly the path
-# you need.  The function has no flags of its own, so there is nothing here
-# to learn that is not already bwrap(1).
+# you need.  Every argument is a bwrap(1) argument but the leading --envs
+# and NAME=value, which the function reads for itself and which are the
+# only words here that are not bwrap's own.
 #
-# The one word the function reads for itself is a leading NAME=value, the
-# form env(1) and sudo(8) also accept, and it reads it the way bash does:
-# a run of assignments that ends at the first word that is not one.  Each
-# becomes a --setenv of its own, laid down after the default environment,
-# so NO_COLOR=1 reaches the payload and PATH=/x overrides the PATH the
-# defaults would have passed through.
+# The words the function reads for itself are a leading --envs=NAME[,NAME],
+# or `--envs NAME` repeated, and a leading NAME=value -- the form env(1)
+# and sudo(8) also accept.  It reads the run of them the way bash reads a
+# run: the run ends at the first word that is neither.  --envs names a
+# variable of the shell that called the function and NAME=value gives the
+# value outright; either way the value is written to a file -- not to a
+# --setenv, whose value is a word of its own, and a word is what `ps`
+# prints -- and handed to bwrap on fd 9.  The file is unlinked before bwrap
+# starts, so a secret typed here is not a secret left in the process table
+# for as long as the sandbox runs: what the process table shows is a
+# descriptor and a name and nothing else.  A name the calling shell does
+# not have is an error; a name it has set to the empty string is a value,
+# and it travels.
 #
 # The default is a jail that sees almost nothing.  The point is that the
 # files worth stealing -- ~/.ssh, ~/.aws, ~/.config/gh, a database socket
@@ -87,22 +96,30 @@ sandbox-seccomp-blob() {
     printf '%s\n' "$blob"
 }
 
+# True when a word is a name a shell can export: a shell identifier, and
+# nothing else.  A `--`, a command name and a bwrap option are none of
+# those, so a walk that stops at the first word this rejects stops exactly
+# where the run of --envs names stops.  sandbox() and sandbox-complete()
+# both use it, so completion can never offer a name the wrapper refuses.
+sandbox-name() {
+    [[ ${1:-} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+}
+
 # True when a word is a leading NAME=value assignment: a shell identifier,
-# an equals sign, and the value.  A `--`, a command name and a bwrap option
+# an equals sign, and a value.  A `--`, a command name and a bwrap option
 # are none of those, so a walk that stops at the first word this rejects
-# stops exactly where bash's own assignment prefix stops.  sandbox() and
-# sandbox-complete() both walk with it, so completion can never offer a
-# word the wrapper would not have peeled.
+# stops exactly where bash's own assignment prefix stops.
 sandbox-assign() {
     [[ ${1:-} == *=* && ${1%%=*} =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 }
 
 # sandbox-complete -- bash completion for sandbox().
 #
-# The payload is the first word that is neither a leading NAME=value
-# (sandbox-assign, the same predicate sandbox() peels with, so
-# completion and the wrapper agree on where the run ends) nor a bwrap
-# option (a word that begins with -).  A `--` is bwrap's own
+# The payload is the first word that is neither a leading --envs (which
+# takes a name that sandbox-name recognizes, the same predicate
+# sandbox() peels with, so completion and the wrapper agree on where
+# the run ends) nor a bwrap option (a word that begins with -).  A `--`
+# is bwrap's own
 # end-of-options marker: the word after it is the payload whether or
 # not it begins with -, and the walk stops there.
 #
@@ -119,12 +136,22 @@ sandbox-complete() {
     local cword=$COMP_CWORD
 
     # Walk the words left to right; the loop stops at the payload's
-    # index.  Each word before it is a leading assignment or a bwrap
-    # option.  A `--` is bwrap's own, and the word after it is the
-    # payload.
+    # index.  Each word before it is a leading --envs, a leading
+    # NAME=value or a bwrap option.  A `--` is bwrap's own, and the
+    # word after it is the payload.
     local i=1
     while (( i <= cword )); do
         if sandbox-assign "${COMP_WORDS[i]}"; then
+            ((i++))
+        elif [[ ${COMP_WORDS[i]} == --envs ]]; then
+            # the word after it names one of this shell's variables, and
+            # the names of this shell are what is offered for it
+            if (( i + 1 == cword )); then
+                mapfile -t COMPREPLY < <(compgen -v -- "$cur")
+                return
+            fi
+            ((i+=2))
+        elif [[ ${COMP_WORDS[i]} == --envs=* ]]; then
             ((i++))
         elif [[ ${COMP_WORDS[i]} == -- ]]; then
             ((i++))
@@ -144,24 +171,61 @@ sandbox-complete() {
         return
     fi
 
-    # Still inside the option run.  An assignment in progress has a
-    # value the caller types, so nothing is offered for it; a bwrap
-    # option in progress names no file, so the fallback is a path.
-    [[ $cur == *=* ]] && return
+    # Still inside the option run.  A bwrap option in progress names no
+    # file, so the fallback is a path; a --envs= in progress names a
+    # variable, and a path is never one of those.
+    [[ $cur == --envs=* ]] && return
     mapfile -t COMPREPLY < <(compgen -f -- "$cur")
 }
 
 complete -o filenames -F sandbox-complete sandbox
 
 sandbox() {
-    # A leading NAME=value is read here and nowhere else.  Peel the run of
-    # them off before anything else looks at the argument list, so what is
-    # left is the same list bwrap would have been handed without them.
-    local -a envs=()
-    local name
-    while (( $# )) && sandbox-assign "$1"; do
-        name=${1%%=*}
-        envs+=(--setenv "$name" "${1#*=}")
+    # --envs is a name read from this shell, and a leading NAME=value is a
+    # value given as a word; both are values an argument list must not
+    # hold, so both travel the same way and neither becomes a --setenv.
+    # Peel the leading run of either off before anything else looks at the
+    # argument list, so what is left is the same list bwrap would have
+    # been handed without them.
+    local -a want=() given=()
+    local list name word
+    while (( $# )); do
+        if sandbox-assign "$1"; then
+            given+=("$1")
+            shift
+            continue
+        fi
+        case $1 in
+            --envs=*) list=${1#--envs=} ;;
+            --envs)
+                shift
+                if (( ! $# )); then
+                    dic-error "sandbox-error: --envs needs a name"
+                    return 1
+                fi
+                list=$1 ;;
+            *) break ;;
+        esac
+        if [[ -z $list ]]; then
+            dic-error "sandbox-error: --envs needs a name"
+            return 1
+        fi
+        # A comma list.  An empty element is not a name, and the check
+        # below is what turns `--envs=a,,b` into an error rather than
+        # into a variable nothing could export.
+        local -a names=()
+        IFS=, read -ra names <<<"$list"
+        for name in "${names[@]}"; do
+            if ! sandbox-name "$name"; then
+                dic-error "sandbox-error: --envs: '$name' is not a name"
+                return 1
+            fi
+            if [[ ! -v $name ]]; then
+                dic-error "sandbox-error: --envs $name: not set in this shell"
+                return 1
+            fi
+            want+=("$name")
+        done
         shift
     done
 
@@ -272,18 +336,43 @@ sandbox() {
 
     # Empty the environment, then put back only what a program needs to find
     # itself.  An exported API key is not a variable the payload can read
-    # here; --setenv K=V puts one back when a build actually needs it.
+    # here; --envs is how one is handed over when a build actually needs it.
     args+=(--clearenv --setenv HOME /tmp)
     for p in PATH TERM LANG LC_ALL TZ; do
         [[ -v $p ]] && args+=(--setenv "$p" "${!p}")
     done
 
-    # The assignments peeled off the front go here, after the default
-    # environment above, because bwrap applies its --setenv words in order
-    # and the last one for a name wins.  That is what lets a caller's
-    # PATH=/x override the PATH passed through above and NO_COLOR=1 add a
-    # name the defaults never set.
-    (( ${#envs[@]} )) && args+=("${envs[@]}")
+    # The variables peeled off the front go in through a file and not
+    # through --setenv, because --setenv takes its value as a word of its
+    # own and a word is exactly what `ps` prints.  The pairs are NUL
+    # separated, so a value may hold anything but a NUL, and mktemp makes
+    # the file 0600 before it holds one.  --tmpfs /run above is what makes
+    # /run/dic-env a path nothing could have bound over; bwrap reads the
+    # descriptor and not that path, and the file is unlinked in the
+    # subshell below before bwrap starts, so neither the process table nor
+    # a directory on the host ever holds the bytes.
+    local envfile=
+    if (( ${#want[@]} || ${#given[@]} )); then
+        envfile=$(mktemp "${TMPDIR:-/tmp}/dic-env.XXXXXXXX") || {
+            dic-error "sandbox-error: cannot make a file for --envs"
+            return 1
+        }
+        chmod 600 "$envfile"
+        for name in "${want[@]}"; do
+            printf '%s\0%s\0' "$name" "${!name}"
+        done >"$envfile"
+        for word in "${given[@]}"; do
+            printf '%s\0%s\0' "${word%%=*}" "${word#*=}"
+        done >>"$envfile"
+        args+=(--file 9 /run/dic-env)
+        # The payload is wrapped in a shell that reads the pairs back into
+        # its own environment and then becomes the command, so what runs is
+        # the command itself and not a shell in front of it.
+        set -- bash -c 'while IFS= read -r -d "" n && IFS= read -r -d "" v; do
+            export "$n=$v"
+        done < /run/dic-env
+        exec "$@"' -- "$@"
+    fi
 
     # The caller's arguments come last, so they are the exceptions to
     # everything above.  The syscall filter goes before them and not after,
@@ -297,5 +386,14 @@ sandbox() {
     local blob
     blob=$(sandbox-seccomp-blob) || return 1
 
-    ( exec bwrap "${args[@]}" --seccomp 3 "$@" 3<"$blob" )
+    # --file takes a descriptor the same way --seccomp does, and it is
+    # opened here, inside the subshell, so it belongs to the sandbox and
+    # not to the shell that asked for it; the file loses its name before
+    # bwrap starts.  A call with no --envs opens /dev/null instead, which
+    # is what keeps this one line and one process.
+    ( exec 9<"${envfile:-/dev/null}"
+      if [[ -n $envfile ]]; then
+          rm -f "$envfile"
+      fi
+      exec bwrap "${args[@]}" --seccomp 3 "$@" 3<"$blob" )
 }

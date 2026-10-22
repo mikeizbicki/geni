@@ -10,7 +10,24 @@ setup() {
     source "$BATS_TEST_DIRNAME/../../scripts/sandbox.sh"
 
     export FAKE_BWRAP_LOG="$BATS_TEST_TMPDIR/bwrap-args"
+    export FAKE_BWRAP_ENV="$BATS_TEST_TMPDIR/bwrap-env"
     : > "$FAKE_BWRAP_LOG"
+    : > "$FAKE_BWRAP_ENV"
+
+    # The fake is wrapped rather than used directly: the sandbox hands
+    # bwrap an environment scrubbed of the caller's, so a fake that found
+    # its own log path there would write nowhere -- which is the thing
+    # being tested.  The wrapper carries that path inside itself, writes
+    # down the environment it was handed, and passes the argument list on
+    # to the shared fake.
+    mkdir -p "$BATS_TEST_TMPDIR/bin"
+    cat > "$BATS_TEST_TMPDIR/bin/bwrap" <<EOF
+#!/bin/bash
+env >> "$FAKE_BWRAP_ENV"
+export FAKE_BWRAP_LOG="$FAKE_BWRAP_LOG"
+exec "$BATS_TEST_DIRNAME/../bin/bwrap" "\$@"
+EOF
+    chmod +x "$BATS_TEST_TMPDIR/bin/bwrap"
 
     repo="$BATS_TEST_TMPDIR/repo"
     mkdir -p "$repo"
@@ -21,7 +38,7 @@ setup() {
 # inside the jail `sandbox pytest` is: the filter the outer sandbox installs
 # refuses unshare and mount, and those are what a jail is made of.
 fake_bwrap() {
-    export PATH="$BATS_TEST_DIRNAME/../bin:$PATH"
+    export PATH="$BATS_TEST_TMPDIR/bin:$BATS_TEST_DIRNAME/../bin:$PATH"
     export SANDBOX_SECCOMP_BLOB=/dev/null
 }
 
@@ -83,4 +100,45 @@ given() { grep -qxF -- "$1" "$FAKE_BWRAP_LOG"; }
     export XDG_CACHE_HOME="$BATS_TEST_TMPDIR/cache"
     blob=$(sandbox-seccomp-blob)
     [ -s "$blob" ]
+}
+
+@test "a caller's own environment does not reach bwrap" {
+    fake_bwrap
+    export SECRET=hunter2
+    run sandbox -- true
+    [ "$status" -eq 0 ]
+    ! grep -q '^SECRET=' "$FAKE_BWRAP_ENV"
+}
+
+@test "a --envs value is handed over by file and never in a word" {
+    fake_bwrap
+    export GH_TOKEN=ghp_hunter2
+    run sandbox --envs=GH_TOKEN -- true
+    [ "$status" -eq 0 ]
+    given --file
+    given /run/dic-env
+    ! grep -q 'ghp_hunter2' "$FAKE_BWRAP_LOG"
+}
+
+@test "a leading NAME=value is handed over the same way" {
+    fake_bwrap
+    run sandbox NO_COLOR=hunter2 -- true
+    [ "$status" -eq 0 ]
+    given --file
+    ! grep -q 'hunter2' "$FAKE_BWRAP_LOG"
+}
+
+@test "--envs takes a variable that is set to nothing" {
+    fake_bwrap
+    export EMPTY_VAR=
+    run sandbox --envs=EMPTY_VAR -- true
+    [ "$status" -eq 0 ]
+    given --file
+}
+
+@test "--envs refuses a name the calling shell does not have" {
+    fake_bwrap
+    run sandbox --envs=NO_SUCH_VARIABLE_X -- true
+    [ "$status" -ne 0 ]
+    [ ! -s "$FAKE_BWRAP_LOG" ]
 }

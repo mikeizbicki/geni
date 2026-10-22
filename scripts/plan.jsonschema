@@ -5,6 +5,11 @@
   "additionalProperties": false,
   "description": "A structured version of a PLAN.md file. An AI agent will use this file to achieve the goal following the provided steps in order. Each step should be fully 'self contained'.",
   "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "human readable slug for the plan"
+    },
     "goal": {
       "type": "string",
       "description": "the user's request; 1-2 sentences"

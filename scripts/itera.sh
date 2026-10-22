@@ -115,6 +115,18 @@ itera-state-dir() {
     printf '%s\n' "$dir/geni/itera"
 }
 
+# The request on itera's own stdin, buffered once at entry.  itera's
+# pre-flight test runs before committe reads fd 0, and a test that reads
+# stdin -- or that hands it to a program which does -- would leave
+# committe at EOF and the model with only its own instructions.  The
+# buffer lives in the state directory --continue and --abort already
+# read, and round 1 is the only round that reads it.
+itera-stdinfile() {
+    local dir
+    dir=$(itera-state-dir) || return 1
+    printf '%s\n' "$dir/stdin"
+}
+
 # Record what a later --continue or --abort needs.  One file per fact, so a
 # half-written state is a missing file and not a malformed one.
 itera-state-write() {
@@ -210,7 +222,16 @@ itera-run() {
     local status
     while (( round <= ITERA_MAX )); do
         if (( round == 1 )); then
-            committe "${ITERA_ARGS[@]}"
+            # Read the request from the buffer itera() wrote at entry,
+            # not from fd 0: the pre-flight test that ran between has
+            # already seen fd 0, and a test that read it would leave
+            # committe at EOF.  With no buffer -- a tty-run, or a
+            # direct call to itera-run -- fd 0 is left alone.
+            if [[ -f ${ITERA_STDINFILE:-} ]]; then
+                committe "${ITERA_ARGS[@]}" < "$ITERA_STDINFILE"
+            else
+                committe "${ITERA_ARGS[@]}"
+            fi
         else
             # -c continues the round-1 conversation, and the failed
             # round's output is the request for this one: dic appends a
@@ -462,6 +483,20 @@ itera() {
     if (( ${#ITERA_ARGS[@]} == 0 )) && [[ -t 0 ]]; then
         dic-error 'itera-error: no request'
         return 64
+    fi
+
+    # Buffer the request before the pre-flight test can read it.  Same
+    # rationale as committe-prepare's buffering of its own stdin, and the
+    # same shape: the bytes are read once here, so a test that reads fd 0
+    # finds it at EOF and round 1 hands the buffer to committe and not
+    # the drained pipe.  The file is removed first, so a tty-run that
+    # follows a heredoc-run does not inherit the heredoc's bytes.
+    local ITERA_STDINFILE
+    ITERA_STDINFILE=$(itera-stdinfile) || return 1
+    rm -f "$ITERA_STDINFILE"
+    if [[ ! -t 0 ]]; then
+        mkdir -p "$(dirname "$ITERA_STDINFILE")" || return 1
+        cat > "$ITERA_STDINFILE" || return 1
     fi
 
     itera-validate || return $?

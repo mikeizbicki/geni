@@ -37,6 +37,7 @@ markers = ["slow: starts a real dic process; left out of the default run"]
 addopts = "-m 'not slow' --doctest-modules"
 
 [tool.ruff]
+cache-dir = "/tmp/ruff-cache"
 target-version = "py38"
 
 [tool.ruff.lint]

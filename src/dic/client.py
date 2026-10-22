@@ -1312,9 +1312,8 @@ def dic(prompt,
                 # means the whole answer -- the reformat happens once,
                 # below, and what reaches stdout is the records
                 if chunk and not knobs["extract"] and not container:
-                    if paint and painted != kind:
-                        sink.write((RESET if painted is not None else "") + PAYLOAD)
-                        painted = kind
+                    if paint:
+                        chunk = RESET + PAYLOAD + chunk + RESET
                     sink.write(chunk)
             wire["t_last"] = time.time_ns()
             close_meters()
@@ -1380,10 +1379,8 @@ def dic(prompt,
                 shown = (pretty_printer.feed(call_answer)
                          if pretty_printer is not None else call_answer)
                 if shown and not knobs["extract"] and not container:
-                    if paint and painted != "":
-                        sink.write((RESET if painted is not None else "")
-                                   + PAYLOAD)
-                        painted = ""
+                    if paint:
+                        shown = RESET + PAYLOAD + shown + RESET
                     sink.write(shown)
                 break
             if not asked:
@@ -1412,8 +1409,6 @@ def dic(prompt,
         wire["t_last"] = wire["t_done"] = time.time_ns()
         close_meters()
         if not knobs["extract"] and knobs["path"] is None:
-            if painted is not None:         # do not leave stdout painted blue
-                out.write(RESET)
             if chunks and not chunks[-1].endswith("\n"):
                 out.write("\n")
             out.flush()
@@ -1473,12 +1468,10 @@ def dic(prompt,
     text = response
     if knobs["extract"]:
         text = code_block(response)
-        sink.write(PAYLOAD + text + RESET if paint else text)
+        sink.write(RESET + PAYLOAD + text + RESET if paint else text)
     elif container:
-        sink.write(PAYLOAD + text + RESET if paint else text)
+        sink.write(RESET + PAYLOAD + text + RESET if paint else text)
     else:
-        if painted is not None:
-            sink.write(RESET)
         if pretty_printer is not None:
             # the reindenter ends the answer with its own newline: the DFA
             # drops whitespace, so a response that ended in one has none

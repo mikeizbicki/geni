@@ -39,7 +39,7 @@ function committe() {
     # committe's own flags are parsed first; the first `--` ends them and
     # everything after is passed to the model command.  A flag committe does
     # not know is passed through too, so a new dic/llm flag works unedited.
-    local force=0 retries="${COMMITTE_RETRIES:-1}"
+    local force=0 retries="${COMMITTE_RETRIES:-5}"
     local retry_mode="${COMMITTE_RETRY_MODE:-bytes}"
     local applier="${COMMITTE_APPLIER:-auto}"
     local dry_run=0

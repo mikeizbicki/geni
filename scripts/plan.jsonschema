@@ -1,9 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "required": ["goal", "steps"],
+  "required": ["name", "goal", "acceptance_criteria", "other_background_info", "steps"],
   "additionalProperties": false,
-  "description": "A structured version of a PLAN.md file. An AI agent will use this file to achieve the goal following the provided steps in order. Each step should be fully 'self contained'.",
+  "description": "A structured version of a PLAN.md file. An AI agent will use this file to achieve the goal following the provided steps in order. Each step should be fully 'self contained'. This file must also be self contained and not explicitly refer to the previous conversation at all; it should instead directly include the relavent information.",
   "properties": {
     "name": {
       "type": "string",
@@ -32,7 +32,7 @@
   "$defs": {
     "commit": {
       "type": "object",
-      "required": ["id", "description", "files"],
+      "required": ["id", "description", "files", "new_tests"],
       "additionalProperties": false,
       "properties": {
         "id": {
@@ -51,7 +51,6 @@
         "files": {
           "type": "array",
           "minItems": 1,
-          "uniqueItems": true,
           "description": "list of files that a subagent will need to read in order to implement the commit; a folder (e.g. src/) may be specified to include all files in the folder",
           "items": {
             "type": "string"

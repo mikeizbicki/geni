@@ -172,7 +172,7 @@ def parser():
     which is why the entry point pre-dispatches and prepends "call" when the
     first word is not a command name.
     """
-    import argparse
+    import argparse, inspect
     from dic import commands
     from dic.client import dic
 
@@ -214,9 +214,17 @@ def parser():
 
     p = argparse.ArgumentParser(prog="dic", description="talk to a chat model",
                                 parents=[parent])
-    sub = p.add_subparsers(dest="command")
+    sub = p.add_subparsers(dest="command", title="commands")
     for command, func in commands.COMMANDS.items():
-        where = sub.add_parser(command, parents=[parent])
+        # The one line the command list prints is the first line of the
+        # docstring the command's own --help prints in full, so the summary
+        # and the long help cannot say different things and a new command
+        # needs no new line here.  `call` is marked, because the list is
+        # where a reader learns that `dic PROMPT` is already a call.
+        summary = (inspect.getdoc(func) or "").split("\n", 1)[0]
+        if command == "call":
+            summary = f"{summary} (the default)"
+        where = sub.add_parser(command, parents=[parent], help=summary)
         if command == "call":
             where.add_argument("prompt", nargs="?",
                                help="the prompt, or stdin")

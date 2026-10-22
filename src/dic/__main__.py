@@ -60,13 +60,23 @@ def main():
         # reject an unknown first word: a word that is not a command name is
         # the call's prompt, and "call" is prepended to say so.
         argv = sys.argv[1:]
-        # --help and -h name the whole tree of commands, so they are the one
-        # exception: left alone, the top-level parser answers with the list
-        # of commands rather than the call's own options
-        if not argv or (argv[0] not in commands.COMMANDS
-                        and argv[0] not in ("-h", "--help")):
+        p = parser()
+        # -h and --help name the whole tree of commands, so they answer with
+        # both halves of it: the list of commands, and the call's own
+        # options below it, because the call is the default command and
+        # `dic PROMPT` is what a reader is usually after.  argparse's own
+        # --help action is what prints the second half, and it exits 0 from
+        # inside the call below -- past the os._exit at the end of this
+        # function, and through the interpreter's own teardown, which is
+        # what flushes it.
+        if argv[:1] in (["-h"], ["--help"]):
+            p.print_help()
+            print("\nthe `call` command, the default one --"
+                  " `dic PROMPT` is `dic call PROMPT`:\n")
+            p.parse_args(["call", "--help"])
+        if not argv or argv[0] not in commands.COMMANDS:
             argv = ["call", *argv]
-        args = vars(parser().parse_args(argv))
+        args = vars(p.parse_args(argv))
         command = args.pop("command")
         if command == "call":
             # The prompt is one argument.  An option dic does not know is an

@@ -114,13 +114,14 @@ itera-worktree-path() {
 # -------------------------------------------------------------- validate
 
 # Pure: no model call, no ref moved.  Detects the test command, refuses a
-# dirty tree, and runs the pre-flight unless --allow-red.  The clean-tree
-# check is here and not in committe because itera commits every round, and
-# a dirty tree would make the round's commit something other than the
-# round's patch.
+# tree with untracked or uncommitted changes, and runs the pre-flight
+# unless --allow-red.  Untracked files are refused because a round's
+# committe can commit them.  The clean-tree check is here and not in
+# committe because itera commits every round, and a dirty tree would make
+# the round's commit something other than the round's patch.
 itera-validate() {
     test_cmd=$(itera-detect-test) || return 1
-    if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+    if [[ -n $(git status --porcelain) ]]; then
         dic-error 'itera-error: working tree has uncommitted changes'
         return 1
     fi
@@ -245,12 +246,13 @@ itera-run() {
 # the newest instead.  An empty range is itera-continue's green tree with
 # nothing committed, and there is then nothing to land.
 #
-# The landing is `merge --ff-only`, run in the original worktree so the
-# branch's ref and its working tree move together.  It is the CAS: if the
-# original branch moved while the loop ran, the fast-forward is refused
-# before anything is touched, and the loop worktree is left standing for
-# the user to merge by hand.  A merge, not a reset --hard, so nothing
-# typed in the original worktree is ever discarded.
+# The landing is `git merge`, run in the original worktree so the branch's
+# ref and its working tree move together.  It fast-forwards when the
+# original branch is an ancestor of the loop branch, and otherwise lands a
+# merge commit, so a divergence that appeared while the loop ran still
+# lands instead of being refused.  --no-edit keeps the default merge
+# message.  A merge, not a reset --hard, so nothing typed in the original
+# worktree is ever discarded.
 itera-record() {
     local first msg
     first=$(git -C "$ITERA_WORKTREE" rev-list --reverse \
@@ -267,8 +269,8 @@ itera-record() {
     fi
 
     if ! ( cd "$ITERA_ORIGINAL_WORKTREE" &&
-           dic-run git merge --ff-only "$ITERA_BRANCH" ); then
-        dic-error "itera-error: could not fast-forward $ITERA_ORIGINAL_BRANCH"
+           dic-run git merge --no-edit "$ITERA_BRANCH" ); then
+        dic-error "itera-error: could not merge $ITERA_BRANCH into $ITERA_ORIGINAL_BRANCH"
         dic-hint "itera-hint: the loop worktree is $ITERA_WORKTREE"
         dic-hint "itera-hint: merge manually: git merge $ITERA_BRANCH"
         return 1

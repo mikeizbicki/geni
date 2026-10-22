@@ -110,7 +110,7 @@ file already does, and because the environment is inherited by subshells and
 overridable for a single command: `DIC_MODEL=gpt dic ...`.
 
 `DIC_COST_BUDGET` is not a default for any flag: it is a ceiling, checked
-before every request, on the same subtree `--cost-session` prints.  A harness
+before every request, on the same subtree `dic cost --session` prints.  A harness
 that has spent its budget stops rather than asks.
 
 If `DIC_MODEL` names a model that is not configured, this is an error;
@@ -165,9 +165,8 @@ value is told from itself: a scheme makes it a URL and anything else makes it a
 command, with `--mcp-url` and `--mcp-shell` for the value that looks like the
 other one.  There is no file to write and no name to invent: a server is named
 after its host or its basename, and a second server of that name takes a
-after its host or the command's own name, and a second server of that name takes a
+number, in the order the flags were given.
 
-A command is a word list and not a shell line.  It is run by a bash with
 A command is a word list and not a shell line, and it is *always* run under
 the sandbox dic ships: the child is a bash of dic's own that sources dic's
 own dic.sh by absolute path, and the program it starts is
@@ -368,7 +367,7 @@ All of it goes through one `report(verbosity, level, msg)` in `tty.py`.
 5. Subagents: an agent that calls other agents is several conversations under
     one session, and every piece dic needs for that is already here.  A session
     name nests -- `DIC_SESSION=parent/scruta-1` is a child of `parent` --
-    `--cost-session` sums the subtree, and `-c` reads the pointer of whichever
+    `dic cost --session` sums the subtree, and `-c` reads the pointer of whichever
     session names it, so a child that wants a fresh context simply does not pass
     `-c`.  What is missing is the ergonomics a harness wants: a `--session NAME`
     flag, so a script spawns a child without juggling `export`; and a
@@ -458,7 +457,7 @@ The messages table has the following columns:
   table lives in a config file, which is edited; a bill is not, so it is
   *stored* when the call ends and never recomputed.  A call that never
   finished -- a ^C, or a stream that failed after its 200 -- is stored with
-  `cost` NULL and not zero, because `--stats` sums that column and a call
+  `cost` NULL and not zero, because `dic stats` sums that column and a call
   that was cut short is not a free one.  A provider that reports what it
   charged is the ground truth and its dollars are the ones stored; the
   table's estimate is kept beside them in `cost_items`, and `price_hash` is
@@ -530,7 +529,7 @@ CREATE VIEW stats AS SELECT
   FROM messages;
 ```
 
-`dic --stats` is then a single `GROUP BY model_id` over that view: frequency of use
+`dic stats` is then a single `GROUP BY model_id` over that view: frequency of use
 (`count(*)`) and runtime performance (`avg(ms_ttft)`, `avg(tok_per_sec)`, ...) are
 the same aggregate over the same rows, so they are one query, with averages
 restricted to `status = 200`.  `sum(cost)` is the historic total, added up and
@@ -539,7 +538,7 @@ whose rows were rated under two different tables is visible rather than averaged
 Python joins the resulting cells with tabs and computes nothing; the output is
 therefore already `sort`- and `awk`-shaped.
 This query scans `messages` and will grow slower with the table, which is
-acceptable: `--stats` is never on the latency path.
+acceptable: `dic stats` is never on the latency path.
 A second query over `json_each(tool_results)` is printed below it when a tool
 has run: each tool, per model, with how often it was called and how often it
 failed, because a tool that fails is a turn the model had to correct and not a
@@ -547,9 +546,9 @@ call dic made.
 
 `dic stats --upstreams` is that same aggregate one level deeper: `GROUP BY
 model_id, upstream` over the rows a router named an upstream for, filtered by
-`-m` the same way `--stats` is.  A provider that answers directly sends no
+`-m` the same way `dic stats` is.  A provider that answers directly sends no
 `provider` field and so has no rows here, which is why it is a query of its own
-and not a column of `--stats`: the question is not how a model performed but
+and not a column of `dic stats`: the question is not how a model performed but
 which of the routes it was served by did.
 
 Grouping by `head` instead, or filtering by `time`, is a matter of editing the
@@ -920,12 +919,12 @@ in the environment, so an install holding only one provider's key needs no confi
 failing even that, the first entry, which then fails with a message naming the key to export.
 An id that is not configured is an error, never a silent fallback.
 
-`dic --models` is one tab-separated table with a header: the id, the
+`dic models` is one tab-separated table with a header: the id, the
 environment variable its `api_key_name` resolves to, and whether that
 variable is set.  A model whose key is missing is marked rather than
 hidden, so a user chasing a model that will not run sees the export it
 names, and the id stays in column one, so `tail -n +2 | cut -f1` is what
-shell completion reads.  `dic --aliases` prints
+shell completion reads.  `dic models --aliases` prints
 `alias qwen='dic -m groq+qwen'` for every entry with an `alias` key,
 which `dic.sh` evals.
 Shell names and model names therefore come from one table and cannot drift apart,

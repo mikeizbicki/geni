@@ -622,18 +622,39 @@ def resolve_ref(conn, ref, env):
     unambiguous prefix of one: a caller may paste the first column of
     `dic --log` without its other twenty-five characters, and a prefix that
     names two messages is an error rather than a guess.
+
+    >>> resolve_ref(None, "HEAD~x", {})
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: HEAD~x: HEAD~N needs a number
+    >>> import tempfile
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     env = {"HOME": d, "XDG_RUNTIME_DIR": d}
+    ...     conn = db(env)
+    ...     _ = conn.executemany("INSERT INTO messages (mid, prev_mid)"
+    ...                      " VALUES (?, ?)",
+    ...                      [("A", None), ("B", "A"), ("C", "B")])
+    ...     session_move(env, "C")
+    ...     resolve_ref(conn, "HEAD~2", env)
+    'A'
     """
     if not ref:
         return ref
     ref = ref.strip()
     if ref in ("HEAD", "@") or ref.startswith(("HEAD~", "@~")):
         _, _, depth = ref.partition("~")
+        try:
+            steps = int(depth) if depth else 0
+        except ValueError:
+            raise DicError(f"{ref}: HEAD~N needs a number") from None
+        if steps < 0:
+            raise DicError(f"{ref}: HEAD~N needs a non-negative number")
         mid = session_head(env)
         if not mid:
             raise DicError(
                 f"{ref}: no conversation in this session"
                 f" (DIC_SESSION={env.get('DIC_SESSION', 'global')})")
-        for _ in range(int(depth) if depth else 0):
+        for _ in range(steps):
             row = conn.execute("SELECT prev_mid FROM messages WHERE mid = ?",
                                (mid,)).fetchone()
             if not row or not row["prev_mid"]:

@@ -2,11 +2,8 @@
 
 set -e
 
-# source the geni.sh script
-#scriptpath=$(readlink -f "$0")
-#genipath="$(dirname "$scriptpath")/../shell/geni.sh"
-#source "$genipath"
 eval "$(dic --init)"
+export DIC_MODEL=openrouter+deepseek
 
 # move to a temp folder
 tmpdir=$(mktemp -d) && cd "$tmpdir"
@@ -16,7 +13,7 @@ tmpdir=$(mktemp -d) && cd "$tmpdir"
 run() {
     echo "\$ $*"
     "$@" || exit $?
-    echo 
+    echo
 }
 
 # the actual shell session starts here
@@ -24,4 +21,8 @@ run pwd
 run git clone https://github.com/mikeizbicki/markdown-compiler.git .
 run sh -c "echo 'pytest --doctest-modules .' > test.sh"
 run chmod a+x test.sh
-run itera --allow-red -c 'fix the test cases'
+run itera --allow-red <<EOF
+$(accio .)
+
+make the tests pass
+EOF

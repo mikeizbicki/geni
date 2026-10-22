@@ -97,6 +97,31 @@ SAFE = frozenset("abcdefghijklmnopqrstuvwxyz"
 SHELL = frozenset("|&;<>()[]{}`$*?~!")
 
 
+# How many words each option of bwrap's own takes after it.  A word that
+# begins with `-` and is not here takes none, which is what the whole run
+# was assumed to be before there was a table: one flag, one word, and the
+# next word was the command.  That is right for `--share-net` and wrong
+# for `--ro-bind`, which names two paths before the command does, so
+# `--ro-bind src dest cmd` read `src` as the server's name and had it
+# run `dest` instead.  `--envs` is dic's own and is here for the same
+# reason: the name after it is the flag's and not the command's.
+ARITY = {
+    # a source and a destination
+    "--bind": 2, "--bind-try": 2, "--dev-bind": 2, "--dev-bind-try": 2,
+    "--ro-bind": 2, "--ro-bind-try": 2, "--symlink": 2,
+    # an fd and a destination
+    "--file": 2, "--bind-data": 2, "--ro-bind-data": 2,
+    # a destination
+    "--tmpfs": 1, "--dir": 1, "--proc": 1, "--dev": 1, "--mqueue": 1,
+    "--remount-ro": 1, "--lock-file": 1,
+    # a name and a value, or a name
+    "--setenv": 2, "--unsetenv": 1,
+    # an fd, or a size
+    "--seccomp": 1, "--size": 1,
+    # dic has one of its own; see scripts/sandbox.sh
+    "--envs": 1,
+}
+
 def words(target):
     """(flags, argv) of one --mcp command: its leading --words are the jail.
 
@@ -108,16 +133,28 @@ def words(target):
     `mcp-fetch` is one that may not; and its assignments, so
     `GH_TOKEN=x mcp-server-github` is a server whose own credential is set
     in the jail, whose environment is otherwise empty because the sandbox
-    clears it.  Only the leading run is read that way, so a program's own
-    `-y` stays its own.  What is left worth refusing is the word that is
-    nothing but metacharacters -- a line whose author read it as a line --
-    because handing a program named `|` to bwrap is a failure that does not
-    say what went wrong.
+    clears it.  A flag may take arguments, and ARITY says how many, which
+    is bwrap's own grammar and not a guess: `--ro-bind src dest cmd` is
+    one option and a command, and reading `src` as the command -- which is
+    what the run was before there was a table -- was never right.  `--` is
+    bwrap's own end-of-options and ends the run unambiguously, which is
+    how a command whose own name begins with `-` is reached.  Only the
+    leading run is read that way, so a program's own `-y` stays its own.
+    What is left worth refusing is the word that is nothing but
+    metacharacters -- a line whose author read it as a line -- because
+    handing a program named `|` to bwrap is a failure that does not say
+    what went wrong.
 
     >>> words("mcp-fetch --port 3")
     ([], ['mcp-fetch', '--port', '3'])
     >>> words("--share-net mcp-fetch")
     (['--share-net'], ['mcp-fetch'])
+    >>> words("--ro-bind /etc/hosts /etc/hosts mcp-fetch")
+    (['--ro-bind', '/etc/hosts', '/etc/hosts'], ['mcp-fetch'])
+    >>> words("--tmpfs /run mcp-fetch")
+    (['--tmpfs', '/run'], ['mcp-fetch'])
+    >>> words("--share-net -- mcp-fetch --port 3")
+    (['--share-net'], ['mcp-fetch', '--port', '3'])
     >>> words("GH_TOKEN=x --share-net mcp-server-github")
     (['GH_TOKEN=x', '--share-net'], ['mcp-server-github'])
     >>> words("'a b' c")
@@ -139,17 +176,32 @@ def words(target):
     """
     if not target.strip():
         raise DicError("--mcp: an empty command")
-    flags, argv = [], []
-    for word in shlex.split(target):
+    tokens = shlex.split(target)
+    for word in tokens:
         if word and set(word) <= SHELL:
             raise DicError(f"--mcp: {word[0]!r} in {target!r}: a command is a"
                            " word list, not a shell line (use a script for"
                            " pipes and expansions)")
+    flags = []
+    i = 0
+    while i < len(tokens):
+        word = tokens[i]
+        if word == "--":             # bwrap's own end of the leading run
+            i += 1
+            break
+        if word.startswith("-"):
+            n = ARITY.get(word, 0)
+            if i + n >= len(tokens):
+                raise DicError(f"--mcp: {word}: {n} argument(s) expected")
+            flags.extend(tokens[i:i + n + 1])
+            i += n + 1
+            continue
         assigned = "=" in word and word.partition("=")[0].isidentifier()
-        if not argv and (word.startswith("-") or assigned):
-            flags.append(word)
-        else:
-            argv.append(word)
+        if not assigned:
+            break
+        flags.append(word)
+        i += 1
+    argv = tokens[i:]
     if not argv:
         raise DicError(f"--mcp: no command in {target!r}")
     return flags, argv

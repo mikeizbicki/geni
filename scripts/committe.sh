@@ -98,7 +98,7 @@ function committe() {
             break
         fi
         attempt=$((attempt + 1))
-        dic-warn "committe-warning: retrying the request ($attempt/$COMMITTE_RETRIES)"
+        dic-warn "committe-warning: dic generated bad patchfile; retrying the request ($attempt/$COMMITTE_RETRIES)"
     done
 
     committe-fail "could not apply the patch"

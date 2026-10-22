@@ -21,6 +21,8 @@ run pwd
 run git clone https://github.com/mikeizbicki/markdown-compiler.git .
 run sh -c "echo 'pytest --doctest-modules .' > test.sh"
 run chmod a+x test.sh
+run git add test.sh
+run git commit -m 'add test.sh'
 run itera --allow-red <<EOF
 $(accio .)
 

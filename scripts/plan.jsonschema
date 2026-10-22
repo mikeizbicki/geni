@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["goal", "steps"],
+  "additionalProperties": false,
+  "description": "A structured version of a PLAN.md file. An AI agent will use this file to achieve the goal following the provided steps in order. Each step should be fully 'self contained'.",
+  "properties": {
+    "goal": {
+      "type": "string",
+      "description": "the user's request; 1-2 sentences"
+    },
+    "acceptance_criteria": {
+      "type": "string",
+      "description": "how we know if we succeeded; 1-5 sentences, preferably less"
+    },
+    "other_background_info": {
+      "type": "string",
+      "description": "a summary of the conversation that includes all information"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "the goal should be divided up into ",
+      "items": {"$ref": "#/$defs/commit"}
+    }
+  },
+  "$defs": {
+    "commit": {
+      "type": "object",
+      "required": ["id", "description", "files"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "human readable slug for the commit"
+        },
+        "description": {
+          "type": "string",
+          "description": "what this commit should do at a high level; 1-10 sentences, but as short as possible"
+        },
+        "new_tests": {
+          "type": "string",
+          "description": "brief decription of the tests that will need to be written to verify that the commit is correct; 1-10 sentences, but as short as possible; can be ommitted to indicate that tests are either trivial or can be written inline with the code"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "list of files that a subagent will need to read in order to implement the commit; a folder (e.g. src/) may be specified to include all files in the folder",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

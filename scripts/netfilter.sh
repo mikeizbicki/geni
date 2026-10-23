@@ -241,8 +241,15 @@ done
 
 # ----- dnsmasq -----
 
-# --no-resolv: the resolv.conf above names 127.0.0.1, and reading it
-# would point dnsmasq at itself.  The host's file is passed by name.
+# --no-resolv and an explicit --server per upstream: dnsmasq with
+# --no-resolv reads no resolv file, and it silently ignores
+# --resolv-file when both are given, so a run that named the file had
+# no upstreams at all.  The file at /etc/resolv.conf is the payload's
+# by this point anyway -- bound moments ago to name 127.0.0.1 -- so
+# reading it would point dnsmasq at itself.  The addresses are the
+# ones extracted outside for the nft @upstream set; the list is the
+# same list.
+#
 # --user=root: dnsmasq asks to drop privileges by default, and inside
 # a fresh user namespace the account it would drop to is not mapped.
 # It is the trusted half of this setup; the payload is the half that
@@ -256,10 +263,14 @@ done
 # --address= would silently empty the set.
 #
 # shellcheck disable=SC2086  # word-splitting of the --server list is intended
+SERVERS=()
+for ip in $NETFILTER_UPSTREAM_V4 $NETFILTER_UPSTREAM_V6; do
+    SERVERS+=("--server=$ip#53")
+done
 "$NETFILTER_DNSMASQ" --no-daemon --keep-in-foreground \
     --user=root \
     --port=53 --bind-interfaces --listen-address=127.0.0.1 \
-    --no-resolv --resolv-file="$NETFILTER_HOST_RESOLV" \
+    --no-resolv "${SERVERS[@]}" \
     --nftset="$NETFILTER_NFTSET4" \
     --nftset="$NETFILTER_NFTSET6" &
 DNSMASQ_PID=$!
@@ -283,7 +294,11 @@ sleep 0.2
 # signal it.  setpriv is not this: dropping from the bounding set only
 # affects what a setuid exec could reacquire, and leaves the
 # effective and permitted sets alone.
-exec unshare --user --map-root-user --pid --fork -- "$@"
+#
+# No `--` before "$@": unshare does not accept one, and reads the word
+# as the program to exec.  It stops parsing its own flags at the first
+# word that is not one, and the command is that word.
+exec unshare --user --map-root-user --pid --fork "$@"
 INNER
 }
 
@@ -329,7 +344,6 @@ netfilter-run() {
     NETFILTER_UPSTREAM_V4="$v4" \
     NETFILTER_UPSTREAM_V6="$v6" \
     NETFILTER_RESOLV="$payload_resolv" \
-    NETFILTER_HOST_RESOLV="$host_resolv" \
     dic-run unshare -rmn bash "$inner" -- "$@"
     status=$?
     return "$status"

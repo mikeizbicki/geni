@@ -376,6 +376,15 @@ sandbox() {
         [[ -v $p ]] && args+=(--setenv "$p" "${!p}")
     done
 
+    # Read-only root.  Without this, bwrap's / is a writable tmpfs
+    # and a path that nothing mounted -- /a, or an ancestor of a bind
+    # target that bwrap made on the way in -- takes the write and
+    # dies with the sandbox instead of failing with EROFS.  Placed
+    # here, after every bind, so a bind target's parents are made
+    # while the root is still writable; --tmpfs and --bind make
+    # sub-mounts, and a remount of a parent does not reach one.
+    args+=(--remount-ro /)
+
     # The variables peeled off the front go in through a file and not
     # through --setenv, because --setenv takes its value as a word of its
     # own and a word is exactly what `ps` prints.  The pairs are NUL

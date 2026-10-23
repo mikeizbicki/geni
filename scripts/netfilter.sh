@@ -99,11 +99,6 @@
 
 [[ -n ${_DIC_LOADED:-} ]] || source "${BASH_SOURCE[0]%/*}/dic.sh"
 
-# dnsmasq drops privileges to this uid, and runs as it.  Named as a
-# number so that the nft rules below do not depend on a uid lookup, and
-# chosen because it is 'nobody' on every distribution this runs on.
-NETFILTER_DNS_UID=65534
-
 # --- environment ---
 
 # Print the resolv.conf dnsmasq should read for its upstreams, on stdout.
@@ -248,10 +243,11 @@ done
 
 # --no-resolv: the resolv.conf above names 127.0.0.1, and reading it
 # would point dnsmasq at itself.  The host's file is passed by name.
-# --user / --group: dnsmasq drops privileges before it queries, so
-# its upstream traffic leaves as NETFILTER_DNS_UID and not as root.
-# Nothing else in the netns runs as that uid, so a payload cannot
-# pretend to be dnsmasq at the filter.
+# --user=root: dnsmasq asks to drop privileges by default, and inside
+# a fresh user namespace the account it would drop to is not mapped.
+# It is the trusted half of this setup; the payload is the half that
+# must not have capabilities, and the nested namespace below is what
+# takes them away.
 #
 # --nftset populates the set on a forwarded answer and on nothing else.
 # A dnsmasq told to answer from --address= synthesizes locally and never
@@ -261,7 +257,7 @@ done
 #
 # shellcheck disable=SC2086  # word-splitting of the --server list is intended
 "$NETFILTER_DNSMASQ" --no-daemon --keep-in-foreground \
-    --user="$NETFILTER_DNS_UID" --group="$NETFILTER_DNS_UID" \
+    --user=root \
     --port=53 --bind-interfaces --listen-address=127.0.0.1 \
     --no-resolv --resolv-file="$NETFILTER_HOST_RESOLV" \
     --nftset="$NETFILTER_NFTSET4" \
@@ -280,12 +276,14 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
 done
 sleep 0.2
 
-# The payload drops CAP_NET_ADMIN from its bounding set before exec, so
-# a program that tries to flush the rules above cannot reacquire it.  A
-# payload that is already in a nested user namespace -- because a caller
-# wrapped this in bwrap -- is unaffected; setpriv only ever removes.
-setpriv --bounding-set=-net_admin,-sys_admin --inh-caps=-all \
-    --ambient-caps=-all -- exec "$@"
+# A nested user namespace is what takes the capabilities away.  The
+# rules above live in the netns's userns; a process in a child userns
+# has no capabilities there, so it can neither flush the rules nor
+# install its own, and --pid below keeps it from seeing dnsmasq to
+# signal it.  setpriv is not this: dropping from the bounding set only
+# affects what a setuid exec could reacquire, and leaves the
+# effective and permitted sets alone.
+exec unshare --user --map-root-user --pid --fork -- "$@"
 INNER
 }
 
@@ -326,7 +324,6 @@ netfilter-run() {
     local status
     NETFILTER_NFT="$nft" \
     NETFILTER_DNSMASQ="$dnsmasq" \
-    NETFILTER_DNS_UID="$NETFILTER_DNS_UID" \
     NETFILTER_NFTSET4="${joined}/4#inet#netfilter#allowed" \
     NETFILTER_NFTSET6="${joined}/6#inet#netfilter#allowed6" \
     NETFILTER_UPSTREAM_V4="$v4" \

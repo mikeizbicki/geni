@@ -785,6 +785,11 @@ Chains nobody wrote down also work.
 `dic -m thinking-high+groq+qwen` materializes each prefix of the chain,
 giving each the keys of the longest *defined* suffix of that prefix,
 so the combination means exactly what it reads as: the mixin, then the provider, then the model.
+A chain whose last segment is defined by nothing keeps that segment as its
+own `model_name`: `dic -m openai+gpt-7` passes `gpt-7` through to the API on
+the day it is released, because the provider is where the base, the protocol
+and the key come from, and a model name is an opaque string.
+A bare name is still an error: it has no provider to inherit from.
 
 The delimiter is `+` rather than `/`, because `/` already appears inside model names
 (`qwen/qwen3.8-27b`, OpenRouter's `anthropic/claude-...`);

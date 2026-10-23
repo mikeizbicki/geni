@@ -234,6 +234,23 @@ def resolved_keys(conn, model_id):
     return json.loads(row[0]) if row and row[0] else {}
 
 
+def model_name_of(model_id):
+    """The name a chain's own last segment is, when nothing defines one.
+
+    A model segment nobody wrote down names itself, so `-m openai+gpt-7`
+    works on the day gpt-7 is released rather than the day a config file
+    mentions it.  A single name has no provider to inherit a base, a
+    protocol and a key from, and returns None, so materialize()'s error is
+    the one the caller sees.
+
+    >>> model_name_of("openai+gpt-7"), model_name_of("a+b+c")
+    ('gpt-7', 'c')
+    >>> model_name_of("groq") is None
+    True
+    """
+    return model_id.rsplit("+", 1)[-1] if "+" in model_id else None
+
+
 def resolve(conn, model_id):
     """The fully merged configuration of model_id, with model_id itself added.
 
@@ -246,6 +263,11 @@ def resolve(conn, model_id):
     if row and row["abstract"]:
         raise DicError(f"{model_id} is abstract (a provider or mixin), not a model")
     cfg = resolved_keys(conn, model_id)
+    if not cfg.get("model_name"):
+        # materialize() guarantees a '+', so the tail is the model's own
+        # name: only the provider has to be configured, and the API is what
+        # decides whether the model exists
+        cfg["model_name"] = model_name_of(model_id)
     if not cfg.get("model_name"):
         raise DicError(f"{model_id}: no model_name configured (try `dic --models`)")
     cfg["price"] = price_table(cfg)

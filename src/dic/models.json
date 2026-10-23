@@ -192,7 +192,17 @@
   },
 
   "openrouter+deepseek":     {"model_name": "deepseek/deepseek-v4.1-flash", "alias": "deepseek", "cost_input": 0.15, "cost_output": 0.60},
-  "openrouter+gemini-flash": {"model_name": "google/gemini-3.8-flash",     "alias": "gemini",   "cost_input": 0.75, "cost_output": 0.75}
+  "openrouter+gemini-flash": {"model_name": "google/gemini-3.8-flash",     "alias": "gemini",   "cost_input": 0.75, "cost_output": 0.75},
+
+  "openrouter+fable":  {"model_name": "anthropic/claude-fable-5-1", "cost_input": 10.0, "cost_output": 50.0},
+  "openrouter+opus":   {"model_name": "anthropic/claude-opus-5",    "cost_input":  5.0, "cost_output": 25.0},
+  "openrouter+sonnet": {"model_name": "anthropic/claude-sonnet-5",  "cost_input":  2.0, "cost_output": 10.0},
+  "openrouter+haiku":  {"model_name": "anthropic/claude-haiku-4-5", "cost_input":  1.0, "cost_output":  5.0},
+
+  "openrouter+astra": {"model_name": "openai/gpt-6-astra",   "cost_input": 10.00, "cost_output": 50.00},
+  "openrouter+sol":   {"model_name": "openai/gpt-5.6-sol",   "cost_input":  4.00, "cost_output": 20.00},
+  "openrouter+terra": {"model_name": "openai/gpt-5.6-terra", "cost_input":  2.00, "cost_output": 12.00},
+  "openrouter+luna":  {"model_name": "openai/gpt-5.6-luna",  "cost_input":  0.20, "cost_output":  1.20}
 
   ,"fal": {
     "abstract": true,

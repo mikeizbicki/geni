@@ -19,11 +19,24 @@ one stat per file and one query.
 """
 import json, os
 
-from dic.store import config_dir
+from dic.store import config_dir, state_dir
 from dic.tty import DicError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULTS_PATH = os.path.join(HERE, "models.json")
+
+
+def synced_path(env):
+    """The generated model list, from `dic sync`: $XDG_STATE_HOME/geni/models.json.
+
+    State and not config, because the file is dic's own durable output and
+    not a file a user edits: it is rewritten whole by every sync, and the
+    hand-written files in config_dir() are what override it.
+
+    >>> synced_path({"HOME": "/u"}).endswith("geni/models.json")
+    True
+    """
+    return os.path.join(state_dir(env), "models.json")
 
 
 def providers_path(env):
@@ -115,12 +128,14 @@ def price_table(cfg):
 def sources(env, models_file=None):
     """The configuration files that exist, weakest first.
 
-    The packaged defaults, then the user's providers and models, then the
-    file named by --models-file / $DIC_MODELS_FILE: later files are merged
-    over earlier ones rather than replacing them, so a user file may change
-    one key of one model.
+    The packaged defaults, then the synced list `dic sync` writes, then the
+    user's providers and models, then the file named by --models-file /
+    $DIC_MODELS_FILE: later files are merged over earlier ones rather than
+    replacing them, so a user file may change one key of one model and any
+    id it writes shadows the generated one of the same name.
     """
-    paths = (DEFAULTS_PATH, providers_path(env), models_path(env), models_file)
+    paths = (DEFAULTS_PATH, synced_path(env), providers_path(env),
+             models_path(env), models_file)
     return [p for p in paths if p and os.path.exists(p)]
 
 

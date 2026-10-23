@@ -18,7 +18,7 @@ because they are one query over one index.
 """
 import json, sys, time
 
-from dic import bps, client, config
+from dic import bps, client, config, sync
 from dic.options import flag
 from dic.store import (CONVERSATION_COST, COST_TREE, LOG, LOG_ALL,
                        FORK_COST, LOG_SESSION, MODELS, PROVIDERS, SESSION_COST,
@@ -989,6 +989,7 @@ COMMANDS = {
     "cost":       cost,
     "show":       show,
     "bps":        bps.bps,
+    "sync":       sync.sync,
     "rev-parse":  rev_parse,
     "branch":     branch,
     "update-ref": update_ref,

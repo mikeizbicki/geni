@@ -48,7 +48,7 @@ the row: dic is a bridge between a model and a server, and what the server
 said is the bridge's cargo.
 """
 import base64, concurrent.futures, http.client, json, os, queue
-import shlex, subprocess, threading, time
+import re, shlex, subprocess, threading, time
 import urllib.parse
 
 from dic import net
@@ -67,6 +67,12 @@ VERSION = "2025-06-18"
 # once is not guessed at again by the call that reconnects it.
 KINDS = ("url", "shell")
 SCHEMES = ("http", "https")
+
+# A URL's leading NAME=VALUE words are its headers, and a $VAR in one is
+# read out of dic's own environment when the request is made: the spec a
+# row stores is the name of a secret and never the secret itself, so a
+# log or a database read holds `$GH` where the wire holds the token.
+_VAR = re.compile(r"\$(\w+)|\$\{(\w+)\}")
 
 # Every wait is bounded, because a bridge that hangs is worse than a bridge
 # that fails.  A handshake is three round trips to something that was just
@@ -206,6 +212,92 @@ def words(target):
         raise DicError(f"--mcp: no command in {target!r}")
     return flags, argv
 
+def expansion(value, env):
+    """A header value with $VAR read from dic's own environment.
+
+    Read when the request is made and never when the flag was parsed, so
+    the spec a row stores is the *name* of the secret.  An unset name is
+    an error and never an empty header, because a request whose
+    credential was silently missing is a 400 that does not say why.
+
+    >>> expansion("Bearer $GH", {"GH": "x"})
+    'Bearer x'
+    >>> expansion("${GH}-1", {"GH": "x"})
+    'x-1'
+    >>> expansion("$NOPE", {})
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: --mcp: NOPE is not set
+    """
+    def one(match):
+        name = match.group(1) or match.group(2)
+        if not env.get(name):
+            raise DicError(f"--mcp: {name} is not set")
+        return env[name]
+    return _VAR.sub(one, value)
+
+
+def urlwords(target):
+    """(headers, url) of one --mcp URL, its leading NAME=VALUE words apart.
+
+    A URL's leading run is its headers, exactly as a command's is the jail
+    it runs in, and the URL is what follows the run: a value with a space
+    is quoted, because the split is dic's and not the shell's, so
+    `Authorization="Bearer $GH" https://x/mcp` is one header and one URL.
+
+    >>> urlwords("https://x/mcp")
+    ([], 'https://x/mcp')
+    >>> urlwords('Authorization="Bearer $GH" https://x/mcp')
+    ([['authorization', 'Bearer $GH']], 'https://x/mcp')
+    >>> urlwords("a=b c d")
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: --mcp: 'd': a URL is one word
+    >>> urlwords("")
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: --mcp: an empty target
+    """
+    tokens = shlex.split(target)
+    if not tokens:
+        raise DicError("--mcp: an empty target")
+    headers, i = [], 0
+    while i < len(tokens) - 1:
+        name, sep, value = tokens[i].partition("=")
+        if not sep or not name.replace("-", "_").isidentifier():
+            break
+        headers.append([name.lower(), value])
+        i += 1
+    rest = tokens[i:]
+    if not rest:
+        raise DicError(f"--mcp: no URL in {target!r}")
+    if len(rest) > 1:
+        raise DicError(f"--mcp: {rest[1]!r}: a URL is one word")
+    return headers, rest[0]
+
+
+def kind_of(target):
+    """'url' or 'shell': the scheme of the last word, past the leading run.
+
+    The whole target's scheme is not read, because a command's own leading
+    NAME=VALUE words may hold a URL as their value: what follows the run
+    is what is looked at.
+
+    >>> kind_of("https://x/mcp"), kind_of("mcp-fetch")
+    ('url', 'shell')
+    >>> kind_of('Authorization=$GH https://x/mcp')
+    'url'
+    >>> kind_of("GH_TOKEN=x mcp-server-github")
+    'shell'
+    """
+    try:
+        _, url = urlwords(target)
+    except DicError:
+        return "shell"
+    return ("url" if urllib.parse.urlparse(url).scheme in SCHEMES
+            else "shell")
+
+
 def command(target):
     """The argv that runs one --mcp command under the sandbox dic ships.
 
@@ -277,6 +369,10 @@ def specs(auto=None, urls=None, shells=None):
     [['shell', 'npx -y s'], ['url', 'https://x/mcp'], ['shell', 'just a command']]
     >>> specs(["a", "b"])
     [['shell', 'a'], ['shell', 'b']]
+    >>> specs("GH_TOKEN=x mcp-server-github")
+    [['shell', 'GH_TOKEN=x mcp-server-github']]
+    >>> specs('Authorization=$GH https://x/mcp')
+    [['url', 'Authorization=$GH https://x/mcp']]
     >>> specs("a | b")
     Traceback (most recent call last):
     ...
@@ -285,13 +381,14 @@ def specs(auto=None, urls=None, shells=None):
     def listed(value):
         return [value] if isinstance(value, str) else list(value or ())
 
-    pairs = ([["url" if urllib.parse.urlparse(v).scheme in SCHEMES else "shell", v]
-              for v in listed(auto)]
+    pairs = ([[kind_of(v), v] for v in listed(auto)]
              + [["url", v] for v in listed(urls)]
              + [["shell", v] for v in listed(shells)])
     for kind, target in pairs:
         if kind == "shell":
             words(target)
+        else:
+            urlwords(target)
     return pairs
 
 
@@ -314,7 +411,8 @@ def name_of(kind, target):
     'mcp-fetch'
     """
     if kind == "url":
-        parts = urllib.parse.urlsplit(target if "//" in target else "//" + target)
+        _, url = urlwords(target)
+        parts = urllib.parse.urlsplit(url if "//" in url else "//" + url)
         host = parts.hostname or "server"
         return host[4:] if host.startswith("www.") else host
     return os.path.basename(words(target)[1][0])
@@ -383,11 +481,12 @@ class Server:
     queue, so a wait has a deadline and a ^C has an eval loop to land in.
     """
 
-    def __init__(self, name, kind, target, say, line=None):
+    def __init__(self, name, kind, target, say, line=None, env=None):
         self.name = name
         self.kind = kind
         self.target = target
         self.say = say
+        self.env = os.environ if env is None else env
         # a server takes a row of its own, so four handshakes are four rows
         # with four clocks rather than one row rewritten by four writers
         self.line = line.row(name) if line is not None else None
@@ -474,11 +573,18 @@ class Server:
         self.stderr_done.set()
 
     def endpoint(self):
-        """The URL to POST to, and the credential its userinfo carries."""
+        """The URL to POST to, its headers, and its userinfo's credential.
+
+        A --mcp URL's leading NAME=VALUE words are its headers, and $VAR in
+        one is read from dic's own environment here and never when the flag
+        was parsed, so the spec a row stores is the name of a secret and not
+        the secret.  The userinfo's Basic credential is written first, so a
+        header the caller states under `authorization` wins over it.
+        """
         if self.url is not None:
             return
-        url = http_url(self.target if "//" in self.target
-                       else "http://" + self.target)
+        headers, target = urlwords(self.target)
+        url = http_url(target if "//" in target else "http://" + target)
         parts = urllib.parse.urlsplit(url)
         netloc = parts.hostname or ""
         if parts.port:
@@ -492,6 +598,10 @@ class Server:
                     + urllib.parse.unquote(parts.password or ""))
             self.auth = {"authorization": "Basic "
                          + base64.b64encode(pair.encode()).decode()}
+        # the leading run is read last, so a header the caller wrote wins
+        # over the Basic credential its userinfo would have made
+        for name, value in headers:
+            self.auth[name] = expansion(value, self.env)
         self.say(3, f"mcp: {self.name}: {self.url}")
 
     # ------------------------------------------------------------ exchange
@@ -711,7 +821,7 @@ class Server:
         return call
 
 
-def resolve(pairs, blob=None, say=None, line=None):
+def resolve(pairs, blob=None, say=None, line=None, env=None):
     """(records, mapping) for the servers of one call.
 
     `blob` is the tools blob of the row this call continues, or None for a
@@ -734,7 +844,7 @@ def resolve(pairs, blob=None, say=None, line=None):
     fact about one row's tools and not about the database.
     """
     say = say or (lambda *_: None)
-    servers = {name: Server(name, kind, target, say, line)
+    servers = {name: Server(name, kind, target, say, line, env)
                for name, kind, target in names(pairs)}
     if blob is not None:
         mapping = blob.get("mcp") or {}

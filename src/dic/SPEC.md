@@ -185,6 +185,14 @@ apart, the split being dic's and not the shell's.  A
 word that is nothing but metacharacters is an error naming the character,
 because a `|` is a line whose author read it as one and a program named `|`
 does not say so.
+A URL's leading run is its headers, and a value in one has its `$VAR` read
+out of dic's own environment when the request is made, so a row stores the
+name of a secret and never the secret itself:
+`--mcp 'Authorization="Bearer $GH" https://api.githubcopilot.com/mcp/'` is
+the whole of how a token reaches a remote server.  An unset name is an
+error and not an empty header on the wire, because a request sent with its
+credential silently missing is a 400 that does not say why.
+
 What comes back is the same three things `--tools` produces -- a name, a
 description and a JSON Schema -- so nothing downstream knows the difference.  A
 server's tools are prefixed `mcp__<server>__<tool>`, because the model asks by

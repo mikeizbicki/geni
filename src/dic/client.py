@@ -633,7 +633,10 @@ def dic(prompt,
                                 " dic runs sandboxed, whose leading words are"
                                 " the sandbox's own -- `--share-net mcp-fetch`"
                                 " for the network, `K=v cmd` for a secret; or"
-                                " a URL to POST to; repeatable") = None,
+                                " a URL to POST to, whose leading words are"
+                                " the headers it carries -- `K=$VAR url` for"
+                                " a value dic's environment supplies;"
+                                " repeatable") = None,
         mcp_url:      flag(long="--mcp-url", action="append", metavar="URL",
                            help="--mcp with the guess left out, for a URL"
                                 " that carries no scheme") = None,
@@ -854,7 +857,7 @@ def dic(prompt,
         pairs = (mcp.specs(knobs["mcp"], knobs["mcp_url"], knobs["mcp_shell"])
                  if named else json.loads(rows[-1]["mcp"]))
         mcp_tools, mcp_map = mcp.resolve(pairs, None if named else stored,
-                                         say, line)
+                                         say, line, env=env)
 
     # the loop dispatches through tool.call whichever record it was handed, so
     # the module is imported when either source of records fired, and never

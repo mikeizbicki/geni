@@ -230,12 +230,12 @@ function committe-run() {
     # would grow past NAME_MAX.
     local stdinfile; stdinfile=$(committe-stdinfile)
     if [[ -f $stdinfile ]]; then
-        DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" --prepend-prompt \
+        DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" -x --prepend-prompt \
             "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
             < "$stdinfile" \
             > "$(committe-patchfile)"
     else
-        DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" --prepend-prompt \
+        DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" -x --prepend-prompt \
             "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
             > "$(committe-patchfile)"
     fi

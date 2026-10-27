@@ -101,3 +101,12 @@ def test_elide_body_without_body_kind_is_a_noop(repo, mk, capsys, monkeypatch):
     assert main(["--elide", "somethingelse", "a.py"]) == 0
     after = capsys.readouterr().out
     assert before == after
+
+
+def test_format_at_paths_at_the_cli(repo, mk, capsys, monkeypatch):
+    mk("a.py", "x = 1\n")
+    monkeypatch.chdir(repo)
+    assert main(["--format", "at-paths", "a.py"]) == 0
+    out = capsys.readouterr().out
+    assert "@@a.py\n" in out
+    assert "x = 1" not in out

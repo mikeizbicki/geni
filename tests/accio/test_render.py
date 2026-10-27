@@ -62,6 +62,17 @@ def test_formats_each_render_every_chunk():
         assert out, fmt
 
 
+def test_at_paths_is_a_dic_prompt():
+    # the round trip that makes --format at-paths worth having: the bytes
+    # at_paths writes are the bytes dic.include scans back into a
+    # filename, so a walk piped into dic arrives as declared mentions
+    # and not as prose to be guessed at.
+    from accio.include import scan
+    _clean, spans = scan(_run("at-paths"))
+    assert [path for _start, _end, path in spans] == \
+        [c.breadcrumb for c in CHUNKS]
+
+
 def test_json_is_one_object_per_line():
     out = _run("json")
     assert out.endswith("\n")

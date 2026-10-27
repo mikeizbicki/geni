@@ -428,11 +428,23 @@ set -e
 ip link set lo up
 
 # --- egress ---
-# The one route off the netns.  --disable-host-loopback keeps the
-# payload from reaching whatever the host's user happens to have
-# bound to loopback (an ssh-agent socket, a database).
-"\$NETSANDBOX_HELPER" --config-net --disable-host-loopback \\
-    -t none -u none -T none -U none &
+# The one route off the netns.  pasta maps host loopback to the
+# gateway by default and --no-map-gw turns that off; slirp4netns
+# instead allows it and --disable-host-loopback is what stops it.
+# Either way the payload cannot reach whatever the host's user
+# happens to have bound to loopback (an ssh-agent socket, a
+# database).  The four port-forwarding knives are pasta-only and
+# all none: nothing inside is reachable from outside, and nothing
+# outside is dialled but through the helper.
+case "\$NETSANDBOX_HELPER" in
+    *slirp4netns*)
+        "\$NETSANDBOX_HELPER" --config-net --disable-host-loopback &
+        ;;
+    *)
+        "\$NETSANDBOX_HELPER" --config-net --no-map-gw \\
+            -t none -u none -T none -U none &
+        ;;
+esac
 EGRESS_PID=\$!
 trap 'kill "\$EGRESS_PID" 2>/dev/null || true' EXIT
 
@@ -447,15 +459,25 @@ done
 # upstream on :53 (so dnsmasq can forward), the daemons to anywhere
 # (mitm's own outbound, and dnsmasq's), and everything else -- the
 # payload, whose uid is not 0 -- dnat'd to mitm on :80 and :443.
-"\$NETSANDBOX_NFT" -f - <<'NFT'
+#
+# The chain is natout and not dnat: dnat is a statement keyword in
+# nft's lexer, and a bare word is matched against the keywords
+# first, so a chain named dnat parses as the start of a statement
+# and the line is a syntax error at the name.
+#
+# The heredoc is unquoted, so \$NETSANDBOX_UPSTREAM -- which the
+# outer heredoc left as a literal \$ -- is expanded by the shell
+# that reads this file, where NETSANDBOX_UPSTREAM is in the
+# environment.
+"\$NETSANDBOX_NFT" -f - <<NFT
 add table inet netfilter
-add chain inet netfilter dnat { type nat hook output priority -100; policy accept; }
+add chain inet netfilter natout { type nat hook output priority -100; }
 add chain inet netfilter output { type filter hook output priority 0; policy drop; }
 add rule inet netfilter output oifname "lo" accept
 add rule inet netfilter output ip daddr \$NETSANDBOX_UPSTREAM udp dport 53 accept
 add rule inet netfilter output ip daddr \$NETSANDBOX_UPSTREAM tcp dport 53 accept
 add rule inet netfilter output meta skuid 0 accept
-add rule inet netfilter dnat meta skuid != 0 tcp dport { 80, 443 } dnat to 127.0.0.1:8080
+add rule inet netfilter natout meta skuid != 0 tcp dport { 80, 443 } dnat to 127.0.0.1:8080
 NFT
 
 # --- bwrap #1: the daemons ---

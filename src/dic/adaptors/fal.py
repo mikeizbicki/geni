@@ -9,8 +9,8 @@ events call() yields -- a result, and a blob.
 
 Each fal model also names its own arguments, and reads its images, video
 and audio as URLs rather than bytes.  prepare() therefore uploads the
-newest turn's attachments to fal's storage before the call, and MODELS
-says which argument each one lands in.
+newest turn's attachments to fal's storage before the call, and the NAME
+of its -a says which argument each one lands in.
 
 Exports PATH, auth, prepare, build, call, parse, finish; see
 adaptors/openai_chat.py for the contract.
@@ -21,7 +21,6 @@ from dic.store import http_url
 from dic.tty import DicError
 
 PATH = ""                              # the model name is the path; see call()
-QUEUE = "https://queue.fal.run"
 UPLOAD = "https://rest.alpha.fal.ai"   # attachments are stored here first
 POLL_MS = 500
 POLL_S = 900                           # ten minutes is a long video
@@ -32,55 +31,6 @@ def auth(key):
     {'Authorization': 'Key k'}
     """
     return {"Authorization": "Key " + key}
-
-
-# Every fal model names its own parameters, and this table is the one place
-# that admits it.  "extra" is what the model wants on every call, which -o
-# still overrides; a model absent here is called with its prompt alone,
-# since dic forwards a provider's fields rather than validating them.  The
-# slot each attachment lands in is the NAME of its -a, and every fal model
-# therefore reads `-a image_url=frame.png`, not `-a frame.png`.
-MODELS = {
-    "fal-ai/veo3.1/first-last-frame-to-video":
-        {"extra": {"duration": "8s", "aspect_ratio": "16:9",
-                   "resolution": "720p", "generate_audio": False}},
-    "fal-ai/veo3.1/fast/first-last-frame-to-video":
-        {"extra": {"duration": "8s", "aspect_ratio": "16:9",
-                   "resolution": "720p", "generate_audio": False}},
-    "fal-ai/kling-video/v3/pro/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/kling-video/v3/standard/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/kling-video/v2.6/pro/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/kling-video/v2.6/standard/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/kling-video/v2.5-turbo/pro/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/kling-video/v2.5-turbo/standard/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/bytedance/seedance-2.0/image-to-video":
-        {"extra": {"duration": 5}},
-    "fal-ai/kling-video/o1/image-to-video":
-        {"extra": {"duration": "5"}},
-    "fal-ai/kling-video/o3/pro/image-to-video":
-        {"extra": {"duration": "5"}},
-    "fal-ai/kling-video/o3/standard/image-to-video":
-        {"extra": {"duration": "5"}},
-    "fal-ai/veed/fabric-1.0":
-        {"extra": {"resolution": "480p"}},
-    "fal-ai/creatify/aurora":
-        {"extra": {"resolution": "480p"}},
-    "fal-ai/bytedance/omnihuman/v1.5":
-        {"extra": {"resolution": "1080p"}},
-    "fal-ai/kling-video/v1/pro/ai-avatar":     {},
-    "fal-ai/kling-video/v1/standard/ai-avatar": {},
- 
-    "fal-ai/pixverse/sound-effects":   {},
-    "fal-ai/mmaudio-v2":               {},
-    "fal-ai/cassetteai/video-sound-effects-generator": {},
-    "fal-ai/mirelo-ai/sfx-v1/video-to-video":          {},
-}
 
 
 def newest(turns):
@@ -160,17 +110,16 @@ def build(model, turns, system, params):  # noqa: ARG001
     at the argument -a named, since a fal model reads its input under an
     argument name of its own and only the caller knows which one.  A NAME
     given twice collects its URLs into a list, which is how a model that
-    takes many images of one kind is asked for them.  -o and the config's
-    options merge on top of the spec's defaults, so a caller can say
-    `-o duration=10` where the model wants an integer.
+    takes many images of one kind is asked for them.  A model's own
+    defaults -- veo's duration and resolution, kling's duration -- are its
+    entry's `options` key in the config, so they reach `params` with -o on
+    top of them, exactly as every other adaptor's defaults do.
 
     >>> build({"model_name": "fal-ai/nano-banana"}, [], None, {})
     {}
     """
     prompt, files = newest(turns)
-    spec = MODELS.get(model["model_name"], {})
-    args = dict(spec.get("extra") or {})
-    args.update(params)
+    args = dict(params)
     if prompt:
         args["prompt"] = prompt
     for block in files:

@@ -82,14 +82,19 @@ def recipes(env):
             if keys.get("abstract") and keys.get("sync")}
 
 
-def sync(env, report):
+def sync(env, report, only=None):
     """Fetch every provider's catalog and write the merged list.
 
     `report(level, text)` is where a line about a provider goes: level
-    -1 for a failure, 0 for a count, 1 for a name as it is fetched.
-    The caller decides what verbosity means; every failure is caught
-    here and named, so one provider that will not answer does not stop
-    the others and does not blank the file.
+    -1 for a failure, 0 for a provider being fetched, its count or its
+    skip, 1 for extra detail.  The caller decides what verbosity
+    means; every failure is caught here and named, so one provider
+    that will not answer does not stop the others and does not blank
+    the file.
+
+    `only` names the providers to fetch, or None for every one, so a
+    debugging run does not pay for the others or trip over their
+    errors.
 
     Returns (path, count): where the file was written and how many
     models it holds.
@@ -98,6 +103,8 @@ def sync(env, report):
 
     out = {}
     for provider, entry in sorted(recipes(env).items()):
+        if only and provider not in only:
+            continue
         recipe = entry["sync"]
         name = recipe.get("fetcher")
         fetch = FETCHERS.get(name)
@@ -109,12 +116,13 @@ def sync(env, report):
         if not key:
             report(0, f"{provider}: {key_name} is not set; skipped")
             continue
+        report(0, f"{provider}: fetching")
         try:
             entries = fetch(provider, entry, key, env)
         except Exception as e:  # a fetcher's failure; one provider's problem
             report(-1, f"{provider}: {e}")
             continue
-        report(1, f"{provider}: {len(entries)} model(s)")
+        report(0, f"{provider}: {len(entries)} model(s)")
         out.update(entries)
 
     path = output_path(env)

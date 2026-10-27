@@ -7,7 +7,7 @@ writes the result to $XDG_STATE_HOME/geni/models.json, which
 dic.config.sources() reads below every hand-written source.
 
     dic-sync          every provider whose API key is exported
-    dic-sync -v       name each provider as it is fetched
+    dic-sync -p fal   only fal
     dic-sync -q       nothing but a failure
 
 An install holding one provider's key syncs that one provider's models
@@ -28,7 +28,10 @@ def main(argv=None):
     parser.add_argument("-q", "--quiet", action="store_true",
                         help="print nothing to stderr but a failure")
     parser.add_argument("-v", "--verbose", action="count", default=0,
-                        help="name each provider as it is fetched")
+                        help="extra detail on stderr")
+    parser.add_argument("-p", "--provider", action="append", metavar="NAME",
+                        help="only fetch this provider's catalog;"
+                             " repeatable")
     args = parser.parse_args(argv)
 
     def report(level, text):
@@ -39,7 +42,7 @@ def main(argv=None):
         print(f"dic-sync: {text}", file=sys.stderr)
 
     try:
-        path, count = catalog.sync(os.environ, report)
+        path, count = catalog.sync(os.environ, report, args.provider)
     except Exception as e:  # every failure, so the exit status is always one
         print(f"dic-sync: {e}", file=sys.stderr)
         return 1

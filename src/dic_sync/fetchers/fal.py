@@ -51,13 +51,23 @@ def pricing(base, headers, ids):
     parameter and rejects more than fifty, so the walk is by fifty.  A
     model the pricing endpoint does not know keeps no rule and costs
     nothing, which is not a silent zero: it is a model dic stats can
-    count and `dic log --format='%c'` prints as $0.
+    count and `dic log --format='%c'` prints as $0.  A batch whose
+    request failed -- a rate limit that outlived the retry -- is skipped
+    the same way, so one 429 costs that batch's prices and not the
+    catalog.
     """
     out = {}
     for i in range(0, len(ids), PRICE_BATCH):
         chunk = ids[i:i + PRICE_BATCH]
         url = f"{base}/models/pricing?endpoint_id=" + ",".join(chunk)
-        body = http.get(url, headers)
+        try:
+            body = http.get(url, headers)
+        except RuntimeError:
+            # the pricing endpoint is the rate-limited one: skipping a
+            # batch costs its prices and not the whole catalog, and the
+            # models it names land anyway, unpriced, which is what a
+            # model the pricing endpoint does not know looks like too.
+            continue
         for price in body.get("prices") or []:
             endpoint = price.get("endpoint_id")
             if not endpoint or price.get("unit_price") is None:

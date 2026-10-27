@@ -129,6 +129,9 @@ def parse(event, acc):
             acc["tier"] = resp["service_tier"]
         if kind == "response.incomplete":
             acc["stop"] = (resp.get("incomplete_details") or {}).get("reason")
+        # the terminal event of this protocol: its absence is a cut stream,
+        # never an answer, and the client reports it as one
+        acc["done"] = True
     return "", ""
 
 

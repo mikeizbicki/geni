@@ -81,8 +81,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.server.received.append(
             Request(self.path, dict(self.headers), json.loads(body or b"{}")))
         if self.server.status == 200:
-            payload = b"".join(b"data: " + json.dumps(event).encode() + b"\n\n"
-                               for event in self.server.events)
+            # a str is sent verbatim, so a fixture can name the [DONE] the
+            # protocol's own wire carries; a dict is a message dic serializes
+            payload = b"".join(
+                b"data: " + (event.encode() if isinstance(event, str)
+                             else json.dumps(event).encode()) + b"\n\n"
+                for event in self.server.events)
         else:
             payload = self.server.error.encode()
         self.send_response(self.server.status)
@@ -129,10 +133,12 @@ def events():
                     {"type": "content_block_delta",
                      "delta": {"type": "text_delta", "text": text}},
                     {"type": "content_block_stop"},
-                    {"type": "message_delta", "usage": {"output_tokens": 500}}]
+                    {"type": "message_delta", "usage": {"output_tokens": 500}},
+                    {"type": "message_stop"}]
         return [{"choices": [{"delta": {"content": text}}]},
                 {"choices": [], "usage": {"prompt_tokens": 1000,
-                                          "completion_tokens": 500}}]
+                                          "completion_tokens": 500}},
+                "[DONE]"]
     return build
 
 

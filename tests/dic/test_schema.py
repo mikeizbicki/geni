@@ -311,7 +311,8 @@ def test_anthropic_carries_the_schema_as_a_forced_tool(streams, env, sse,
          "delta": {"type": "input_json_delta",
                    "partial_json": '{"a": 1}'}},
         {"type": "content_block_stop"},
-        {"type": "message_delta", "usage": {"output_tokens": 5}}]
+        {"type": "message_delta", "usage": {"output_tokens": 5}},
+        {"type": "message_stop"}]
     say(streams, env, "hi", model="fake+anthropic", schema=SCHEMA)
 
     body = sse.received[-1].body

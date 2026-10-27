@@ -145,6 +145,7 @@ def test_a_turn_is_converted_for_a_call_that_speaks_another_protocol(streams, en
                                                                      events):
     sse.events = events("first", "anthropic-messages")
     first = say(streams, env, "one", model="fake+anthropic")
+    sse.events = events("second")
     say(streams, env, "two", model=model, mid=first.mid)
 
     assert sse.received[-1].body["messages"][1] == {
@@ -208,6 +209,24 @@ def test_a_failure_reported_inside_the_stream_is_not_a_reply(streams, env, sse,
     assert not os.path.exists(session_path(env))    # and never continued
 
 
+def test_a_stream_cut_before_its_terminal_event_is_not_a_reply(
+        streams, env, sse, model):
+    """A stream that stopped without [DONE] is a fragment, not an answer.
+
+    A proxy that closes the connection mid-stream leaves dic with a partial
+    answer and no terminal event, and before this it wrote a 200 for it: the
+    row was continued by -c and the fragment was priced as a whole call.
+    """
+    sse.events = [{"choices": [{"delta": {"reasoning_content": "hmm"}}]}]
+
+    with pytest.raises(DicError, match="terminal event"):
+        say(streams, env, "hi", model=model)
+
+    row = tree(env)[0]
+    assert row["status"] == -1 and "terminal event" in row["error"]
+    assert not os.path.exists(session_path(env))    # and never continued
+
+
 @pytest.mark.parametrize("model_id", sorted(TRUNCATED))
 def test_a_truncated_answer_says_so_and_is_still_an_answer(streams, env, sse,
                                                            models, model_id):
@@ -228,7 +247,8 @@ def test_unparsable_tool_arguments_do_not_kill_the_call(streams, env, sse, model
          "content_block": {"type": "tool_use", "id": "toolu_1", "name": "f"}},
         {"type": "content_block_delta",
          "delta": {"type": "input_json_delta", "partial_json": '{"a"'}},
-        {"type": "content_block_stop"}]
+        {"type": "content_block_stop"},
+        {"type": "message_stop"}]
 
     say(streams, env, "hi", model="fake+anthropic")
 
@@ -242,7 +262,8 @@ def test_a_tool_call_that_never_finished_is_stored_without_its_scratch_key(
         {"type": "content_block_start",
          "content_block": {"type": "tool_use", "id": "toolu_1", "name": "f"}},
         {"type": "content_block_delta",
-         "delta": {"type": "input_json_delta", "partial_json": '{"a": 1}'}}]
+         "delta": {"type": "input_json_delta", "partial_json": '{"a": 1}'}},
+        {"type": "message_stop"}]
 
     say(streams, env, "hi", model="fake+anthropic")
 
@@ -262,7 +283,8 @@ def test_a_cache_the_model_prices_goes_on_the_wire_and_the_row(streams, env, sse
         {"type": "content_block_delta",
          "delta": {"type": "text_delta", "text": "hi"}},
         {"type": "content_block_stop"},
-        {"type": "message_delta", "usage": {"output_tokens": 500}}]
+        {"type": "message_delta", "usage": {"output_tokens": 500}},
+        {"type": "message_stop"}]
 
     say(streams, env, "hi", model="fake+anthropic",
         system="be brief", cache="5m")
@@ -313,8 +335,10 @@ def test_a_replay_does_not_replay_a_breakpoint(streams, env, sse, models, events
 def test_the_response_tier_prices_the_call_not_the_request(streams, env, sse, model):
     sse.events = [
         {"choices": [{"delta": {"content": "hi"}}], "service_tier": "default"},
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]},
         {"choices": [], "usage": {"prompt_tokens": 1000,
-                                  "completion_tokens": 500}}]
+                                  "completion_tokens": 500}},
+        "[DONE]"]
 
     say(streams, env, "hi", model=model, option=["service_tier=batch"])
 

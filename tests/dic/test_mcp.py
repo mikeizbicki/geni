@@ -60,6 +60,7 @@ NEEDS_BWRAP = pytest.mark.skipif(
 def text_reply(text):
     """The chat-completions events of one round that ends with an answer."""
     return [{"choices": [{"delta": {"content": text}}]},
+            {"choices": [{"delta": {}, "finish_reason": "stop"}]},
             {"choices": [], "usage": {"prompt_tokens": 10,
                                       "completion_tokens": 3}}]
 

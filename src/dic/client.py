@@ -127,7 +127,12 @@ def events(api_base, path, headers, body, stamps, line=None):
     for line in reply:
         if line.startswith(b"data:"):
             data = line[5:].strip()
-            if data and data != b"[DONE]":
+            if data == b"[DONE]":
+                # the sentinel is the stream's own end and not a message, so
+                # it is recorded rather than dropped: a stream that never sent
+                # one was cut by something in between
+                stamps["done"] = True
+            elif data:
                 yield json.loads(data)
 
 
@@ -1326,6 +1331,15 @@ def dic(prompt,
                 # the averages, inside the error count, and off the session
                 # pointer, exactly like a call that never reached the network
                 wire["status"], wire["error"] = -1, acc["error"]
+            elif wire.get("status") == 200 and call is None and not (
+                    wire.get("done") or acc.get("done") or acc.get("stop")):
+                # the event stream stopped without the event that ends it --
+                # [DONE], message_stop, response.completed -- so something in
+                # between cut it, and what arrived is a fragment of an answer
+                # rather than an answer: the same -1 a failed stream gets, and
+                # never a 200 that -c would continue from
+                wire["status"] = -1
+                wire["error"] = "the stream ended before its terminal event"
             elif wire.get("status") is None:
                 # a call() adaptor replaces the transport and never sees a
                 # wire status; a stream that ran to its end is a 200

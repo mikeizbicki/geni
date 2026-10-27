@@ -300,6 +300,10 @@ def parse(event, acc):
             acc.setdefault("usage", {})["out"] = usage["output_tokens"]
         acc["stop"] = ((event.get("delta") or {}).get("stop_reason")
                        or acc.get("stop"))
+    elif kind == "message_stop":
+        # the event that ends the stream: one that never arrived means the
+        # connection was cut, and the client reports that rather than a 200
+        acc["done"] = True
     return "", ""
 
 

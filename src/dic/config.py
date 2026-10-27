@@ -27,7 +27,7 @@ DEFAULTS_PATH = os.path.join(HERE, "models.json")
 
 
 def synced_path(env):
-    """The generated model list, from `dic sync`: $XDG_STATE_HOME/geni/models.json.
+    """The generated model list, from `dic-sync`: $XDG_STATE_HOME/geni/models.json.
 
     State and not config, because the file is dic's own durable output and
     not a file a user edits: it is rewritten whole by every sync, and the
@@ -128,7 +128,7 @@ def price_table(cfg):
 def sources(env, models_file=None):
     """The configuration files that exist, weakest first.
 
-    The packaged defaults, then the synced list `dic sync` writes, then the
+    The packaged defaults, then the synced list `dic-sync` writes, then the
     user's providers and models, then the file named by --models-file /
     $DIC_MODELS_FILE: later files are merged over earlier ones rather than
     replacing them, so a user file may change one key of one model and any

@@ -51,6 +51,7 @@ Tools are divided into two categories:
 1. English names are for deterministic machinery.
     1. `git-apply-fuzzy` - like `git apply` but uses fuzzy matching for llm generated patches
     1. `sandbox` - a thin wrapper around `bwrap` with strong defaults for a coding agent
+    1. `dic-sync` - rebuild the model list from each provider's own catalog
 
 ## Install
 

@@ -441,12 +441,6 @@ All of it goes through one `report(verbosity, level, msg)` in `tty.py`.
 2. Many providers allow prompt caching to reduce cost of input tokens.
     It's not clear to me the best way to structure this from the cli or in the various config files.
 
-3. There is no cross-provider standard for listing models or their prices.
-    `GET /v1/models` is OpenAI-shaped and served by Groq, Together, vLLM and OpenRouter,
-    but only OpenRouter reports `pricing`, and Anthropic reports none.
-    A future `dic --sync` should hit each provider's list endpoint and *generate* the
-    entries under a provider id, never fetching prices on the latency path.
-
 4. The `stats` view has no notion of a percentile, only averages and maxima,
     because sqlite has no `percentile()` without an extension.
     A median is expressible with a window function over the view and should replace

@@ -1,6 +1,7 @@
 """Rendering: the selected chunks, in the encoding the caller asked for.
 
 The default is the one format accio has always had: a chunk's breadcrumb,
+rendered as the mention `@@path` when `at-paths` asks for it.
 a `---` fence, its text and a closing fence, so a reader -- a model, a
 human, `less` -- can see where one chunk stops, and so that the output is
 the encoding files-to-prompt already produces.  `paths`, `objects` and
@@ -85,6 +86,35 @@ def paths(chunks, out):
     """
     for chunk in chunks:
         out.write(f"{chunk.breadcrumb}\n")
+
+
+def at_paths(chunks, out):
+    """Write each selected chunk as an @@ mention, and no contents.
+
+    This is the breadcrumb projection with the doubled at-sign in front,
+    so the bytes have the shape a dic prompt reads as a filename and dic
+    -- not accio -- decides where the file lands in the request.  A walk
+    carried this way arrives as declared mentions, so the (path, hash)
+    tuple is available for the dedup instead of being buried in prose.
+
+    >>> import io
+    >>> from accio.extract import lines
+    >>> stream = io.StringIO()
+    >>> at_paths(lines("a.py", "x = 1\\n"), stream)
+    >>> print(stream.getvalue(), end="")
+    @@a.py
+    >>> stream = io.StringIO()
+    >>> at_paths(lines("a.py", "x = 1\\n") + lines("b.txt", "y"), stream)
+    >>> print(stream.getvalue(), end="")
+    @@a.py
+    @@b.txt
+    >>> stream = io.StringIO()
+    >>> at_paths([], stream)
+    >>> stream.getvalue()
+    ''
+    """
+    for chunk in chunks:
+        out.write(f"@@{chunk.breadcrumb}\n")
 
 
 def objects(chunks, out):
@@ -268,4 +298,5 @@ def budget(chunks, target, unit="bytes", fudge=1/4):
 # What `--format` can name, and the only place the encodings are listed:
 # a new projection is a new function and a key here, and nothing in the
 # CLI changes to make it reachable.
-FORMATS = {"prompt": render, "paths": paths, "json": objects, "wc": wc}
+FORMATS = {"prompt": render, "paths": paths, "json": objects, "wc": wc,
+           "at-paths": at_paths}

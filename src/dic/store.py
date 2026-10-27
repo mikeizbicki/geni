@@ -26,13 +26,15 @@ from dic.tty import DicError
 # version of dic migrates another one: dic is pre-release, so an older file is
 # not upgraded but reported with the rm that removes it, because a database
 # that is only nearly right fails later as a confusing sqlite error.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     mid TEXT PRIMARY KEY,
     round INTEGER,               -- which API call of this user turn the row is
     user TEXT,
+    includes TEXT,               -- the @@ files this turn added: {path, hash}
+    header TEXT,                 -- the rendered bytes of their header blocks
     system TEXT,
     response TEXT,
     response_raw TEXT,
@@ -149,7 +151,8 @@ CREATE TABLE IF NOT EXISTS mcp_tools (
 # The columns a row is written with, in the order messages declares them.  The
 # generated columns are not among them and cannot be: sqlite refuses to have
 # them written, which is the point of them.
-COLUMNS = ("mid", "round", "user", "system", "response", "response_raw",
+COLUMNS = ("mid", "round", "user", "includes", "header", "system",
+           "response", "response_raw",
            "prev_mid", "attachments", "outputs", "tool_results", "model_id",
            "api_type", "session", "upstream", "status", "error", "usage", "cost",
            "cost_items", "price_hash", "t_start", "t_connect", "t_request",
@@ -599,7 +602,8 @@ def history(conn, mid):
     `model_id` is carried so that -c and --mid can continue the thread with the
     model that produced its last turn, unless -m names another.
     """
-    columns = ("mid,round,user,system,response,response_raw,prev_mid,model_id,"
+    columns = ("mid,round,user,includes,header,system,response,response_raw,"
+               "prev_mid,model_id,"
                "api_type,attachments,outputs,tool_results,tools,mcp,options,"
                "schema,dialect,mime_type")
     qualified = ",".join(f"m.{c}" for c in columns.split(","))
@@ -735,6 +739,8 @@ def turns_from_rows(conn, rows, api_type):
     turns = []
     for row in rows:
         blocks = []
+        if row["header"]:
+            blocks.append({"type": "text", "text": row["header"]})
         for aid in json.loads(row["attachments"] or "[]"):
             att = conn.execute("SELECT path,mime_type FROM attachments WHERE aid=?",
                                (aid,)).fetchone()

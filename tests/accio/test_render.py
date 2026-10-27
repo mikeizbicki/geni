@@ -45,6 +45,8 @@ def _paths_from(fmt):
                 for row in out.splitlines()
                 if row and not row.endswith("total")
                 and not row.startswith("~")}
+    if fmt == "at-paths":
+        return {row[2:] for row in out.splitlines() if row}
     raise AssertionError(fmt)
 
 

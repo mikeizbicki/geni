@@ -48,11 +48,13 @@
 #
 # STRUCTURE (nested bwrap)
 #
-#     host -- unshare -rmn --+-- pasta    (the only route off)
-#                            |
-#                            +-- bwrap #1  (filesystem sandbox for the daemons)
-#                                  |
-#                                  +-- sh -c 'dnsmasq & mitm & bwrap #2 ...'
+#     host -- pasta         (creates the netns and userns, and the
+#           |                only route off them)
+#           +-- bash inner.sh   (nft rules in the netns)
+#                 |
+#                 +-- bwrap #1  (filesystem sandbox for the daemons)
+#                       |
+#                       +-- sh -c 'dnsmasq & mitm & bwrap #2 ...'
 #
 # bwrap #1 renders a sandbox.sh-style map -- read-only /usr and /etc,
 # a writable /run tmpfs -- and nothing else, so the CA private key,
@@ -195,14 +197,15 @@ netsandbox-bin() {
     return 1
 }
 
-# Which egress helper is available: pasta preferred, slirp4netns as
-# fallback.  Both configure an interface in the current netns and
-# route it through a userspace stack on the host, which is the only
-# route off this netns.
+# Locate pasta.  slirp4netns does the same work, but it takes a PID
+# and configures the netns from outside, so it cannot launch the
+# inner script itself: a caller would have to hold a process open in
+# the target namespaces and nsenter into it.  pasta creates the
+# namespaces and runs the command in them, which is the shape the
+# rest of this file builds on.
 netsandbox-egress-helper() {
     local bin
-    bin=$(netsandbox-bin pasta)       && { printf '%s\n' "$bin"; return 0; }
-    bin=$(netsandbox-bin slirp4netns) && { printf '%s\n' "$bin"; return 0; }
+    bin=$(netsandbox-bin pasta) && { printf '%s\n' "$bin"; return 0; }
     return 1
 }
 
@@ -216,7 +219,7 @@ netsandbox-validate() {
     for need in nft dnsmasq bwrap; do
         netsandbox-bin "$need" >/dev/null || missing+=("$need")
     done
-    netsandbox-egress-helper >/dev/null || missing+=('pasta-or-slirp4netns')
+    netsandbox-egress-helper >/dev/null || missing+=('pasta')
     if (( ${#missing[@]} )); then
         dic-error "netsandbox-error: not installed: ${missing[*]}"
         dic-hint  'netsandbox-hint: on Debian: apt install nftables dnsmasq-base passt bubblewrap'
@@ -426,31 +429,12 @@ netsandbox-write-inner() {
 set -e
 
 ip link set lo up
-
-# --- egress ---
-# The one route off the netns.  pasta maps host loopback to the
-# gateway by default and --no-map-gw turns that off; slirp4netns
-# instead allows it and --disable-host-loopback is what stops it.
-# Either way the payload cannot reach whatever the host's user
-# happens to have bound to loopback (an ssh-agent socket, a
-# database).  The four port-forwarding knives are pasta-only and
-# all none: nothing inside is reachable from outside, and nothing
-# outside is dialled but through the helper.
-case "\$NETSANDBOX_HELPER" in
-    *slirp4netns*)
-        "\$NETSANDBOX_HELPER" --config-net --disable-host-loopback &
-        ;;
-    *)
-        "\$NETSANDBOX_HELPER" --config-net --no-map-gw \\
-            -t none -u none -T none -U none &
-        ;;
-esac
-EGRESS_PID=\$!
-trap 'kill "\$EGRESS_PID" 2>/dev/null || true' EXIT
-
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    ip -4 addr show up 2>/dev/null | grep -q 'inet ' && break
-    sleep 0.05
+# Egress is already in place: the caller of this script is pasta,
+# which created these namespaces and configured the tap interface
+# from the host's default route before exec'ing this script.  There
+# is nothing here to start, and no helper to look for: pasta that
+# was told to run inside a netns it did not create falls into local
+# mode, which is where the uid_map write failed.
 done
 
 # --- nft ---
@@ -477,7 +461,7 @@ add rule inet netfilter output oifname "lo" accept
 add rule inet netfilter output ip daddr \$NETSANDBOX_UPSTREAM udp dport 53 accept
 add rule inet netfilter output ip daddr \$NETSANDBOX_UPSTREAM tcp dport 53 accept
 add rule inet netfilter output meta skuid 0 accept
-add rule inet netfilter natout meta skuid != 0 tcp dport { 80, 443 } dnat to 127.0.0.1:8080
+add rule inet netfilter natout meta skuid != 0 tcp dport { 80, 443 } dnat ip to 127.0.0.1:8080
 NFT
 
 # --- bwrap #1: the daemons ---
@@ -556,16 +540,21 @@ netsandbox-run() {
     helper=$(netsandbox-egress-helper) || return 1
     netsandbox-write-inner "$dir/inner.sh" || return 1
 
-    # Everything below runs inside unshare -rmn: root in a new user
-    # namespace (so nft, the mounts and the uid_map write work) and in
-    # a network namespace whose only route off is the egress helper.
-    NETSANDBOX_HELPER="$helper" \
+    # pasta creates the user and network namespaces, configures the
+    # tap interface in the new netns from the host's default route,
+    # and runs the inner script in them, so it is pasta and not an
+    # unshare above pasta that owns the namespaces.  --no-map-gw
+    # is what stops the payload from reaching the host's loopback,
+    # and the -t/-u/-T/-U none close the four port forwards pasta
+    # opens by default.
     NETSANDBOX_RUNDIR="$dir" \
     NETSANDBOX_UPSTREAM="$NETSANDBOX_UPSTREAM" \
     NETSANDBOX_NFT="$NETSANDBOX_NFT" \
     NETSANDBOX_DNSMASQ="$NETSANDBOX_DNSMASQ" \
     NETSANDBOX_MITM="$NETSANDBOX_MITM" \
-    unshare -rmn bash "$dir/inner.sh" -- "$@"
+    "$helper" --config-net --no-map-gw \
+        -t none -u none -T none -U none \
+        -- bash "$dir/inner.sh" -- "$@"
     return $?
 }
 

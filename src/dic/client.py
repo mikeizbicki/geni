@@ -810,7 +810,6 @@ def dic(prompt,
                  for row in rows
                  for entry in json.loads(row["includes"] or "[]")}
         prompt, include_header, include_adds = include.collect(prompt, known)
-        raise DicError(f"no such mid: {prev_mid}")
 
     # -m > the model this conversation last used > $DIC_MODEL > the default, so
     # -c carries on with the same provider unless the caller names another one

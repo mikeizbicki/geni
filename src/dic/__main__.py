@@ -41,6 +41,121 @@ def init_line():
     return f"source {shlex.quote(str(path))}{extra}"
 
 
+def flag_value(argv, names):
+    """The value a run gives to the first of names, or None.
+
+    Both spellings argparse accepts for an option that takes a value: the
+    option and its value as two words, or NAME=VALUE as one.  A short
+    option's value glued to it (``-mfoo``) is not read, because dic's own
+    convention is the two-word form and a glued short is argparse's,
+    not dic's.
+
+    >>> flag_value(["-m", "x"], ("-m", "--model"))
+    'x'
+    >>> flag_value(["--model=x"], ("-m", "--model"))
+    'x'
+    >>> flag_value([], ("-m", "--model")) is None
+    True
+    """
+    for i, a in enumerate(argv):
+        for name in names:
+            if a == name and i + 1 < len(argv):
+                return argv[i + 1]
+            if a.startswith(name + "="):
+                return a[len(name) + 1:]
+    return None
+
+
+def rate_line(rule):
+    """One price rule as a person reads it: the rate per the unit it is in.
+
+    A token rate is quoted per million, because that is how every price
+    page states it and what dic's own PER does; any other unit is quoted
+    per one, which is how an image at $0.04 is priced.  The extras that
+    make a rule a refinement of another -- key, tier, when -- are named
+    beside it, because without them a table with two 'in' rules reads as
+    a table that prices 'in' twice.
+
+    >>> rate_line({"rate": 3.0})
+    '$3.0000 / Mtoken'
+    >>> rate_line({"rate": 0.04, "unit": "image"})
+    '$0.0400 / image'
+    >>> rate_line({"rate": 6.0, "key": "in", "when": "in_total > 200000"})
+    '$6.0000 / Mtoken  (key=in, when=in_total > 200000)'
+    >>> rate_line({"rate": 7.5, "key": "out", "tier": "batch"})
+    '$7.5000 / Mtoken  (key=out, tier=batch)'
+    """
+    unit = rule.get("unit", "token")
+    per = "Mtoken" if unit == "token" else unit
+    line = f"${rule.get('rate', 0):.4f} / {per}"
+    extras = " ".join(f"{k}={rule[k]}" for k in ("key", "tier", "when")
+                      if rule.get(k))
+    return line + (f"  ({extras})" if extras else "")
+
+
+def model_help(argv, env):
+    """``dic -m NAME --help``: the resolved entry of one named model.
+
+    Answers when a model is named and a help flag is given, before
+    argparse's own ``--help`` -- which prints the whole command tree and
+    knows nothing about a model -- runs.  The page is the entry a call
+    would use: the model's API name, its base, the variable its key is
+    read from (and whether it is exported), the wire protocol, the
+    declared price rules with dic's cost_input and cost_output shorthand
+    already expanded, and the options ``-o`` would merge over.
+
+    An id that does not resolve is a DicError named here, not a page
+    of nothing: the caller learns which id config.resolve refused.
+
+    Returns True when it answered, so the caller knows not to fall
+    through to argparse's own help; False when no model was named.
+    """
+    import json
+
+    from dic import config
+    from dic.store import db
+
+    if not any(a in ("-h", "--help") for a in argv):
+        return False
+    name = flag_value(argv, ("-m", "--model"))
+    if name is None:
+        return False
+
+    conn = db(env)
+    config.sync(conn, env, flag_value(argv, ("--models-file",))
+                or env.get("DIC_MODELS_FILE"))
+    model = config.resolve(conn, name)
+
+    def line(label, value):
+        print(f"{label:<14}{value}")
+
+    line("model_id", model["model_id"])
+    line("model_name", model.get("model_name") or "")
+    line("api_type", model.get("api_type") or "openai-chat")
+    line("api_base", model.get("api_base") or "")
+    key_name = model.get("api_key_name")
+    if key_name:
+        present = "set" if env.get(key_name) else "not set"
+        line("api_key_name", f"{key_name} ({present})")
+    if model.get("alias"):
+        line("alias", model["alias"])
+    if model.get("output"):
+        line("output", model["output"])
+    if model.get("system"):
+        line("system", repr(model["system"]))
+    if model.get("options") is not None:
+        line("options", json.dumps(model["options"], sort_keys=True))
+    if model.get("headers"):
+        line("headers", json.dumps(model["headers"], sort_keys=True))
+    price = model.get("price") or {}
+    if price:
+        print("price")
+        width = max(len(rule) for rule in price)
+        for rule in sorted(price):
+            print(f"  {rule:<{width}}  {rate_line(price[rule])}")
+    return True
+
+
 def main():
     # --init names a file and nothing else, so it is answered before the
     # client, its sqlite and its json config are imported: a .bashrc pays
@@ -60,6 +175,13 @@ def main():
         # reject an unknown first word: a word that is not a command name is
         # the call's prompt, and "call" is prepended to say so.
         argv = sys.argv[1:]
+        # A named model deserves a page about that model and not about
+        # the whole command tree: `dic -m NAME --help` prints the
+        # resolved entry -- what a call would send, which key it needs,
+        # what its price rules are -- and answers before argparse's own
+        # --help has a chance to print the tree instead.
+        if model_help(argv, os.environ):
+            return
         p = parser()
         # -h and --help name the whole tree of commands, so they answer with
         # both halves of it: the list of commands, and the call's own

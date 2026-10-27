@@ -991,6 +991,14 @@ which `dic.sh` evals.
 Shell names and model names therefore come from one table and cannot drift apart,
 and the same list is what shell completion should use.
 
+`dic -m NAME --help` prints the resolved entry of one model instead of
+the whole command tree: its `model_name`, `api_base`, `api_key_name`
+(and whether that variable is exported), `api_type`, `output`, `alias`,
+the declared `options`, and every price rule with the `cost_input` and
+`cost_output` shorthand already expanded into it.  The page is answered
+before `argparse` runs and reads the same sources a call would, so what
+a model's entry *is* and what a call would *send* are one command apart.
+
 The fully resolved id is what is stored in the `model_id` column,
 so a conversation still says which entry produced each turn after the files are edited.
 

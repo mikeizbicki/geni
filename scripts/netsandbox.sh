@@ -119,6 +119,68 @@ NETSANDBOX_SCRIPTS_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd) || {
     return 1
 }
 
+# ---------------------------------------------------------------- help
+
+# The help text, on stdout.  It is written by hand and not generated,
+# because the useful thing to put beside each --net-* flag is the
+# security posture that flag selects -- the whole reason the wrapper
+# exists, and the part a `bwrap --help` heading cannot tell you.  A
+# malformed --net-* flag prints this to stderr, so the caller sees
+# the flag they meant beside the flag we did not know.
+netsandbox-help() {
+    cat <<'EOF'
+usage: netsandbox [--envs=NAME ...] [--net-* FLAG ...] [--] BWRAP_ARGS... COMMAND [ARGS...]
+
+A sandbox wrapper with fine-grained network control.  With no --net-*
+flag it is sandbox: --unshare-net and no route off the machine.  A
+--net-* flag builds a private network namespace whose only route off
+the machine is a controlled egress.
+
+Network modes (choose one):
+
+  (no flag)               --unshare-net; no route off the machine.
+
+  --net-allow-hosts H,H   A dnsmasq in the jail is the only resolver the
+                          payload can reach.  One --server rule per
+                          allowlisted name and a --local=/#/ catch-all,
+                          so a query for a name not on the list gets
+                          NXDOMAIN instead of being forwarded.  Once a
+                          name resolves, any protocol to that address
+                          passes.  Comma-separated; a leading dot is a
+                          dnsmasq suffix rule, so .example.com covers
+                          example.com and every name under it.
+
+  --net-mitm              HTTP(S)-only.  dnat's the payload's :80 and
+                          :443 to a per-run mitmproxy that filters by
+                          the Host header and TLS SNI.  A non-HTTP
+                          stream is refused.  Requires --net-allow-hosts
+                          to have anything to reach.
+
+  --net-method M,M        Allow only these HTTP methods.  A method is
+                          inside the TLS record, so this requires
+                          --net-mitm; a silent downgrade to SNI-only is
+                          refused at startup.
+
+  --net-deny-method M,M   Deny these HTTP methods.  Requires --net-mitm.
+
+  --net-log FILE          Write one JSONL line per request.  Requires
+                          --net-mitm.
+
+  --net-raw               --share-net and no jail.  The escape hatch,
+                          refused alongside any other --net-* flag.
+
+--envs=NAME and leading NAME=value are sandbox's prefix; netsandbox
+does not yet support them.  Any other argument that begins with - is a
+bwrap argument, and the first -- ends the option run.  Everything
+after -- is the command, verbatim.
+
+Exit codes:
+  0   the command ran (whatever it returned)
+  1   the jail could not be built
+  64  usage error
+EOF
+}
+
 # -------------------------------------------------------------------- deps
 
 # Resolve a binary, preferring PATH but falling back to the sbin
@@ -501,6 +563,12 @@ netsandbox() {
     local net_method_allow= net_method_deny=
     local -a rest=() names=()
     local list name
+
+    case ${1:-} in
+        --help|-h)
+            netsandbox-help
+            return 0 ;;
+    esac
 
     # Leading --envs=NAME / NAME=value, peeled the way sandbox peels
     # them, so the two wrappers agree on where the run of them ends

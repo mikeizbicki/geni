@@ -213,7 +213,26 @@ Rewrites, not lenses:
 
 ## Output
 
-One format, and it is text:
+The default is a list of mentions, one per selected chunk, and no
+contents:
+
+    @@a/b/c.py
+
+`dic` scans the `@@` back into a filename and hoists that file into a
+header block at the head of the request, so `accio src/ | dic '...'`
+arrives with the file contents `dic` was given.  Which files are named
+is the walk's decision and where in the request they land is `dic`'s,
+and a file named twice in the stream is hoisted once.  The default is a
+projection of the walk and not the walk's bytes, which keeps the walk
+on the cheap path: `accio` reads no file to name one.
+
+The mention is the chunk's path and not its breadcrumb, because `@@`
+reads as a filename and `@@a/b/c.py::parse` names no file; a file the
+extract split into chunks is named once per chunk, which `dic`'s
+content-hash dedup collapses to one hoist.
+
+`--format prompt` is the self-contained text encoding, the one
+files-to-prompt uses:
 
     a/b/c.py
     ---
@@ -233,7 +252,7 @@ The breadcrumb names what is inside the file and not the whole file, so a citati
 
 There is no escaping and no quoting.  A file whose content contains a line that is itself a path is ambiguous, and the answer is `--format json`, not a longer escape.
 
-`--format paths` prints the paths that would be printed, one per line, and no contents.  `--format json` prints one object per selected node:
+`--format paths` prints the breadcrumb of each selected chunk, one per line, and no contents: it is `at-paths` without the doubled at-sign, and with the name a chunk has inside its file where the extract gives it one.  `--format json` prints one object per selected node:
 
     {"path": "a/b/c.py", "chunk_id": "...", "breadcrumb": "a/b/c.py::parse",
      "kind": "def", "ord": 3, "text": "..."}
@@ -275,8 +294,7 @@ The cap is soft.  Chunks are emitted in rank order while the running total is at
 |      | `--staged` | keep staged changes |
 |      | `--target SIZE[UNIT]` | truncate the rendered prompt to about SIZE |
 |      | `--fudge F` | how much the last chunk may overshoot `--target` |
-|      | `--format FMT` | `prompt` (default), `paths`, `json`, `wc` |
-| `-l` | `--paths-only` | `--format paths` |
+|      | `--format FMT` | `at-paths` (default), `prompt`, `paths`, `json`, `wc` |
 | `-w` | `--wc` | `--format wc` |
 |      | `--refresh` | rebuild the index from the walk; free |
 |      | `--prune` | delete the index and exit |

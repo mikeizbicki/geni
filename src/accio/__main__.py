@@ -73,11 +73,8 @@ def parser():
                         " def or class; repeatable")
     p.add_argument("--format", choices=tuple(FORMATS), default=None,
                    metavar="FMT",
-                   help="how to encode the selection:"
-                        " " + ", ".join(FORMATS))
-    p.add_argument("-l", "--paths-only", action="store_true",
-                   help="print only the paths that would be gathered,"
-                        " and no contents; same as --format paths")
+                   help="how to encode the selection (default:"
+                        " at-paths): " + ", ".join(FORMATS))
     p.add_argument("-w", "--wc", action="store_true",
                    help="print line, word and byte counts per path and an"
                         " estimated token count for the whole prompt,"
@@ -160,8 +157,7 @@ def run(args, readmes, patterns, gitignore):
         chunks = elide(chunks, what)
     if size is not None:
         chunks = budget(chunks, size[0], size[1], args.fudge)
-    fmt = args.format or ("paths" if args.paths_only
-                          else "wc" if args.wc else "prompt")
+    fmt = args.format or ("wc" if args.wc else "at-paths")
     FORMATS[fmt](chunks, sys.stdout)
     sys.stdout.flush()
     return 0

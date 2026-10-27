@@ -1,11 +1,14 @@
 """Rendering: the selected chunks, in the encoding the caller asked for.
 
-The default is the one format accio has always had: a chunk's breadcrumb,
-rendered as the mention `@@path` when `at-paths` asks for it.
-a `---` fence, its text and a closing fence, so a reader -- a model, a
-human, `less` -- can see where one chunk stops, and so that the output is
-the encoding files-to-prompt already produces.  `paths`, `objects` and
-`wc` are projections of the same selection, and `FORMATS` is their
+The default is a list of `@@path` mentions, one per selected chunk and
+no contents: `dic` reads `@@` back as a filename and hoists the file
+into a header block at the head of the request, so `accio src/ | dic
+'...'` arrives with the file contents `dic` was given.  `--format
+prompt` is the self-contained text encoding: a chunk's breadcrumb, a
+`---` fence, its text and a closing fence, so a reader -- a model, a
+human, `less` -- can see where one chunk stops, and so that the output
+is the encoding files-to-prompt already produces.  `paths`, `objects`
+and `wc` are projections of the same selection, and `FORMATS` is their
 catalog: the selection decides what, and this module decides only how.
 """
 import json, re
@@ -91,14 +94,14 @@ def paths(chunks, out):
 def at_paths(chunks, out):
     """Write each selected chunk as an @@ mention, and no contents.
 
-    This is the breadcrumb projection with the doubled at-sign in front,
-    so the bytes have the shape a dic prompt reads as a filename and dic
-    -- not accio -- decides where the file lands in the request.  A walk
-    carried this way arrives as declared mentions, so the (path, hash)
-    tuple is available for the dedup instead of being buried in prose.
+    The mention is the chunk's *path*, not its breadcrumb: dic reads
+    `@@a.py` as a filename and hoists that whole file into a header
+    block at the head of the request, and `@@a.py::parse` names no file.
+    A file with several chunks therefore names its path several times;
+    dic's dedup is by content hash and hoists it once.
 
     >>> import io
-    >>> from accio.extract import lines
+    >>> from accio.extract import lines, python
     >>> stream = io.StringIO()
     >>> at_paths(lines("a.py", "x = 1\\n"), stream)
     >>> print(stream.getvalue(), end="")
@@ -109,12 +112,17 @@ def at_paths(chunks, out):
     @@a.py
     @@b.txt
     >>> stream = io.StringIO()
+    >>> at_paths(python("a.py", "def f():\\n    pass\\n"), stream)
+    >>> print(stream.getvalue(), end="")
+    @@a.py
+    @@a.py
+    >>> stream = io.StringIO()
     >>> at_paths([], stream)
     >>> stream.getvalue()
     ''
     """
     for chunk in chunks:
-        out.write(f"@@{chunk.breadcrumb}\n")
+        out.write(f"@@{chunk.path}\n")
 
 
 def objects(chunks, out):

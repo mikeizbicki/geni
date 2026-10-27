@@ -70,7 +70,7 @@ def test_at_paths_is_a_dic_prompt():
     from accio.include import scan
     _clean, spans = scan(_run("at-paths"))
     assert [path for _start, _end, path in spans] == \
-        [c.breadcrumb for c in CHUNKS]
+        [c.path for c in CHUNKS]
 
 
 def test_json_is_one_object_per_line():

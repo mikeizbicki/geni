@@ -95,6 +95,60 @@ def verbosity_of(argv):
     return count
 
 
+# The flags a model's page reads itself, before argparse.  Anything
+# else -- including a flag argparse would accept for a call -- is
+# refused: the page has nothing to do with a call, and a flag that
+# arrived unnoticed would be a `--help` that lied about what it read.
+MODEL_HELP_FLAGS = frozenset({
+    "-h", "--help", "-v", "--verbose", "-q", "--quiet",
+    "--refresh-options",
+})
+
+
+def reject_unknown(argv):
+    """Raise DicError for a flag the model's page does not read.
+
+    The page is answered before argparse, so argparse's own refusal of
+    an unknown flag never runs: `dic -m foo --help --typo` would print
+    a page and exit 0, when the caller typed a flag that does not
+    exist.  The allowlist names every flag the page reads; a value
+    after -m / --model / --models-file is consumed and never looked at
+    as a flag, and a glued -vvv is one flag not three.
+
+    >>> reject_unknown(["-m", "foo", "--help", "-vv"])
+    >>> reject_unknown(["-m", "foo", "--help", "--refresh-options"])
+    >>> reject_unknown(["-m", "foo", "--help", "--typo"])
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: unknown flag: --typo
+    >>> reject_unknown(["-mfoo", "--help"])
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: unknown flag: -mfoo
+    """
+    from dic.tty import DicError
+
+    value_flags = ("-m", "--model", "--models-file")
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in value_flags:
+            i += 2
+            continue
+        if a.startswith("--") and "=" in a:
+            name = a.split("=", 1)[0]
+            if name not in MODEL_HELP_FLAGS:
+                raise DicError(f"unknown flag: {name}")
+            i += 1
+            continue
+        if a.startswith("-v") and set(a[1:]) == {"v"}:
+            i += 1
+            continue
+        if a.startswith("-") and a not in MODEL_HELP_FLAGS:
+            raise DicError(f"unknown flag: {a}")
+        i += 1
+
+
 def rate_line(rule):
     """One price rule as a person reads it: the rate per the unit it is in.
 
@@ -175,17 +229,20 @@ def params_for(model, env, *, refresh=False, verbose=0, progress=None):
     its adaptor knows how to ask for them; they are fetched lazily on
     the first ``--help`` and cached in a sidecar sqlite under the
     resolved ``model_id``, so the network is touched once per model per
-    machine unless ``refresh`` says otherwise.
+    machine unless ``refresh`` says otherwise.  A key that is missing
+    and a fetch that failed are both a DicError.
 
     ``progress`` is a ``dic.tty.Line`` the fetch paints while it runs,
     so a request that hangs is a clock and not a silent wait; a request
     that beats the meter's own delay paints nothing at all.
 
-    Returns (table, note).  ``table`` is the merged params, a model's
-    own entry winning over the protocol's of the same name.  ``note`` is
-    the line to print when the table would have been richer but was not:
-    the key was not exported, or the fetch failed.  Both are empty
-    together when there is nothing to say and no way to say more.
+    Returns the merged params, a model's own entry winning over the
+    protocol's of the same name, or ``{}`` when the protocol has no
+    per-model facts to offer at all -- a chat model's page is its
+    protocol's options and that is the whole answer.  A provider whose
+    adaptor declares ``model_params`` must answer, and an answer it
+    cannot give is raised: a page that printed no ``params`` section
+    could otherwise not tell a model with none from a failed request.
     """
     import urllib.parse
 
@@ -197,46 +254,43 @@ def params_for(model, env, *, refresh=False, verbose=0, progress=None):
     try:
         adaptor = load_adaptor(api_type, env)
     except DicError:
-        return {}, None
+        return {}
 
     protocol = getattr(adaptor, "PARAMS", {}) or {}
     if not hasattr(adaptor, "model_params"):
-        return dict(protocol), None
+        return dict(protocol)
 
     if not refresh:
         cached = cache.cached(env, model["model_id"])
         if cached is not None:
             report(verbose, 1,
                    f"params: cached for {model['model_id']}", env=env)
-            return {**protocol, **cached}, None
+            return {**protocol, **cached}
 
     key_name = model.get("api_key_name")
     key = env.get(key_name) if key_name else None
     if not key:
-        return dict(protocol), (f"{key_name} is not set; export it"
-                                " to see model params")
+        raise DicError(f"{model['model_id']}: {key_name} is not set;"
+                       " export it to see this model's params")
 
     url = (getattr(adaptor, "model_params_url", lambda _: None))(model)
     host = urllib.parse.urlparse(url).hostname if url else ""
     row = None
     if progress is not None:
-        row = progress.row("params")
-        row.begin("params", host or "")
+        row = progress.row("checking-param-api")
+        row.begin("checking-param-api", host or "")
     report(verbose, 1, f"params: GET {url or model['model_id']}", env=env)
     try:
         facts = adaptor.model_params(model, key, env)
-    except DicError as e:
+    finally:
         if row is not None:
             row.arrived()
-        return dict(protocol), f"unavailable: {e}"
-    if row is not None:
-        row.arrived()
     report(verbose, 1, f"params: {len(facts)} param(s)", env=env)
     # a cache write is not the answer: a read-only state directory or a
     # lock held elsewhere must not stop a page that already has its data
     with contextlib.suppress(Exception):
         cache.store(env, model["model_id"], facts)
-    return {**protocol, **facts}, None
+    return {**protocol, **facts}
 
 
 def model_help(argv, env):
@@ -266,6 +320,7 @@ def model_help(argv, env):
 
     if not any(a in ("-h", "--help") for a in argv):
         return False
+    reject_unknown(argv)
     name = flag_value(argv, ("-m", "--model"))
     if name is None:
         return False
@@ -308,14 +363,12 @@ def model_help(argv, env):
     sys.stdout.flush()
     progress = Line(err=sys.stderr, env=env)
     try:
-        table, note = params_for(model, env, refresh=refresh,
-                                 verbose=verbose, progress=progress)
+        table = params_for(model, env, refresh=refresh,
+                           verbose=verbose, progress=progress)
     finally:
         progress.close()
     if table:
         print(params_text(table))
-    elif note:
-        line("params", note)
     return True
 
 

@@ -1012,7 +1012,12 @@ rewrites the cache, and `-v` names each request as it is made.  A
 fetch that outlives the progress meter's own delay paints one line on
 stderr -- the same clock a slow `ttft` paints -- so a request that
 hangs is a number moving and not a program gone quiet, and a fetch
-that returns no schema says so rather than printing nothing.  The
+that returns no schema says so rather than printing nothing.  A
+download that failed is an error: the page prints and the call ends
+nonzero, because a caller who asked about a model is not served by a
+page whose `params` section silently says nothing.  A flag the page
+does not read is an error too, since a page answered before argparse
+would otherwise ignore it.  The
 cache is disposable and single-versioned, exactly like `dic.db`: a
 file written by another build is deleted and rebuilt, not migrated.
 This is the one place a readout may touch the network, and only once

@@ -19,7 +19,7 @@ See SPEC.md.
 """
 import fnmatch, os, subprocess
 
-from accio.extract import by_extension
+from accio.extract import extract
 
 # The names looked for in every directory above a summoned file, in the
 # order they are tried.  A README states what a subtree is and an AGENTS
@@ -344,7 +344,7 @@ def canvassed(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
 
 
 def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
-             gitignore=True):
+             gitignore=True, extractor=None):
     """Yields the chunks of all that is to be rendered, context once.
 
     The path on a chunk is the normalized key the run deduplicates on,
@@ -378,7 +378,7 @@ def traverse(paths, readmes=DEFAULT_READMES, patterns=DEFAULT_IGNORES,
         text = read(path)
         if text is None:
             continue
-        chunks = list(by_extension(path, text))
+        chunks = list(extract(path, text, extractor))
         if not chunks:
             continue
         if os.path.basename(path) not in readme_names:

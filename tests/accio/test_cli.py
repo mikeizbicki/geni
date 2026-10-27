@@ -87,6 +87,7 @@ def test_elide_body_at_the_cli(repo, mk, capsys, monkeypatch):
     mk("a.py", "def f(a):\n    '''doc.'''\n    return a\n")
     monkeypatch.chdir(repo)
     assert main(["--format", "prompt",
+                 "--extractor", "python",
                  "--elide", "kind=body", "a.py"]) == 0
     out = capsys.readouterr().out
     assert "def f(a):" in out

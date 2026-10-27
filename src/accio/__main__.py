@@ -12,9 +12,9 @@ result to stdout.
 """
 import argparse, os, sys
 
-from accio import index
+from accio import extract, index
 from accio.traverse import DEFAULT_IGNORES, DEFAULT_READMES, traverse
-from accio.select import select, rag
+from accio.select import select, rag, unique
 from accio.render import FORMATS, budget, elide, parse_target
 
 
@@ -39,6 +39,11 @@ def parser():
     p.add_argument("--no-gitignore", action="store_true",
                    help="do not consult git: summon what .gitignore"
                         " excludes, and walk into submodules")
+    p.add_argument("--extractor", metavar="NAME", default=None,
+                   help="split each file with this extractor instead of"
+                        " summoning it whole; `python` is a tree of its"
+                        " classes and defs, and MODULE:FN names any"
+                        " importable function")
     p.add_argument("--rag", metavar="QUERY", default=None,
                    help="rank the selection by relevance to QUERY"
                         " (bm25; free)")
@@ -104,6 +109,7 @@ def main(argv=None):
 
 def run(args, readmes, patterns, gitignore):
     """Dispatch: the index verbs first, then the walk or the rag ranking."""
+    extractor = extract.chain(args.extractor) if args.extractor else None
     if args.prune:
         index.prune(args.path, args.index_dir)
         return 0
@@ -121,7 +127,7 @@ def run(args, readmes, patterns, gitignore):
         # in dic's ledger; the count is what this line reports.
         conn = index.open_(args.path, args.index_dir)
         index.refresh(conn, args.path, readmes, patterns, gitignore,
-                      force=args.refresh)
+                      force=args.refresh, extractor=extractor)
         n = index.embed(conn, embed_model)
         sys.stdout.write(f"embedded {n} chunks with {embed_model}\n")
         sys.stdout.flush()
@@ -129,7 +135,7 @@ def run(args, readmes, patterns, gitignore):
     if args.refresh and args.rag is None:
         conn = index.open_(args.path, args.index_dir)
         index.refresh(conn, args.path, readmes, patterns, gitignore,
-                      force=True)
+                      force=True, extractor=extractor)
         return 0
     expand = 0
     if args.expand is not None:
@@ -150,9 +156,12 @@ def run(args, readmes, patterns, gitignore):
     if args.rag is not None:
         chunks = rag(args.rag, args.path, readmes, patterns, gitignore,
                      args.index_dir, force=args.refresh,
-                     embed_model=embed_model, expand=expand)
+                     embed_model=embed_model, expand=expand,
+                     extractor=extractor)
     else:
-        chunks = select(traverse(args.path, readmes, patterns, gitignore))
+        chunks = select(traverse(args.path, readmes, patterns, gitignore,
+                                 extractor))
+    chunks = unique(chunks)
     for what in [a.split("=")[-1] for a in (args.elide or ())]:
         chunks = elide(chunks, what)
     if size is not None:

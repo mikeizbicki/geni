@@ -97,8 +97,9 @@ def at_paths(chunks, out):
     The mention is the chunk's *path*, not its breadcrumb: dic reads
     `@@a.py` as a filename and hoists that whole file into a header
     block at the head of the request, and `@@a.py::parse` names no file.
-    A file with several chunks therefore names its path several times;
-    dic's dedup is by content hash and hoists it once.
+    A file therefore names its path once however many chunks it made:
+    dic hoists by content hash, so a second `@@a.py` says nothing the
+    first one did not, and what a run prints is a prompt's prefix.
 
     >>> import io
     >>> from accio.extract import lines, python
@@ -115,13 +116,16 @@ def at_paths(chunks, out):
     >>> at_paths(python("a.py", "def f():\\n    pass\\n"), stream)
     >>> print(stream.getvalue(), end="")
     @@a.py
-    @@a.py
     >>> stream = io.StringIO()
     >>> at_paths([], stream)
     >>> stream.getvalue()
     ''
     """
+    named = set()
     for chunk in chunks:
+        if chunk.path in named:
+            continue
+        named.add(chunk.path)
         out.write(f"@@{chunk.path}\n")
 
 

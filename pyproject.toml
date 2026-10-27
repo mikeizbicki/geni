@@ -13,6 +13,7 @@ dic = "dic.__main__:main"
 accio = "accio.__main__:main"
 git-apply-fuzzy = "git_apply_fuzzy.__main__:main"
 dic-sync = "dic_sync.__main__:main"
+mcp-bash = "mcp_bash.__main__:main"
 # see pyproject.toml for the package layout
 
 [build-system]
@@ -26,7 +27,8 @@ build-backend = "setuptools.build_meta"
 # discover a package whose directory is outside src/.
 [tool.setuptools]
 packages = ["accio", "dic", "dic.adaptors", "dic.tools", "dic.scripts",
-            "dic_sync", "dic_sync.fetchers", "git_apply_fuzzy"]
+            "dic_sync", "dic_sync.fetchers", "git_apply_fuzzy",
+            "mcp_bash"]
 package-dir = {"" = "src", "dic.scripts" = "scripts"}
 include-package-data = true
 

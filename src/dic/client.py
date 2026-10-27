@@ -162,6 +162,36 @@ def validates_auto(api_type):
     return api_type in VALIDATES_AUTO
 
 
+# What each streaming protocol writes into `acc` when its stream has said
+# it is done.  A socket can close mid-answer, and what arrived is then a
+# prefix that reads like a whole one: no error frame, no finish_reason,
+# and a cost line exactly like a call that simply answered nothing.  Such
+# a turn would be stored as a 200 and the session pointer moved into it,
+# so -c would replay the fragment as though it were the answer.  A
+# protocol absent from this table has no stream to be cut off -- a call()
+# adaptor that polls and answers with a file, or one that answers in one
+# JSON body -- and is always complete.
+TERMINAL = {
+    "openai-chat": lambda acc: acc.get("stop"),
+    "openai-responses": lambda acc: "raw" in acc,
+    "anthropic-messages": lambda acc: acc.get("stop"),
+}
+
+
+def stream_complete(api_type, acc):
+    """Whether this protocol's stream said it was done, or has no such mark.
+
+    >>> stream_complete("openai-chat", {"stop": "stop"})
+    True
+    >>> stream_complete("openai-chat", {})
+    False
+    >>> stream_complete("fal", {})
+    True
+    """
+    check = TERMINAL.get(api_type)
+    return check is None or bool(check(acc))
+
+
 def resolve_toggle(value, default, what, model):
     """A --repair or --validate value as a bool, with auto resolved.
 

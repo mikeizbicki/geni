@@ -9,14 +9,14 @@
     "abstract": true,
     "api_base": "https://api.groq.com/openai/v1",
     "api_key_name": "GROQ_API_KEY",
-    "docs": {"url": "https://groq.com/pricing/"}
+    "pricing_url": {"url": "https://groq.com/pricing/"}
   },
 
   "cerebras": {
     "abstract": true,
     "api_base": "https://api.cerebras.ai/v1",
     "api_key_name": "CEREBRAS_API_KEY",
-    "docs": {"url": "https://www.cerebras.ai/pricing"}
+    "pricing_url": {"url": "https://www.cerebras.ai/pricing"}
   },
 
   "anthropic": {
@@ -24,7 +24,7 @@
     "api_type": "anthropic-messages",
     "api_base": "https://api.anthropic.com/v1",
     "api_key_name": "ANTHROPIC_API_KEY",
-    "docs": {"url": "https://www.anthropic.com/pricing"}
+    "pricing_url": {"url": "https://www.anthropic.com/pricing"}
   },
 
   "openai": {
@@ -32,14 +32,13 @@
     "api_type": "openai-responses",
     "api_base": "https://api.openai.com/v1",
     "api_key_name": "OPENAI_API_KEY",
-    "docs": {"url": "https://openai.com/api/pricing/"}
+    "pricing_url": {"url": "https://openai.com/api/pricing/"}
   },
 
   "openrouter": {
     "abstract": true,
     "api_base": "https://openrouter.ai/api/v1",
-    "api_key_name": "OPENROUTER_API_KEY",
-    "docs": {"url": "https://openrouter.ai/models"}
+    "api_key_name": "OPENROUTER_API_KEY"
   },
 
   "thinking-high": {

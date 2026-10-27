@@ -36,28 +36,24 @@
     "api_base": "https://api.openai.com/v1",
     "api_key_name": "OPENAI_API_KEY",
     "pricing_url": {"url": "https://openai.com/api/pricing/"},
-    "sync": {"fetcher": "openai"}
+    "sync": {"fetcher": "openai", "catalogs": [
+      {"path": "/models", "match": "gpt-image-*",
+       "api_type": "openai-images", "output": "image/png"},
+      {"path": "/models", "match": "sora-*",
+       "api_type": "openai-videos", "output": "video/mp4"},
+      {"path": "/models"}
+    ]}
   },
 
   "openrouter": {
     "abstract": true,
     "api_base": "https://openrouter.ai/api/v1",
     "api_key_name": "OPENROUTER_API_KEY",
-    "sync": {"fetcher": "openrouter"}
-  },
-
-  "openrouter-image": {
-    "abstract": true,
-    "api_type": "openai-images",
-    "api_base": "https://openrouter.ai/api/v1",
-    "api_key_name": "OPENROUTER_API_KEY"
-  },
-
-  "openrouter-video": {
-    "abstract": true,
-    "api_type": "openai-videos",
-    "api_base": "https://openrouter.ai/api/v1",
-    "api_key_name": "OPENROUTER_API_KEY"
+    "sync": {"fetcher": "openrouter", "catalogs": [
+      {"path": "/models",        "pricing": "chat"},
+      {"path": "/images/models", "api_type": "openai-images", "output": "image/png"},
+      {"path": "/videos/models", "api_type": "openai-videos", "output": "video/mp4"}
+    ]}
   },
 
   "thinking-high": {

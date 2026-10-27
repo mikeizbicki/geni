@@ -69,7 +69,7 @@ def test_at_paths_is_a_dic_prompt():
     # and not as prose to be guessed at.
     from accio.include import scan
     _clean, spans = scan(_run("at-paths"))
-    assert [path for _start, _end, path in spans] == \
+    assert [key for _start, _end, _origin, key in spans] == \
         [c.path for c in CHUNKS]
 
 

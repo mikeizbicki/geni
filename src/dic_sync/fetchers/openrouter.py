@@ -1,8 +1,7 @@
 """Three catalogs, three pricing shapes, one provider.
 
-OpenRouter publishes its chat, image and video models at three different
-paths and prices them three different ways, so one fetcher covers the
-provider:
+OpenRouter publishes its chat, image and video models at three
+different paths and prices them three different ways:
 
   /models           pricing inline on the row, quoted per TOKEN as a
                     decimal string, with `overrides` for a long-context
@@ -14,19 +13,18 @@ provider:
                     the resolution tier and whose values are
                     cent-strings
 
-Only the chat catalog's pricing is translated here.  Image pricing
-costs one request per model and a sync would then be O(models) for one
+Only the chat catalog's pricing is translated.  Image pricing costs
+one request per model and a sync would then be O(models) for one
 provider; video pricing names a resolution the video adaptor does not
 yet report in usage, so a tiered rule would match nothing and a flat
 rule would be wrong for the tiers.  Both are named in a comment and
 left out, which is a smaller lie than a price that does not match what
 was bought.
 
-The image and video catalogs are listed under `openrouter-image` and
-`openrouter-video`, which are abstract entries that chain to an
-api_type dic does not yet have for OpenRouter's shape.  The entries
-therefore name a model a future adaptor can call and not one dic can
-call today.
+The three paths and the two extra protocols live in the recipe, so the
+fetcher is the loop and nothing per-catalog: a recipe that names a
+fourth path, or renames one, or says that the third does have pricing
+after all, is a change to the config file and not to this module.
 """
 from dic_sync import http, units
 from dic_sync.ids import chain
@@ -37,6 +35,36 @@ from dic_sync.ids import chain
 # constant here is the one.  A models.json that changes it changes it
 # for every entry this fetcher writes, and dic reads whatever is there.
 CACHE_WRITE_TTL = "5m"
+
+
+# The routing keys a recipe catalog carries: everything else is a fact
+# about the models it names -- api_type, output, and any future config
+# key dic learns -- and is merged into their entries verbatim.
+ROUTING = ("path", "prefix", "pricing")
+
+
+def catalog_entry(slug, spec):
+    """One model's config entry from its catalog spec: name and facts.
+
+    Everything the spec says besides the routing keys is a fact about
+    the models the spec listed, so it lands in each of them: a rule
+    naming /images/models with an api_type of openai-images is how a
+    model that arrived under the provider's own id inherits the
+    protocol the catalog speaks and not the chat one.
+
+    >>> catalog_entry("google/gemini-3", {"path": "/models",
+    ...                                   "pricing": "chat"})
+    {'model_name': 'google/gemini-3'}
+    >>> catalog_entry("openai/gpt-image-2", {"path": "/images/models",
+    ...                                      "api_type": "openai-images",
+    ...                                      "output": "image/png"})
+    {'model_name': 'openai/gpt-image-2', 'api_type': 'openai-images', 'output': 'image/png'}
+    """
+    entry = {"model_name": slug}
+    for key, value in spec.items():
+        if key not in ROUTING:
+            entry[key] = value
+    return entry
 
 
 def chat_pricing(model):
@@ -86,56 +114,32 @@ def chat_pricing(model):
     return out
 
 
-def _catalog(base, path, headers):
-    """Every model dict one OpenRouter listing returns, from its data array."""
-    return http.get(base + path, headers).get("data") or []
-
-
-def chat(base, headers, provider):
-    """The chat catalog, its pricing translated into dic's own rules."""
-    out = {}
-    for model in _catalog(base, "/models", headers):
-        slug = model["id"]
-        config = {"model_name": slug}
-        price = chat_pricing(model)
-        if price:
-            config["price"] = price
-        out[chain(provider, slug)] = config
-    return out
-
-
-def images(base, headers, provider):
-    """The image catalog, listed but not priced (see the module docstring).
-
-    The prefix is the provider's own with `-image` after it, which is
-    the name the abstract entry `openrouter-image` lives under; a model
-    that chains to it inherits the image api_type and the catalog's
-    own base without a second piece of config saying so.
-    """
-    out = {}
-    for model in _catalog(base, "/images/models", headers):
-        slug = model["id"]
-        out[chain(provider + "-image", slug)] = {"model_name": slug}
-    return out
-
-
-def videos(base, headers, provider):
-    """The video catalog, listed but not priced (see the module docstring)."""
-    out = {}
-    for model in _catalog(base, "/videos/models", headers):
-        slug = model["id"]
-        out[chain(provider + "-video", slug)] = {"model_name": slug}
-    return out
-
-
 def fetch(provider, entry, key, env, progress=None):  # noqa: ARG001
-    """The three catalogs of one OpenRouter account, as config entries."""
+    """The catalogs one OpenRouter account serves, as config entries.
+
+    The recipe names the paths and their pricing shapes; the fetcher is
+    the loop that visits them and nothing per-catalog, so a fourth
+    catalog, or one whose prices dic learns to translate, is a change
+    to the config file.
+    """
     base = entry["api_base"].rstrip("/")
+    recipe = entry["sync"]
     headers = http.auth(entry, key)
+    catalogs = recipe.get("catalogs") or [{"path": "/models",
+                                           "pricing": "chat"}]
     out = {}
-    for name, fn in (("chat", chat), ("images", images), ("videos", videos)):
+    for catalog in catalogs:
+        path = catalog["path"]
+        prefix = catalog.get("prefix") or provider
         before = len(out)
-        out.update(fn(base, headers, provider))
+        for model in http.get(base + path, headers).get("data") or []:
+            slug = model["id"]
+            config = catalog_entry(slug, catalog)
+            if catalog.get("pricing") == "chat":
+                price = chat_pricing(model)
+                if price:
+                    config["price"] = price
+            out[chain(prefix, slug)] = config
         if progress is not None:
-            progress(name, len(out) - before)
+            progress(path.strip("/"), len(out) - before)
     return out

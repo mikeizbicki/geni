@@ -107,7 +107,7 @@
 #   check and the --net-method filter.
 # - --net-log is accepted and will be handed to the addon once the
 #   addon exists; no format has been chosen.
-# - IPv6 is disabled in the netns and not provided for.
+# - IPv6 is absent from the netns and not provided for.
 # - The uid the payload lands at under the bwrap nesting is the piece
 #   most likely to need adjustment; see THE UID EXEMPTION.
 
@@ -148,7 +148,7 @@ netsandbox-egress-helper() {
 
 netsandbox-validate() {
     local missing=() need h
-    for need in unshare bash awk grep openssl sysctl ip; do
+    for need in unshare bash awk grep openssl ip; do
         command -v "$need" >/dev/null 2>&1 || missing+=("$need")
     done
     for need in nft dnsmasq bwrap; do
@@ -364,7 +364,6 @@ netsandbox-write-inner() {
 set -e
 
 ip link set lo up
-sysctl -qw net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
 
 # --- egress ---
 # The one route off the netns.  --disable-host-loopback keeps the

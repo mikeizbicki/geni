@@ -422,8 +422,8 @@ ADDON
 
 # ------------------------------------------------------------------- inner
 
-# The script run inside `unshare -rmn`: loopback up, IPv6 off, pasta
-# as the only route off, nft, then bwrap #1.
+# The script pasta runs in the netns it creates: loopback up, nft,
+# then bwrap #1.  Egress is already in place when this runs.
 netsandbox-write-inner() {
     cat > "$1" <<INNER
 set -e
@@ -435,7 +435,6 @@ ip link set lo up
 # is nothing here to start, and no helper to look for: pasta that
 # was told to run inside a netns it did not create falls into local
 # mode, which is where the uid_map write failed.
-done
 
 # --- nft ---
 # Policy drop on the output hook, and four rules that say what may
@@ -552,7 +551,7 @@ netsandbox-run() {
     NETSANDBOX_NFT="$NETSANDBOX_NFT" \
     NETSANDBOX_DNSMASQ="$NETSANDBOX_DNSMASQ" \
     NETSANDBOX_MITM="$NETSANDBOX_MITM" \
-    "$helper" --config-net --no-map-gw \
+    "$helper" -4 --config-net --no-map-gw \
         -t none -u none -T none -U none \
         -- bash "$dir/inner.sh" -- "$@"
     return $?

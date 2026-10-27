@@ -268,26 +268,56 @@ def finish(acc):
     return acc.get("result")
 
 
+def model_params_url(model):
+    """The one GET that answers this model's params, before it is made.
+
+    A caller that wants to name the request -- for a -v line, or for
+    the host a pv clock is waiting on -- asks here rather than building
+    the same URL a second way and drifting from it.
+
+    >>> model_params_url({"model_name": "fal-ai/nano-banana"})
+    'https://api.fal.ai/v1/models?endpoint_id=fal-ai/nano-banana&expand=openapi-3.0'
+    """
+    base = ((model.get("sync") or {}).get("catalog_base")
+            or "https://api.fal.ai/v1").rstrip("/")
+    return (f"{base}/models?endpoint_id={model['model_name']}"
+            "&expand=openapi-3.0")
+
+
 def model_params(model, key, env):  # noqa: ARG001
     """Fetch this fal endpoint's OpenAPI schema and extract its inputs.
 
     One GET on the catalog API, filtered to one endpoint, with
     ``expand=openapi-3.0``.  The document fal returns has the
     endpoint's full request schema; extract_params turns it into dic's
-    own shape.  Called by --help when its answer is not cached; every
-    failure is a DicError so the caller can decide what the page says.
+    own shape.  Called by --help when its answer is not cached.
+
+    A response that names no endpoint, a document that carries an error
+    object rather than a specification, and a specification with no
+    input properties are each a DicError naming what was seen.  The
+    previous version returned an empty table for all three, so a --help
+    that printed no params could not tell a model with none from a
+    request that had failed.
     """
-    base = ((model.get("sync") or {}).get("catalog_base")
-            or "https://api.fal.ai/v1").rstrip("/")
-    url = (f"{base}/models?endpoint_id={model['model_name']}"
-           "&expand=openapi-3.0")
-    request = urllib.request.Request(  # noqa: S310
-        url, headers={**auth(key), "accept": "application/json"})
-    body = fetch(request)
+    body = fetch(urllib.request.Request(  # noqa: S310
+        model_params_url(model),
+        headers={**auth(key), "accept": "application/json"}))
     models = body.get("models") or []
     if not models:
         raise DicError(f"fal: no entry for {model['model_name']}")
-    return extract_params(models[0].get("openapi") or {})
+    doc = models[0].get("openapi")
+    if not doc:
+        raise DicError(f"fal: {model['model_name']}: no openapi field"
+                       " in the catalog response")
+    if "paths" not in doc:
+        # fal says the field may be an error object rather than a
+        # specification, and a document without paths is not one
+        raise DicError(f"fal: {model['model_name']}: {doc.get('error') or doc}")
+    params = extract_params(doc)
+    if not params:
+        raise DicError(f"fal: {model['model_name']}: the openapi document"
+                       " names no input properties")
+    return params
 
 
 def extract_params(openapi):

@@ -1007,10 +1007,16 @@ protocol.  A model's own properties -- fal's `num_images`, `aspect_ratio`
 for one endpoint and something else for the next -- come from the
 adaptor's `model_params` if it declares one, which is asked for on the
 first `--help` and cached in `$XDG_STATE_HOME/geni/details.db` under the
-resolved `model_id`.  The cache is disposable and single-versioned,
-exactly like `dic.db`: a file written by another build is deleted and
-rebuilt, not migrated.  This is the one place a readout may touch the
-network, and only once per model per machine.
+resolved `model_id`.  `--refresh-options` forces the fetch and
+rewrites the cache, and `-v` names each request as it is made.  A
+fetch that outlives the progress meter's own delay paints one line on
+stderr -- the same clock a slow `ttft` paints -- so a request that
+hangs is a number moving and not a program gone quiet, and a fetch
+that returns no schema says so rather than printing nothing.  The
+cache is disposable and single-versioned, exactly like `dic.db`: a
+file written by another build is deleted and rebuilt, not migrated.
+This is the one place a readout may touch the network, and only once
+per model per machine unless `--refresh-options` says otherwise.
 
 The fully resolved id is what is stored in the `model_id` column,
 so a conversation still says which entry produced each turn after the files are edited.

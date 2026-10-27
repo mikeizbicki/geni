@@ -21,7 +21,7 @@ stdin, and turn a DicError or a ^C into an exit status.
 import time                     # first, so that T0 measures dic's own startup
 T0 = time.time_ns()             # cost -- imports, config, db -- as well as the API's
 
-import os, sys
+import contextlib, os, sys
 
 
 def init_line():
@@ -64,6 +64,35 @@ def flag_value(argv, names):
             if a.startswith(name + "="):
                 return a[len(name) + 1:]
     return None
+
+
+def verbosity_of(argv):
+    """How many -v the run asked for, before argparse has counted them.
+
+    A readout that answers before argparse -- model_help -- still wants
+    to know how much to say, and argparse's own count is not available
+    until it has run.  The two spellings it accepts are read here: -v
+    repeated, and -vvv glued.  -q wins over all of them, the same way it
+    does for a call.
+
+    >>> verbosity_of(["-v"])
+    1
+    >>> verbosity_of(["-vvv"])
+    3
+    >>> verbosity_of([])
+    0
+    >>> verbosity_of(["-v", "-q"])
+    0
+    """
+    if any(a in ("-q", "--quiet") for a in argv):
+        return 0
+    count = 0
+    for a in argv:
+        if a == "--verbose":
+            count += 1
+        elif a.startswith("-") and not a.startswith("--"):
+            count += a.count("v")
+    return count
 
 
 def rate_line(rule):
@@ -136,7 +165,7 @@ def params_text(table):
     return "\n".join(lines)
 
 
-def params_for(model, env):
+def params_for(model, env, *, refresh=False, verbose=0, progress=None):
     """The params a model can be asked with: its protocol's, and its own.
 
     Two sources.  The wire protocol supplies its options from the adaptor
@@ -146,7 +175,11 @@ def params_for(model, env):
     its adaptor knows how to ask for them; they are fetched lazily on
     the first ``--help`` and cached in a sidecar sqlite under the
     resolved ``model_id``, so the network is touched once per model per
-    machine.
+    machine unless ``refresh`` says otherwise.
+
+    ``progress`` is a ``dic.tty.Line`` the fetch paints while it runs,
+    so a request that hangs is a clock and not a silent wait; a request
+    that beats the meter's own delay paints nothing at all.
 
     Returns (table, note).  ``table`` is the merged params, a model's
     own entry winning over the protocol's of the same name.  ``note`` is
@@ -154,9 +187,11 @@ def params_for(model, env):
     the key was not exported, or the fetch failed.  Both are empty
     together when there is nothing to say and no way to say more.
     """
+    import urllib.parse
+
     from dic import params as cache
     from dic.client import load_adaptor
-    from dic.tty import DicError
+    from dic.tty import DicError, report
 
     api_type = model.get("api_type") or "openai-chat"
     try:
@@ -168,18 +203,39 @@ def params_for(model, env):
     if not hasattr(adaptor, "model_params"):
         return dict(protocol), None
 
+    if not refresh:
+        cached = cache.cached(env, model["model_id"])
+        if cached is not None:
+            report(verbose, 1,
+                   f"params: cached for {model['model_id']}", env=env)
+            return {**protocol, **cached}, None
+
     key_name = model.get("api_key_name")
     key = env.get(key_name) if key_name else None
     if not key:
         return dict(protocol), (f"{key_name} is not set; export it"
                                 " to see model params")
+
+    url = (getattr(adaptor, "model_params_url", lambda _: None))(model)
+    host = urllib.parse.urlparse(url).hostname if url else ""
+    row = None
+    if progress is not None:
+        row = progress.row("params")
+        row.begin("params", host or "")
+    report(verbose, 1, f"params: GET {url or model['model_id']}", env=env)
     try:
-        facts = cache.cached(env, model["model_id"])
-        if facts is None:
-            facts = adaptor.model_params(model, key, env)
-            cache.store(env, model["model_id"], facts)
+        facts = adaptor.model_params(model, key, env)
     except DicError as e:
+        if row is not None:
+            row.arrived()
         return dict(protocol), f"unavailable: {e}"
+    if row is not None:
+        row.arrived()
+    report(verbose, 1, f"params: {len(facts)} param(s)", env=env)
+    # a cache write is not the answer: a read-only state directory or a
+    # lock held elsewhere must not stop a page that already has its data
+    with contextlib.suppress(Exception):
+        cache.store(env, model["model_id"], facts)
     return {**protocol, **facts}, None
 
 
@@ -206,12 +262,16 @@ def model_help(argv, env):
 
     from dic import config
     from dic.store import db
+    from dic.tty import Line
 
     if not any(a in ("-h", "--help") for a in argv):
         return False
     name = flag_value(argv, ("-m", "--model"))
     if name is None:
         return False
+
+    verbose = verbosity_of(argv)
+    refresh = "--refresh-options" in argv
 
     conn = db(env)
     config.sync(conn, env, flag_value(argv, ("--models-file",))
@@ -245,7 +305,13 @@ def model_help(argv, env):
         width = max(len(rule) for rule in price)
         for rule in sorted(price):
             print(f"  {rule:<{width}}  {rate_line(price[rule])}")
-    table, note = params_for(model, env)
+    sys.stdout.flush()
+    progress = Line(err=sys.stderr, env=env)
+    try:
+        table, note = params_for(model, env, refresh=refresh,
+                                 verbose=verbose, progress=progress)
+    finally:
+        progress.close()
     if table:
         print(params_text(table))
     elif note:

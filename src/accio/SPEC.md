@@ -231,6 +231,59 @@ reads as a filename and `@@a/b/c.py::parse` names no file; a file the
 extract split into chunks is named once per chunk, which `dic`'s
 content-hash dedup collapses to one hoist.
 
+### The mention grammar
+
+The `@@` is not markup: it is the mention primitive, and `dic` is the
+program that reads it.  A mention is a sigil and a key that runs to its
+terminator, and the terminator is what tells one kind from the other.
+
+`@@` names a file.  The sigil sits at the start of the string or after
+a whitespace character, and the path runs to the next whitespace, so it
+is written mid-sentence and the sentence is not interrupted: `see
+@@a.py.` mentions `a.py.` and not `a.py`.  A `@@` with no path, or one
+followed by whitespace, is a literal `@@`.
+
+`%%` runs a command.  The sigil sits at column 0 -- the start of the
+string or the first character after a newline -- and the command runs
+to the end of its line, with the leading whitespace stripped.  Column 0
+is the whole of the reason a `%%` in running prose is a percent sign
+and not a command.  An empty `%%` is an error rather than a literal,
+because a caller who wrote one meant to write a command.
+
+Neither is rescanned: an `@@` or `%%` inside a path or a command is
+literal text, and a header built from one is never scanned again.  The
+escapes are `\@@` and `\%%`, consumed before the prompt is sent, so a
+literal sigil reaches the model and the backslash does not.
+
+A command is a word list and not a shell line.  `%%` runs its
+remainder as an argv under the sandbox dic ships -- the same sandbox a
+`--mcp` server runs under, and the one `dic` itself is wrapped in when
+an untrusted program is inside it -- and the split is dic's and not the
+shell's.  A `|` is a word, a `$(...)` is a word, and a word that is
+nothing but metacharacters is refused by name, because a program named
+`|` is a failure that does not say so.  The leading `--flag` and
+`NAME=VALUE` words are the sandbox's own and widen the jail for that one
+child: `%%--share-net curl example.com` fetches and `%%curl
+example.com` does not, and `%%GH_TOKEN=x gh api user` is a command whose
+own credential is the one it reads.  A non-zero exit fails the call
+before the request body is built, because there is no output worth
+sending and a prompt that quietly lost a command is worse.
+
+A command produces the same header block a file does, with the command
+text in the path slot:
+
+    ls -la
+    ---
+    total 4
+    ---
+
+which is what makes a transcript self-describing: the model reads the
+command that answered and not the command's bytes.  Both mentions
+deduplicate across a conversation by identity -- a file's `(path,
+sha256)`, a command's `("cmd", key, sha256)` -- and `dic` records the
+identities a turn hoisted in the row it writes, so a later turn whose
+mention matches one an ancestor carries is neither run nor sent.
+
 `--format prompt` is the self-contained text encoding, the one
 files-to-prompt uses:
 

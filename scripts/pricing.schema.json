@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "models": {
+      "type": "array",
+      "description": "One row per model the page publishes a token price for.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "model_name": {
+            "type": "string",
+            "description": "The model's own name, exactly as the API names it."
+          },
+          "in": {
+            "type": "object",
+            "description": "The input token price.",
+            "properties": {
+              "value": {"type": "number"},
+              "unit": {"const": "usd_per_million_tokens"}
+            },
+            "required": ["value", "unit"],
+            "additionalProperties": false
+          },
+          "out": {
+            "type": "object",
+            "description": "The output token price.",
+            "properties": {
+              "value": {"type": "number"},
+              "unit": {"const": "usd_per_million_tokens"}
+            },
+            "required": ["value", "unit"],
+            "additionalProperties": false
+          },
+          "quote_in": {
+            "type": "string",
+            "description": "The exact text the input price was read from."
+          },
+          "quote_out": {
+            "type": "string",
+            "description": "The exact text the output price was read from."
+          }
+        },
+        "required": ["model_name", "in", "out", "quote_in", "quote_out"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["models"],
+  "additionalProperties": false
+}

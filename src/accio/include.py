@@ -1,4 +1,4 @@
-"""Include directives for dic prompts.
+r"""Include directives for dic prompts.
 
 A prompt may name files with @@path. dic hoists each named file into a
 header block at the head of the request and leaves the prose alone. This

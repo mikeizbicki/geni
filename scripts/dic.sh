@@ -456,6 +456,22 @@ _dic_complete_mid() {
   fi
 }
 
+# Complete @@ with a path and %% with a command name.  Both are the dic
+# mentions the RETURN widget is written for, so the words worth completing
+# are the words worth mentioning: @@ against the filesystem, %% against
+# the commands on PATH.  The leading sigil is put back on every candidate,
+# so the completer never eats the two characters that make it a mention
+# and the caller can keep typing the rest of the line around it.
+_dic_complete_mention() {
+  local sigil=${1:0:2} rest=${1:2}
+  case $sigil in
+    @@)  mapfile -t COMPREPLY < <(compgen -f -- "$rest") ;;
+    %%)  mapfile -t COMPREPLY < <(compgen -c -- "$rest") ;;
+    *)   return ;;
+  esac
+  COMPREPLY=( "${COMPREPLY[@]/#/$sigil}" )
+}
+
 _dic_complete() {
   local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD-1]}
 
@@ -481,6 +497,16 @@ _dic_complete() {
       _dic_complete_mid "" "$cur"
       return ;;
   esac
+
+  # A mention is a word of the prompt, so it is completed wherever the
+  # sigil sits, before the dic flags below are tried: @@ names a file and
+  # %% names a command, and neither is a --flag with an option's own
+  # value.  A cur that is not a mention falls through and completes as
+  # before.
+  if [[ $cur == @@* || $cur == %%* ]]; then
+    _dic_complete_mention "$cur"
+    return
+  fi
 
   if [[ $cur == -* ]]; then
     COMPREPLY=( $(compgen -W "call log stats models cost show bps \
@@ -511,54 +537,53 @@ _dic_pick() {
 bind -x '"\C-x\C-m":_dic_pick'
 
 # --- prompt-expansion widget --------------------------------------------
-# This widget introduces a new syntax $$(...) for command substitution.
-# When this widget encounters
+# A %%cmd at column 0 is a dic mention, and dic is what runs the command:
+# under its own sandbox, with the leading --flags of the mention as the
+# sandbox's own, and the stdout goes into a header block at the head of
+# the request.  The shell never substitutes it, so a quoted heredoc works
+# as well as an unquoted one, and the metacharacters the old $$(...)
+# syntax needed a widget for are never rewritten.
 #
-#     $$(...)
+# What the widget adds is the transcript's provenance line.  When this
+# widget encounters
+#
+#     %%files-to-prompt src/
 #
 # the line above will be replaced with
 #
-#     $ ...
-#     $(...)
-#
-# This syntax is useful for constructing complex prompts using heredocs.
-# For example:
-#
-#     dic <<EOF
-#     $$(files-to-prompt src/)
-#     $$(git diff HEAD~2)
-#     $$(pytest)
-#
-#     Why did the previous commits cause these tests to fail?
-#     EOF
-#
-# gets expanded to
-#
-#     dic <<EOF
 #     $ files-to-prompt src/
-#     $(files-to-prompt src/)
-#     $ git diff HEAD~2
-#     $(git diff HEAD~2)
-#     $ pytest
-#     $(pytest)
+#     %%files-to-prompt src/
 #
-#     Why did the previous commits cause these tests to fail?
-#     EOF
+# and an @@path mention is given the same treatment:
 #
-# The widget expansion happens immediately when the user presses enter.
-# The $(...) is not run immediately and will be expanded by the shell like normal.
+#     @@src/dic.py
+#
+# becomes
+#
+#     $ cat src/dic.py
+#     @@src/dic.py
+#
+# so a heredoc that mentions both files and commands reads as the session
+# that produced it.
 #
 # NOTE:
 # This widget expansion happens at the readline level.
 # It will therefore expand *everywhere* in bash, and not just in heredocs.
 # For example, it will expand in the standard repl and quoted heredocs <<'EOF'.
-# This is unlikely to cause errors because $$(...) is never valid shell.
+# This is unlikely to cause errors because neither %% at column 0 nor @@
+# at column 0 is valid shell on its own.
 # The widget will never expand in non-interactive sessions.
 
 _dic_expand() {
-  [[ $READLINE_LINE =~ ^\$\$\((.*)\)$ ]] || return
-  local cmd=${BASH_REMATCH[1]}
-  READLINE_LINE=$'$ '"$cmd"$'\n$('"$cmd"$')'
+  local line=$READLINE_LINE head
+  if [[ $line =~ ^%%(.*)$ ]]; then
+    head=$'$ '"${BASH_REMATCH[1]}"
+  elif [[ $line =~ ^@@(.*)$ ]]; then
+    head=$'$ cat '"${BASH_REMATCH[1]}"
+  else
+    return
+  fi
+  READLINE_LINE=$head$'\n'"$line"
   READLINE_POINT=${#READLINE_LINE}
 }
 bind -x '"\C-x\C-r":_dic_expand'

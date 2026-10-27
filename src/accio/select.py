@@ -138,6 +138,31 @@ def select(chunks):
     return chunks
 
 
+def unique(chunks):
+    """Drop a chunk this run has already yielded, keyed by (path, chunk_id).
+
+    The walk dedupes the paths it was given and every extractor returns a
+    tree, so this is the invariant stated once: whatever reaches the
+    prompt names each file once.  The key is the pair and not either
+    half -- a content hash alone merges two files that happen to hold the
+    same bytes, and a path alone drops the chunks of a file the caller
+    asked to see into.
+
+    >>> from accio.extract import lines, python
+    >>> [c.breadcrumb for c in unique(list(lines("a.py", "x")) * 2)]
+    ['a.py']
+    >>> [c.breadcrumb for c in unique(python("a.py", "def f():\\n    pass\\n"))]
+    ['a.py', 'a.py::f']
+    """
+    seen = set()
+    for chunk in chunks:
+        key = (chunk.path, chunk.chunk_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield chunk
+
+
 def rewrite(query, model=None, times=1):
     """Ask dic for a second phrasing of the query.  Paid.
 
@@ -159,7 +184,8 @@ def rewrite(query, model=None, times=1):
 
 
 def rag(query, paths, readmes, patterns, gitignore, index_dir=None,
-        force=False, embed_model=None, expand=0, expand_model=None):
+        force=False, embed_model=None, expand=0, expand_model=None,
+        extractor=None):
     """Rank the chunks of the given paths by BM25 relevance to query.
 
     The index is opened and refreshed from the same walk that plain
@@ -185,7 +211,8 @@ def rag(query, paths, readmes, patterns, gitignore, index_dir=None,
     the output byte-identical between two runs over the same tree.
     """
     conn = index.open_(paths, index_dir)
-    index.refresh(conn, paths, readmes, patterns, gitignore, force=force)
+    index.refresh(conn, paths, readmes, patterns, gitignore, force=force,
+                  extractor=extractor)
     if expand:
         query = rewrite(query, model=expand_model, times=expand)
     if embed_model is None:

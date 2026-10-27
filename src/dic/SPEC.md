@@ -2,6 +2,14 @@
 
 `dic` is a minimalist CLI tool for working with chat LLMs models.
 
+`DIC_MENTIONS=off` turns the `@@` and `%%` mention grammar off, in dic
+and in `accio` together, because it is one feature: accio's
+`--format at-paths` writes what dic's scanner reads, and two
+variables could disagree into `@@path` lines that dic then treats as
+prose. Off means no file is hoisted, no `%%` runs, `\@@` and `\%%`
+reach the model as themselves, and accio's default format becomes
+`prompt`. An explicit `--format at-paths` is still honoured.
+
 "Dic" is Latin for the command "speak".
 The idea is that working with AIs is like working with demons and magic,
 and Latin is the traditional language for controlling demons and casting spells.
@@ -94,6 +102,51 @@ the order given.  An option `dic` does not know is an error and not a prompt
 word: a wrapper that has instructions of its own passes them with
 `--prepend-prompt`, so every part of the prompt is named and a misspelled
 flag is never sent silently to a model as prose.
+
+### Mentions
+
+A prompt may name what it is talking about.  `@@` names a file and `%%`
+names a command, and both are *mentions*: dic hoists the named thing
+into a header block at the head of the request and leaves the prose
+alone, so the name is a citation a human reads and the contents are
+what the model gets.
+
+    dic 'compare @@a.py with @@b.py'
+    dic <<'EOF'
+    %%git diff HEAD~2
+
+    why did this commit break the tests?
+    EOF
+
+The grammar is accio's, which owns the scanner.  `@@` runs from the
+start of the string or after a whitespace character to the next
+whitespace; `%%` runs from column 0 to the end of its line; neither is
+rescanned, so an `@@` inside a path is a path and a header is never a
+second mention; and the escapes are `\@@` and `\%%`, consumed before
+the prompt is sent.
+
+A `%%` command is an argv under the sandbox dic ships -- the same
+sandbox a `--mcp` server runs under -- and never a shell line: a `|` is
+a word and a `$(...)` is a word.  The leading `--flag` and `NAME=VALUE`
+words are the sandbox's own and widen it for that one command, so
+`%%--share-net curl example.com` fetches and `%%curl example.com` does
+not.  A non-zero exit fails the call before any request body is built.
+
+The header block is the encoding `@@` uses, with the command text in
+the path slot:
+
+    ls -la
+    ---
+    total 4
+    ---
+
+so a transcript reads as the session that produced it.  The row records
+what a turn hoisted in its `includes` column -- a command as
+`{"origin": "cmd", "key", "hash", "kind": "text"}`, a file as
+`{"path", "hash", "kind"}` -- and a later turn whose mention identity
+matches one an ancestor carries contributes neither a block nor an
+entry.  `dic log --format %B` lists them, and `dic show` prints them
+under `Blocks:`.
 
 Two environment variables supply defaults for the two flags a user tends to want
 set the same way every time:
@@ -667,6 +720,7 @@ therefore not pickable.
 | `%a` | how long ago, as `5m ago` |
 | `%m` `%u` `%S` | the model, the upstream a router chose, the session |
 | `%c` `%t` | the dollars the call was billed, and its token count |
+| `%B` | the blocks the turn hoisted: a file's path, a command's text |
 | `%D` | the decorations, which `--decorate` turns on |
 | `%n` `%xNN` `%%` | a newline, one byte named by its hex, a literal percent |
 

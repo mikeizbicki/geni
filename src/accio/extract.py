@@ -8,10 +8,10 @@ and a selection can name a piece of a file and not only the whole of it.
 An extractor is a function `(path, text) -> [Chunk]` returning the tree
 as a flat list in tree order: the root first, then each child by `ord`.
 There is no registry; importing is the registration.  The default is
-chosen by extension -- `.py` gets the Python tree, everything else the
-universal fallback `lines`, which makes a file one chunk and nothing
-else -- a format with no extractor of its own is still a tree, just a
-tree with only a root.
+`lines`, which makes a file one chunk and that chunk the whole file:
+a prompt names files, and looking *inside* one is what --extractor is
+for.  Whatever the extractor, what comes back is a tree -- a file
+summoned whole is a tree with only a root.
 
 Chunk identity is a content hash of what the chunk says:
 
@@ -217,17 +217,52 @@ def python(path, text):
     return out
 
 
-# What a path chooses for itself: `.py` gets the Python tree, everything
-# else the universal fallback, which is always a tree, just a root and
-# no children.
-def by_extension(path, text):
-    """The extractor an extension chooses, or `lines` for a stranger.
+# The extractors that ship, by the short name --extractor takes.  The
+# default is `lines`: a file is one chunk and that chunk is the whole
+# file, because accio renders a prompt and a prompt names files.  The
+# Python tree is the first one that looks inside, and it is opt-in.
+CHAINS = {"lines": lines, "python": python}
 
-    >>> [c.kind for c in by_extension("a.py", "x = 1\\n")]
-    ['file']
-    >>> [c.kind for c in by_extension("a.txt", "hello\\n")]
-    ['file']
+
+def chain(name):
+    """The extractor a --extractor value names.
+
+    >>> chain("lines") is lines, chain("python") is python
+    (True, True)
+    >>> chain("accio.extract:python") is python
+    True
     """
-    if path.endswith(".py") or path.endswith(".pyi"):
-        return python(path, text)
-    return lines(path, text)
+    if name in CHAINS:
+        return CHAINS[name]
+    import importlib
+
+    from dic.tty import DicError    # lazy: a walk pays nothing for it
+    module_name, sep, attribute = name.partition(":")
+    if not sep or not module_name or not attribute:
+        raise DicError(f"--extractor {name}: expected NAME or MODULE:FN")
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as e:
+        raise DicError(f"--extractor {name}: cannot import"
+                       f" {module_name}: {e}") from None
+    fn = getattr(module, attribute, None)
+    if fn is None:
+        raise DicError(f"--extractor {name}: {module_name}"
+                       f" has no {attribute}")
+    return fn
+
+
+def extract(path, text, chosen=None):
+    """The chunks of one file, by the extractor the caller chose.
+
+    The default is `lines`, so a file is one chunk and that chunk is the
+    whole file.  Every consumer -- the walk as much as the retriever --
+    goes through here, so the granularity is one argument and not two
+    code paths that can disagree about what a file is.
+
+    >>> [c.kind for c in extract("a.py", "x = 1\\n")]
+    ['file']
+    >>> [c.kind for c in extract("a.py", "def f():\\n    pass\\n", python)]
+    ['file', 'def']
+    """
+    return (chosen or lines)(path, text)

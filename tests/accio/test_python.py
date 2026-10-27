@@ -1,7 +1,6 @@
 """The Python extractor and the body elision it exists for."""
-from accio.extract import by_extension, python
+from accio.extract import extract, python
 from accio.render import elide
-
 
 SRC = (
     '"""Module."""\n'
@@ -75,10 +74,10 @@ def test_python_syntax_error_falls_back_to_lines():
     assert chunks[0].kind == "file"
 
 
-def test_by_extension_routes_py_and_the_rest():
-    a = by_extension("a.py", "def f():\n    pass\n")
+def test_extract_defaults_to_lines_and_python_is_opt_in():
+    a = extract("a.py", "def f():\n    pass\n", python)
     assert [c.kind for c in a] == ["file", "def"]
-    b = by_extension("a.txt", "hello\n")
+    b = extract("a.txt", "hello\n")
     assert [c.kind for c in b] == ["file"]
 
 

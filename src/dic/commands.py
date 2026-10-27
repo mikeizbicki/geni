@@ -472,11 +472,31 @@ def decorations(row, head, here):
     return f" ({', '.join(names)})" if names else ""
 
 
+def block_names(includes):
+    """The keys of one row's included blocks: a file's path, a command's text.
+
+    A file names itself with its path and a command names itself with the
+    command text it was run from, which is the same key its header block is
+    headed with, so a turn whose %% ran `ls` says `ls` and never the bytes.
+
+    >>> block_names('[{"path": "a.py", "hash": "h"}]')
+    ['a.py']
+    >>> block_names('[{"origin": "cmd", "key": "ls", "hash": "h"},'
+    ...             ' {"path": "b.py", "hash": "h"}]')
+    ['ls', 'b.py']
+    >>> block_names(None)
+    []
+    """
+    return [e.get("key") if e.get("origin") == "cmd" else e.get("path")
+            for e in json.loads(includes or "[]")]
+
+
 # One function per %-specifier.  The letters are git's where git has one --
 # %H the full mid and %h its prefix, %s the subject and %b the body -- and
 # dic's where it does not: %m the model, %u the upstream a router chose, %S
-# the session, %c the cost, %t the tokens.  %D is the decorations.  A
-# specifier dic does not know is an error and never a literal, because a
+# the session, %c the cost, %t the tokens, %B the blocks.  %D is the
+# decorations.  A specifier dic does not know is an error and never a
+# literal, because a
 # format string with a typo in it must not read as a quiet log: the reader
 # would be reading the wrong day's work and would never see that they were.
 SPECIFIERS = {
@@ -490,6 +510,7 @@ SPECIFIERS = {
     "S": lambda row, _: row["session"] or "",
     "c": lambda row, _: "" if row["cost"] is None else f"${row['cost']:.4f}",
     "t": lambda row, _: str(row["tokens"] or 0),
+    "B": lambda row, _: ", ".join(block_names(row["includes"])),
     "D": lambda row, ctx: (paint(decorations(row, ctx["head"], ctx["here"]),
                                  REF, ctx)
                            if ctx["decorate"] else ""),
@@ -506,18 +527,21 @@ def expand(fmt, row, ctx):
 
     >>> row = {"mid": "0123456789abc", "user": "hi\\nthere", "response": "r",
     ...        "t_start": 0, "model_id": "m", "tokens": 7,
-    ...        "session": "global", "upstream": None, "cost": 0.5}
+    ...        "session": "global", "upstream": None, "cost": 0.5,
+    ...        "includes": '[{"path": "a.py", "hash": "h"}]'}
     >>> ctx = {"head": None, "here": "global", "decorate": True}
     >>> expand("%h %s", row, ctx)
     '0123456789 hi'
     >>> expand("%m %t %c", row, ctx)
     'm 7 $0.5000'
+    >>> expand("%B", row, ctx)
+    'a.py'
     >>> expand("%%|%n|%x41", row, ctx)
     '%|\\n|A'
     >>> expand("%Z", row, ctx)
     Traceback (most recent call last):
     ...
-    dic.tty.DicError: --format: %Z names no field (try %H %h %s %b %a %m %u %S %c %t %D)
+    dic.tty.DicError: --format: %Z names no field (try %H %h %s %b %a %m %u %S %c %t %B %D)
     """
     out, i = [], 0
     while i < len(fmt):
@@ -539,7 +563,7 @@ def expand(fmt, row, ctx):
             out.append(SPECIFIERS[key](row, ctx))
         else:
             raise DicError(f"--format: %{key} names no field (try"
-                           " %H %h %s %b %a %m %u %S %c %t %D)")
+                           " %H %h %s %b %a %m %u %S %c %t %B %D)")
     return "".join(out)
 
 
@@ -705,7 +729,8 @@ def log(conn, env, *,
                            " full mid, %%h its prefix, %%s the prompt,"
                            " %%b the answer, %%a the age, %%m the model,"
                            " %%u the upstream, %%S the session, %%c the"
-                           " cost, %%t the tokens, %%D the decorations") = None,
+                           " cost, %%t the tokens, %%B the blocks,"
+                           " %%D the decorations") = None,
         decorate: flag(long="--decorate", action="bool", env=False,
                        help="fill %%D with (HEAD) on the message -c would"
                             " resume and (session:NAME) on any other row") = False,
@@ -790,6 +815,9 @@ def show(conn, env, ref=None):
         extra.append(("Mime:", row["mime_type"]))
     if row["system"]:
         extra.append(("System:", prompt_line(row["system"])))
+    blocks = block_names(row["includes"])
+    if blocks:
+        extra.append(("Blocks:", ", ".join(blocks)))
     attached = [a[0] for a in (
         conn.execute("SELECT path FROM attachments WHERE aid = ?", (aid,))
         .fetchone() for aid in json.loads(row["attachments"] or "[]")) if a]

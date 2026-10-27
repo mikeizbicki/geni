@@ -1,10 +1,14 @@
 """Rendering: the selected chunks, in the encoding the caller asked for.
 
-The default is the one format accio has always had: a chunk's breadcrumb,
-a `---` fence, its text and a closing fence, so a reader -- a model, a
-human, `less` -- can see where one chunk stops, and so that the output is
-the encoding files-to-prompt already produces.  `paths`, `objects` and
-`wc` are projections of the same selection, and `FORMATS` is their
+The default is a list of `@@path` mentions, one per selected chunk and
+no contents: `dic` reads `@@` back as a filename and hoists the file
+into a header block at the head of the request, so `accio src/ | dic
+'...'` arrives with the file contents `dic` was given.  `--format
+prompt` is the self-contained text encoding: a chunk's breadcrumb, a
+`---` fence, its text and a closing fence, so a reader -- a model, a
+human, `less` -- can see where one chunk stops, and so that the output
+is the encoding files-to-prompt already produces.  `paths`, `objects`
+and `wc` are projections of the same selection, and `FORMATS` is their
 catalog: the selection decides what, and this module decides only how.
 """
 import json, re
@@ -85,6 +89,44 @@ def paths(chunks, out):
     """
     for chunk in chunks:
         out.write(f"{chunk.breadcrumb}\n")
+
+
+def at_paths(chunks, out):
+    """Write each selected chunk as an @@ mention, and no contents.
+
+    The mention is the chunk's *path*, not its breadcrumb: dic reads
+    `@@a.py` as a filename and hoists that whole file into a header
+    block at the head of the request, and `@@a.py::parse` names no file.
+    A file therefore names its path once however many chunks it made:
+    dic hoists by content hash, so a second `@@a.py` says nothing the
+    first one did not, and what a run prints is a prompt's prefix.
+
+    >>> import io
+    >>> from accio.extract import lines, python
+    >>> stream = io.StringIO()
+    >>> at_paths(lines("a.py", "x = 1\\n"), stream)
+    >>> print(stream.getvalue(), end="")
+    @@a.py
+    >>> stream = io.StringIO()
+    >>> at_paths(lines("a.py", "x = 1\\n") + lines("b.txt", "y"), stream)
+    >>> print(stream.getvalue(), end="")
+    @@a.py
+    @@b.txt
+    >>> stream = io.StringIO()
+    >>> at_paths(python("a.py", "def f():\\n    pass\\n"), stream)
+    >>> print(stream.getvalue(), end="")
+    @@a.py
+    >>> stream = io.StringIO()
+    >>> at_paths([], stream)
+    >>> stream.getvalue()
+    ''
+    """
+    named = set()
+    for chunk in chunks:
+        if chunk.path in named:
+            continue
+        named.add(chunk.path)
+        out.write(f"@@{chunk.path}\n")
 
 
 def objects(chunks, out):
@@ -268,4 +310,5 @@ def budget(chunks, target, unit="bytes", fudge=1/4):
 # What `--format` can name, and the only place the encodings are listed:
 # a new projection is a new function and a key here, and nothing in the
 # CLI changes to make it reachable.
-FORMATS = {"prompt": render, "paths": paths, "json": objects, "wc": wc}
+FORMATS = {"prompt": render, "paths": paths, "json": objects, "wc": wc,
+           "at-paths": at_paths}

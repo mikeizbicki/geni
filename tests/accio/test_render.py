@@ -45,6 +45,8 @@ def _paths_from(fmt):
                 for row in out.splitlines()
                 if row and not row.endswith("total")
                 and not row.startswith("~")}
+    if fmt == "at-paths":
+        return {row[2:] for row in out.splitlines() if row}
     raise AssertionError(fmt)
 
 
@@ -58,6 +60,17 @@ def test_formats_each_render_every_chunk():
     for fmt in FORMATS:
         out = _run(fmt)
         assert out, fmt
+
+
+def test_at_paths_is_a_dic_prompt():
+    # the round trip that makes --format at-paths worth having: the bytes
+    # at_paths writes are the bytes dic.include scans back into a
+    # filename, so a walk piped into dic arrives as declared mentions
+    # and not as prose to be guessed at.
+    from accio.include import scan
+    _clean, spans = scan(_run("at-paths"))
+    assert [key for _start, _end, _origin, key in spans] == \
+        [c.path for c in CHUNKS]
 
 
 def test_json_is_one_object_per_line():

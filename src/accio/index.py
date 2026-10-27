@@ -34,7 +34,7 @@ embedding cost, and a query plan a human can read.
 """
 import array, contextlib, hashlib, json, math, os, sqlite3, subprocess
 
-from accio.extract import Chunk, by_extension
+from accio.extract import Chunk, extract
 from accio.traverse import _readme_ancestor, canvassed, read
 
 
@@ -159,7 +159,8 @@ def open_(paths, index_dir=None):
     return conn
 
 
-def refresh(conn, paths, readmes, patterns, gitignore, force=False):
+def refresh(conn, paths, readmes, patterns, gitignore, force=False,
+            extractor=None):
     """Bring the index up to date with what the walk sees now.  Free.
 
     A file whose (mtime, size) matches the row the index holds is not
@@ -186,7 +187,7 @@ def refresh(conn, paths, readmes, patterns, gitignore, force=False):
         if text is None:
             continue
         drop_file(conn, path)
-        chunks = list(by_extension(path, text))
+        chunks = list(extract(path, text, extractor))
         _stamp_parent(chunks, path, readme_names, readmes)
         for chunk in chunks:
             add_chunk(conn, chunk)

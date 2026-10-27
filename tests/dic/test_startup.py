@@ -52,3 +52,16 @@ def test_init_names_a_dic_sh_that_is_there(dic_run):
     path = line.split()[1].strip("'")
     assert os.path.basename(path) == "dic.sh"
     assert os.path.isfile(path)
+
+
+@pytest.mark.slow
+def test_a_prompt_with_no_at_does_not_import_accio(dic_run, model):
+    """The @@ import is lazy: a prompt with no mention pays nothing.
+
+    -X importtime writes one line per module the process loads, and the
+    line for accio.include is the one this test is about: dic imports it
+    only when a prompt names a file with @@, so a call that does not
+    does not carry one of accio's modules on its ttft path.
+    """
+    result = dic_run("hi", "-m", model, python_flags=["-X", "importtime"])
+    assert b"accio.include" not in result.stderr

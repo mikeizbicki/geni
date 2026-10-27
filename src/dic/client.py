@@ -612,6 +612,58 @@ def curl_command(model, adaptor, body, headers, api_key, api_type):
     return "\n".join(lines) + "\n"
 
 
+def include_identity(entry):
+    """The identity include.collect matches against, from one stored record.
+
+    A file's is (path, sha256), which include.collect normalizes to
+    ("file", path, sha256); a command's is ("cmd", key, sha256), which it
+    takes as-is.  An old row carries no origin and is a file's, which is
+    the shape every @@ path has always written.
+
+    >>> include_identity({"path": "a.py", "hash": "h"})
+    ('a.py', 'h')
+    >>> include_identity({"origin": "cmd", "key": "ls", "hash": "h"})
+    ('cmd', 'ls', 'h')
+    """
+    if entry.get("origin") == "cmd":
+        return (entry["origin"], entry["key"], entry["hash"])
+    return (entry["path"], entry["hash"])
+
+
+def known_includes(rows):
+    """Every identity an ancestor turn already included, from the rows.
+
+    >>> known_includes([{"includes": '[{"path": "a", "hash": "h"}]'}])
+    {('a', 'h')}
+    >>> known_includes([{"includes": None}])
+    set()
+    """
+    return {include_identity(entry) for row in rows
+            for entry in json.loads(row["includes"] or "[]")}
+
+
+def cmd_runner(env):
+    """A run(cmd) for include.collect: argv under the sandbox, stdout kept.
+
+    The command is a word list and never a shell line, so the runner is
+    dic.shell.command plus subprocess and no shell of the caller's.  The
+    child's stdout is the whole of the output, and include.collect owns
+    the refusal of a non-zero exit, so the returncode is passed through.
+    """
+    import subprocess
+    from dic import shell
+
+    def run(cmd):
+        argv = shell.command(cmd)
+        try:
+            proc = subprocess.run(  # noqa: S603
+                argv, capture_output=True, env=dict(env))
+        except FileNotFoundError as e:
+            raise DicError(f"%%: {cmd}: {e}") from None
+        return proc.returncode, proc.stdout
+    return run
+
+
 def dic(prompt,
         # ----- directly affect API call -----
         model:        flag(short="-m", help="which model") = None,
@@ -801,6 +853,25 @@ def dic(prompt,
     rows = history(conn, prev_mid) if prev_mid else []
     if prev_mid and not rows:
         raise DicError(f"no such mid: {prev_mid}")
+
+    # A @@path mention hoists that file and a %%command mention runs its
+    # argv under dic's sandbox and hoists the stdout, each as a header
+    # block at the head of the current user turn, and the prose keeps the
+    # mention.  accio owns the scanner and dic.shell owns the sandbox, so
+    # the import is lazy and pays nothing on a call with no mention.  The
+    # known set is every identity an ancestor row already included -- a
+    # file's (path, sha256), a command's ("cmd", key, sha256) -- so a file
+    # or command an earlier turn hoisted is named in prose and its bytes
+    # are not sent again.
+    # DIC_MENTIONS=off turns the whole feature off: a prompt that names a
+    # file with @@ and a line that names a command with %% are prose and
+    # nothing more, and the escapes are not consumed.
+    include_header, include_adds = "", []
+    if "@@" in prompt or "%%" in prompt:
+        from accio import include
+        prompt, include_header, include_adds = include.collect(
+            prompt, known_includes(rows), cmd_runner(env),
+            mentions=env.get("DIC_MENTIONS") != "off")
 
     # -m > the model this conversation last used > $DIC_MODEL > the default, so
     # -c carries on with the same provider unless the caller names another one
@@ -1014,7 +1085,9 @@ def dic(prompt,
                 else store_attachment(conn, path, name)
                 for name, path in named_files]
     turns.append({"role": "user",
-                  "blocks": [dict(att) for att in attached]
+                  "blocks": ([{"type": "text", "text": include_header}]
+                             if include_header else [])
+                            + [dict(att) for att in attached]
                             + [{"type": "text", "text": prompt}]})
     turns = normalize(turns)
 
@@ -1180,7 +1253,7 @@ def dic(prompt,
     ids = [att["aid"] for att in attached]
 
     def insert(index, prev, response, raw, outputs, results, usage, cost, items,
-               status, error, wire, source):
+               status, error, wire, source, includes=None, header=None):
         """Append one round -- one API call -- to the tree, and return its mid.
 
         A tool loop is several paid requests for one answer, so each is a row
@@ -1197,7 +1270,10 @@ def dic(prompt,
         """
         mid = ulid()
         conn.execute(INSERT, (
-            mid, index, prompt if index == 0 else "", system, response,
+            mid, index, prompt if index == 0 else "",
+            json.dumps(includes) if index == 0 and includes else None,
+            header if index == 0 and header else None,
+            system, response,
             json.dumps(raw), prev, json.dumps(ids if index == 0 else []),
             json.dumps(outputs), json.dumps(results) if results else None,
             model["model_id"], api_type, session, acc.get("upstream"),
@@ -1408,7 +1484,8 @@ def dic(prompt,
                           [{"path": p, "mime_type": mime}
                            for p in sink.paths[seen:]],
                           results, usage, cost, items,
-                          wire["status"], wire.get("error"), wire, source)
+                          wire["status"], wire.get("error"), wire, source,
+                          include_adds, include_header)
             seen = len(sink.paths)
             conn.commit()
             turns.append({"role": "assistant", "blocks": [], "raw": raw})
@@ -1440,7 +1517,8 @@ def dic(prompt,
         # what the line below reads.
         insert(index, prev, "".join(chunks), adaptor.finish(acc),
                [{"path": pending, "mime_type": mime}] if pending else [],
-               results, usage, None, None, -1, "cancelled", wire, source)
+               results, usage, None, None, -1, "cancelled", wire, source,
+               include_adds, include_header)
         conn.commit()
         usage, items = price.merged(rounds)
         report(verbosity, 1,
@@ -1466,7 +1544,7 @@ def dic(prompt,
         insert(index, prev, "".join(chunks), adaptor.finish(acc),
                [{"path": pending, "mime_type": mime}] if pending else [],
                results, usage, None, None, stamps.get("status") or -1, str(e),
-               wire, source)
+               wire, source, include_adds, include_header)
         conn.commit()
         raise
     wire["t_done"] = stamps["t_done"] = time.time_ns()
@@ -1529,7 +1607,8 @@ def dic(prompt,
     billed = wire["status"] == 200
     mid = insert(index, prev, "".join(chunks), raw, outputs, results,
                  usage, cost if billed else None, items if billed else None,
-                 wire["status"], wire.get("error"), wire, source)
+                 wire["status"], wire.get("error"), wire, source,
+                 include_adds, include_header)
     conn.commit()
     conn.close()
     # a failed attempt is recorded for the error rate but the session pointer

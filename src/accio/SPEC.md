@@ -213,7 +213,79 @@ Rewrites, not lenses:
 
 ## Output
 
-One format, and it is text:
+The default is a list of mentions, one per selected chunk, and no
+contents:
+
+    @@a/b/c.py
+
+`dic` scans the `@@` back into a filename and hoists that file into a
+header block at the head of the request, so `accio src/ | dic '...'`
+arrives with the file contents `dic` was given.  Which files are named
+is the walk's decision and where in the request they land is `dic`'s,
+and a file named twice in the stream is hoisted once.  The default is a
+projection of the walk and not the walk's bytes, which keeps the walk
+on the cheap path: `accio` reads no file to name one.
+
+The mention is the chunk's path and not its breadcrumb, because `@@`
+reads as a filename and `@@a/b/c.py::parse` names no file; a file the
+extract split into chunks is named once per chunk, which `dic`'s
+content-hash dedup collapses to one hoist.
+
+### The mention grammar
+
+The `@@` is not markup: it is the mention primitive, and `dic` is the
+program that reads it.  A mention is a sigil and a key that runs to its
+terminator, and the terminator is what tells one kind from the other.
+
+`@@` names a file.  The sigil sits at the start of the string or after
+a whitespace character, and the path runs to the next whitespace, so it
+is written mid-sentence and the sentence is not interrupted: `see
+@@a.py.` mentions `a.py.` and not `a.py`.  A `@@` with no path, or one
+followed by whitespace, is a literal `@@`.
+
+`%%` runs a command.  The sigil sits at column 0 -- the start of the
+string or the first character after a newline -- and the command runs
+to the end of its line, with the leading whitespace stripped.  Column 0
+is the whole of the reason a `%%` in running prose is a percent sign
+and not a command.  An empty `%%` is an error rather than a literal,
+because a caller who wrote one meant to write a command.
+
+Neither is rescanned: an `@@` or `%%` inside a path or a command is
+literal text, and a header built from one is never scanned again.  The
+escapes are `\@@` and `\%%`, consumed before the prompt is sent, so a
+literal sigil reaches the model and the backslash does not.
+
+A command is a word list and not a shell line.  `%%` runs its
+remainder as an argv under the sandbox dic ships -- the same sandbox a
+`--mcp` server runs under, and the one `dic` itself is wrapped in when
+an untrusted program is inside it -- and the split is dic's and not the
+shell's.  A `|` is a word, a `$(...)` is a word, and a word that is
+nothing but metacharacters is refused by name, because a program named
+`|` is a failure that does not say so.  The leading `--flag` and
+`NAME=VALUE` words are the sandbox's own and widen the jail for that one
+child: `%%--share-net curl example.com` fetches and `%%curl
+example.com` does not, and `%%GH_TOKEN=x gh api user` is a command whose
+own credential is the one it reads.  A non-zero exit fails the call
+before the request body is built, because there is no output worth
+sending and a prompt that quietly lost a command is worse.
+
+A command produces the same header block a file does, with the command
+text in the path slot:
+
+    ls -la
+    ---
+    total 4
+    ---
+
+which is what makes a transcript self-describing: the model reads the
+command that answered and not the command's bytes.  Both mentions
+deduplicate across a conversation by identity -- a file's `(path,
+sha256)`, a command's `("cmd", key, sha256)` -- and `dic` records the
+identities a turn hoisted in the row it writes, so a later turn whose
+mention matches one an ancestor carries is neither run nor sent.
+
+`--format prompt` is the self-contained text encoding, the one
+files-to-prompt uses:
 
     a/b/c.py
     ---
@@ -233,12 +305,18 @@ The breadcrumb names what is inside the file and not the whole file, so a citati
 
 There is no escaping and no quoting.  A file whose content contains a line that is itself a path is ambiguous, and the answer is `--format json`, not a longer escape.
 
-`--format paths` prints the paths that would be printed, one per line, and no contents.  `--format json` prints one object per selected node:
+`--format paths` prints the breadcrumb of each selected chunk, one per line, and no contents: it is `at-paths` without the doubled at-sign, and with the name a chunk has inside its file where the extract gives it one.  `--format json` prints one object per selected node:
 
     {"path": "a/b/c.py", "chunk_id": "...", "breadcrumb": "a/b/c.py::parse",
      "kind": "def", "ord": 3, "text": "..."}
 
 which is the interface `dic` reaches for when it wants `(path, hash)` pairs and not rendered bytes.  `--format wc` prints line, word and byte counts per path and an estimated token count for the whole prompt.
+
+`DIC_MENTIONS=off` moves the default format from `at-paths` to
+`prompt`, because dic has stopped reading the `@@` stream that
+`at-paths` writes.  A named `--format at-paths` is still honoured: an
+explicit request is a request, and this is a default and not a
+refusal.
 
 ## Budget
 
@@ -275,8 +353,7 @@ The cap is soft.  Chunks are emitted in rank order while the running total is at
 |      | `--staged` | keep staged changes |
 |      | `--target SIZE[UNIT]` | truncate the rendered prompt to about SIZE |
 |      | `--fudge F` | how much the last chunk may overshoot `--target` |
-|      | `--format FMT` | `prompt` (default), `paths`, `json`, `wc` |
-| `-l` | `--paths-only` | `--format paths` |
+|      | `--format FMT` | `at-paths` (default), `prompt`, `paths`, `json`, `wc` |
 | `-w` | `--wc` | `--format wc` |
 |      | `--refresh` | rebuild the index from the walk; free |
 |      | `--prune` | delete the index and exit |

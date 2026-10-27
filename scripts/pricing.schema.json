@@ -1,47 +1,69 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
+    "provider": {
+      "type": "string",
+      "description": "The provider's name, for a reader of the output."
+    },
     "models": {
       "type": "array",
-      "description": "One row per model the page publishes a token price for.",
+      "description": "One entry per model the page publishes a price for.",
       "items": {
         "type": "object",
         "properties": {
           "model_name": {
             "type": "string",
-            "description": "The model's own name, exactly as the API names it."
+            "description": "The API's own name for the model."
           },
-          "in": {
-            "type": "object",
-            "description": "The input token price.",
-            "properties": {
-              "value": {"type": "number"},
-              "unit": {"const": "usd_per_million_tokens"}
-            },
-            "required": ["value", "unit"],
-            "additionalProperties": false
+          "cost_input": {
+            "type": "number",
+            "description": "USD per million input tokens; the shorthand for an 'in' rule."
           },
-          "out": {
+          "cost_output": {
+            "type": "number",
+            "description": "USD per million output tokens; the shorthand for an 'out' rule."
+          },
+          "price": {
             "type": "object",
-            "description": "The output token price.",
-            "properties": {
-              "value": {"type": "number"},
-              "unit": {"const": "usd_per_million_tokens"}
-            },
-            "required": ["value", "unit"],
-            "additionalProperties": false
+            "description": "Rule name to rule, in dic's price-table shape.  A rule name is a usage name ('in', 'out', 'in.cache_read', 'in.cache_write.5m', 'out.reasoning') or a refinement of one ('in.long', 'in.flex').",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "rate": {
+                  "type": "number",
+                  "description": "USD per unit; per million tokens for the default unit."
+                },
+                "key": {
+                  "type": "string",
+                  "description": "The usage name this rule prices, when the rule's own name is a refinement of it."
+                },
+                "tier": {
+                  "enum": ["default", "flex", "fast", "priority", "ultrafast", "batch"],
+                  "description": "The service tier this rule applies to."
+                },
+                "when": {
+                  "type": "string",
+                  "description": "A python expression over in_total, out_total and tier; e.g. 'in_total > 272000'."
+                },
+                "unit": {
+                  "enum": ["token", "image", "second", "megapixel", "request"],
+                  "description": "What one of the quantity is; defaults to token, quoted per million."
+                }
+              },
+              "required": ["rate"],
+              "additionalProperties": false
+            }
           },
           "quote_in": {
             "type": "string",
-            "description": "The exact text the input price was read from."
+            "description": "The exact text the input rate was read from."
           },
           "quote_out": {
             "type": "string",
-            "description": "The exact text the output price was read from."
+            "description": "The exact text the output rate was read from."
           }
         },
-        "required": ["model_name", "in", "out", "quote_in", "quote_out"],
+        "required": ["model_name", "price", "quote_in", "quote_out"],
         "additionalProperties": false
       }
     }

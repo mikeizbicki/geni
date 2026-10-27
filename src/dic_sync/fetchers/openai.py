@@ -14,7 +14,7 @@ from dic_sync import http
 from dic_sync.ids import chain
 
 
-def fetch(provider, entry, key, env):  # noqa: ARG001
+def fetch(provider, entry, key, env, progress=None):  # noqa: ARG001
     """Every model one OpenAI-shaped catalog lists, as config entries.
 
     The path defaults to /models, which every provider of this shape
@@ -38,4 +38,6 @@ def fetch(provider, entry, key, env):  # noqa: ARG001
             slug = model["id"]
             prefix = catalog.get("prefix") or provider
             out[chain(prefix, slug)] = {"model_name": slug}
+        if progress is not None:
+            progress("listing", len(out))
     return out

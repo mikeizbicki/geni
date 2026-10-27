@@ -34,15 +34,27 @@ def main(argv=None):
                              " repeatable")
     args = parser.parse_args(argv)
 
+    def repaint(text):
+        """Overwrite the live progress line in place; --quiet writes none."""
+        if args.quiet:
+            return
+        sys.stderr.write(f"\r\033[Kdic-sync: {text}")
+        sys.stderr.flush()
+
     def report(level, text):
         if args.quiet and level >= 0:
             return
         if level > 0 and not args.verbose:
             return
+        # end whatever live line is under this one first, so the
+        # message lands where the meter was and not after it
+        if not args.quiet:
+            sys.stderr.write("\r\033[K")
         print(f"dic-sync: {text}", file=sys.stderr)
 
     try:
-        path, count = catalog.sync(os.environ, report, args.provider)
+        path, count = catalog.sync(os.environ, report, args.provider,
+                                   repaint)
     except Exception as e:  # every failure, so the exit status is always one
         print(f"dic-sync: {e}", file=sys.stderr)
         return 1

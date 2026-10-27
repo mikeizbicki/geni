@@ -82,7 +82,29 @@ def recipes(env):
             if keys.get("abstract") and keys.get("sync")}
 
 
-def sync(env, report, only=None):
+def _live_line(provider, repaint):
+    """A per-provider progress callback: one repainted line on stderr.
+
+    A fetcher calls it at whatever boundary its own protocol has -- a
+    page listed, a batch priced -- and it says the provider, the phase
+    and how many are done, with the total when the fetcher knows one.
+    The line goes through `repaint`, so the driver alone decides what
+    a live line looks like and whether there is one at all.
+
+    >>> _live_line("fal", print)("listing", 300)
+    fal: listing 300
+    >>> _live_line("fal", print)("pricing", 150, 1000)
+    fal: pricing 150/1000
+    """
+    def progress(phase, done, total=None):
+        text = f"{provider}: {phase} {done}"
+        if total is not None:
+            text += f"/{total}"
+        repaint(text)
+    return progress
+
+
+def sync(env, report, only=None, repaint=None):
     """Fetch every provider's catalog and write the merged list.
 
     `report(level, text)` is where a line about a provider goes: level
@@ -91,6 +113,13 @@ def sync(env, report, only=None):
     means; every failure is caught here and named, so one provider
     that will not answer does not stop the others and does not blank
     the file.
+
+    `repaint(text)` is where a live line goes while a fetcher is
+    still working: it overwrites the line it last wrote, so a long
+    walk -- fal's paging catalog and its batched pricing -- shows
+    how far it has gone without scrolling the provider's own lines
+    away.  None means no such line, which is what --quiet and a
+    library caller both want.
 
     `only` names the providers to fetch, or None for every one, so a
     debugging run does not pay for the others or trip over their
@@ -117,8 +146,10 @@ def sync(env, report, only=None):
             report(0, f"{provider}: {key_name} is not set; skipped")
             continue
         report(0, f"{provider}: fetching")
+        progress = (_live_line(provider, repaint)
+                    if repaint is not None else None)
         try:
-            entries = fetch(provider, entry, key, env)
+            entries = fetch(provider, entry, key, env, progress)
         except Exception as e:  # a fetcher's failure; one provider's problem
             report(-1, f"{provider}: {e}")
             continue

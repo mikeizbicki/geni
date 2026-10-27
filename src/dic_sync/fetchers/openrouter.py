@@ -128,12 +128,14 @@ def videos(base, headers, provider):
     return out
 
 
-def fetch(provider, entry, key, env):  # noqa: ARG001
+def fetch(provider, entry, key, env, progress=None):  # noqa: ARG001
     """The three catalogs of one OpenRouter account, as config entries."""
     base = entry["api_base"].rstrip("/")
     headers = http.auth(entry, key)
     out = {}
-    out.update(chat(base, headers, provider))
-    out.update(images(base, headers, provider))
-    out.update(videos(base, headers, provider))
+    for name, fn in (("chat", chat), ("images", images), ("videos", videos)):
+        before = len(out)
+        out.update(fn(base, headers, provider))
+        if progress is not None:
+            progress(name, len(out) - before)
     return out

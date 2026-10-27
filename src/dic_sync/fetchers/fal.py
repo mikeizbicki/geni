@@ -19,7 +19,7 @@ PAGE_LIMIT = 100
 PRICE_BATCH = 50
 
 
-def catalog(base, headers):
+def catalog(base, headers, progress=None):
     """Every endpoint_id the catalog lists, walking next_cursor.
 
     A listing nobody paginates is a listing that stops at the first
@@ -38,13 +38,15 @@ def catalog(base, headers):
         for model in body.get("models") or []:
             if model.get("endpoint_id"):
                 ids.append(model["endpoint_id"])
+        if progress is not None:
+            progress("listing", len(ids))
         cursor = body.get("next_cursor")
         if not cursor:
             break
     return ids
 
 
-def pricing(base, headers, ids):
+def pricing(base, headers, ids, progress=None):
     """{endpoint_id: rule} for one catalog, in batches of fifty.
 
     The endpoint takes `endpoint_id` as a comma-separated query
@@ -57,6 +59,7 @@ def pricing(base, headers, ids):
     catalog.
     """
     out = {}
+    total = len(ids)
     for i in range(0, len(ids), PRICE_BATCH):
         chunk = ids[i:i + PRICE_BATCH]
         url = f"{base}/models/pricing?endpoint_id=" + ",".join(chunk)
@@ -67,18 +70,20 @@ def pricing(base, headers, ids):
             # batch costs its prices and not the whole catalog, and the
             # models it names land anyway, unpriced, which is what a
             # model the pricing endpoint does not know looks like too.
-            continue
-        for price in body.get("prices") or []:
+            body = None
+        for price in (body or {}).get("prices") or []:
             endpoint = price.get("endpoint_id")
             if not endpoint or price.get("unit_price") is None:
                 continue
             out[endpoint] = {"out": {
                 "rate": float(price["unit_price"]),
                 "unit": units.plural(price.get("unit") or "second")}}
+        if progress is not None:
+            progress("pricing", min(i + PRICE_BATCH, total), total)
     return out
 
 
-def fetch(provider, entry, key, env):  # noqa: ARG001
+def fetch(provider, entry, key, env, progress=None):  # noqa: ARG001
     """Every endpoint the catalog lists, each with the price it is sold at.
 
     The pricing call is a second pass over the whole catalog, because
@@ -91,8 +96,8 @@ def fetch(provider, entry, key, env):  # noqa: ARG001
     headers = http.auth(entry, key)
     out = {}
     for catalog_spec in recipe.get("catalogs") or [{"path": "/models"}]:
-        ids = catalog(base, headers)
-        prices = pricing(base, headers, ids)
+        ids = catalog(base, headers, progress)
+        prices = pricing(base, headers, ids, progress)
         prefix = catalog_spec.get("prefix") or provider
         for endpoint in ids:
             config = {"model_name": endpoint}

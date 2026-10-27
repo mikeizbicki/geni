@@ -152,6 +152,25 @@ def chmod(path, mode):
         os.chmod(path, permissions(mode))
 
 
+def ensure_parent(path):
+    """Create the parent directories of a path, so a write can be made.
+
+    A patch that adds a file under a directory that does not exist yet
+    -- the directory being one the patch also adds, or one the caller
+    has not made -- names a parent that is not there, and the write
+    that follows fails with ENOENT.  `git apply` behaves the same way,
+    but a model routinely writes such a patch, and a coding agent that
+    cannot create its own nested directories is not usable on a fresh
+    tree.
+
+    This is called from the write phase and never from the planning
+    phase, so a --dry-run still leaves the repository untouched.
+    """
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 def body_of(hunks):
     """The added lines of a file's hunks: the whole of a file being created.
 
@@ -540,6 +559,7 @@ def main():
     applied = []                            # paths written, staged at the end
     for source, destination in moved:
         try:
+            ensure_parent(destination)
             os.rename(source, destination)
         except OSError as err:
             error(f"{source}: {err}")
@@ -548,6 +568,7 @@ def main():
         applied += [source, destination]
     for path, body, mode in created:
         try:
+            ensure_parent(path)
             if mode == SYMLINK:
                 os.symlink("".join(body).rstrip("\n"), path)
             else:

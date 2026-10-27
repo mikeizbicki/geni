@@ -166,7 +166,13 @@ def run(args, readmes, patterns, gitignore):
         chunks = elide(chunks, what)
     if size is not None:
         chunks = budget(chunks, size[0], size[1], args.fudge)
-    fmt = args.format or ("wc" if args.wc else "at-paths")
+    # DIC_MENTIONS=off moves the default and not a request: an explicit
+    # --format at-paths is still honoured, because it is the caller asking
+    # for mentions in a program that has stopped reading them by default,
+    # and one of the two has to say which it means.
+    default = ("prompt" if os.environ.get("DIC_MENTIONS") == "off"
+               else "at-paths")
+    fmt = args.format or ("wc" if args.wc else default)
     FORMATS[fmt](chunks, sys.stdout)
     sys.stdout.flush()
     return 0

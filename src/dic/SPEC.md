@@ -2,6 +2,14 @@
 
 `dic` is a minimalist CLI tool for working with chat LLMs models.
 
+`DIC_MENTIONS=off` turns the `@@` and `%%` mention grammar off, in dic
+and in `accio` together, because it is one feature: accio's
+`--format at-paths` writes what dic's scanner reads, and two
+variables could disagree into `@@path` lines that dic then treats as
+prose. Off means no file is hoisted, no `%%` runs, `\@@` and `\%%`
+reach the model as themselves, and accio's default format becomes
+`prompt`. An explicit `--format at-paths` is still honoured.
+
 "Dic" is Latin for the command "speak".
 The idea is that working with AIs is like working with demons and magic,
 and Latin is the traditional language for controlling demons and casting spells.

@@ -5,6 +5,10 @@ of a line. dic hoists each named file and each command's stdout into a
 header block at the head of the request and leaves the prose alone. This
 module owns the scanner: finding the mentions and consuming the \@@ and
 \%% escapes that spell a literal @@ and %%.
+
+The feature is off when DIC_MENTIONS=off, in which case a mention is
+prose: nothing is hoisted, no %% runs, and an empty %% is not an error,
+because with the feature off there is no grammar for one to violate.
 """
 
 import hashlib, os
@@ -116,8 +120,9 @@ def scan(text):
     return "".join(clean), spans
 
 
-def collect(text, known=(), run=None):
+def collect(text, known=(), run=None, mentions=True):
     r"""Hoist every @@path and %%command mention into a header block.
+def collect(text, known=(), run=None, mentions=True):
 
     Returns ``(clean, header, adds)``. ``clean`` is *text* with the ``\@@``
     and ``\%%`` escapes consumed and nothing else changed. ``header`` is
@@ -131,6 +136,10 @@ def collect(text, known=(), run=None):
     ``{"path", "hash", "kind"}`` and a command adds
     ``{"origin": "cmd", "key", "hash", "kind": "text"}``.
 
+
+    *mentions* of False is the kill switch: the text is returned unchanged,
+    no file is read, no command runs, and the escapes are not consumed,
+    because a mention is prose and not a mention.
     *known* is a collection of identities an ancestor turn already carried:
     a file's is the pair ``(path, sha256)``, and a command's is the triple
     ``("cmd", key, sha256)``. A mention whose identity one of those matches
@@ -224,6 +233,9 @@ def collect(text, known=(), run=None):
     >>> os.chdir(old); shutil.rmtree(d)
     """
     from dic.tty import DicError  # lazy: a prompt with no mention pays nothing
+
+    if not mentions:
+        return text, "", []
 
     clean, spans = scan(text)
     blocks = []

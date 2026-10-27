@@ -858,11 +858,15 @@ def dic(prompt,
     # file's (path, sha256), a command's ("cmd", key, sha256) -- so a file
     # or command an earlier turn hoisted is named in prose and its bytes
     # are not sent again.
+    # DIC_MENTIONS=off turns the whole feature off: a prompt that names a
+    # file with @@ and a line that names a command with %% are prose and
+    # nothing more, and the escapes are not consumed.
     include_header, include_adds = "", []
     if "@@" in prompt or "%%" in prompt:
         from accio import include
         prompt, include_header, include_adds = include.collect(
-            prompt, known_includes(rows), cmd_runner(env))
+            prompt, known_includes(rows), cmd_runner(env),
+            mentions=env.get("DIC_MENTIONS") != "off")
 
     # -m > the model this conversation last used > $DIC_MODEL > the default, so
     # -c carries on with the same provider unless the caller names another one

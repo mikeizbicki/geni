@@ -312,6 +312,12 @@ There is no escaping and no quoting.  A file whose content contains a line that 
 
 which is the interface `dic` reaches for when it wants `(path, hash)` pairs and not rendered bytes.  `--format wc` prints line, word and byte counts per path and an estimated token count for the whole prompt.
 
+`DIC_MENTIONS=off` moves the default format from `at-paths` to
+`prompt`, because dic has stopped reading the `@@` stream that
+`at-paths` writes.  A named `--format at-paths` is still honoured: an
+explicit request is a request, and this is a default and not a
+refusal.
+
 ## Budget
 
 `--target SIZE[UNIT]` truncates the selected list to an amount of prompt.  Bytes are the default, and the suffix is uppercase for units that are not bytes:

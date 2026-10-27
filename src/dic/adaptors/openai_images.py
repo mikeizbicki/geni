@@ -16,6 +16,19 @@ from dic.tty import DicError
 
 PATH = "/images/generations"
 
+PARAMS = {
+    "n":             {"type": "integer", "default": 1},
+    "size":          {"type": "string",
+                      "values": ["1024x1024", "1536x1024", "1024x1536",
+                                 "auto"]},
+    "quality":       {"type": "enum",
+                      "values": ["low", "medium", "high", "auto"]},
+    "background":    {"type": "enum",
+                      "values": ["transparent", "opaque", "auto"]},
+    "output_format": {"type": "enum",
+                      "values": ["png", "jpeg", "webp"]},
+}
+
 
 def auth(key):
     """>>> auth("k")

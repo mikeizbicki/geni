@@ -25,6 +25,11 @@ UPLOAD = "https://rest.alpha.fal.ai"   # attachments are stored here first
 POLL_MS = 500
 POLL_S = 900                           # ten minutes is a long video
 
+# fal's endpoints are all different, so there is no protocol-level set
+# of options to list: everything a caller can pass comes from the
+# endpoint's own schema, which model_params fetches.
+PARAMS = {}
+
 
 def auth(key):
     """>>> auth("k")
@@ -261,3 +266,172 @@ def finish(acc):
     True
     """
     return acc.get("result")
+
+
+def model_params(model, key, env):  # noqa: ARG001
+    """Fetch this fal endpoint's OpenAPI schema and extract its inputs.
+
+    One GET on the catalog API, filtered to one endpoint, with
+    ``expand=openapi-3.0``.  The document fal returns has the
+    endpoint's full request schema; extract_params turns it into dic's
+    own shape.  Called by --help when its answer is not cached; every
+    failure is a DicError so the caller can decide what the page says.
+    """
+    base = ((model.get("sync") or {}).get("catalog_base")
+            or "https://api.fal.ai/v1").rstrip("/")
+    url = (f"{base}/models?endpoint_id={model['model_name']}"
+           "&expand=openapi-3.0")
+    request = urllib.request.Request(  # noqa: S310
+        url, headers={**auth(key), "accept": "application/json"})
+    body = fetch(request)
+    models = body.get("models") or []
+    if not models:
+        raise DicError(f"fal: no entry for {model['model_name']}")
+    return extract_params(models[0].get("openapi") or {})
+
+
+def extract_params(openapi):
+    """The input properties of one fal OpenAPI document, as dic params.
+
+    The document is OpenAPI 3.0: the endpoint's own path carries its
+    POST, whose requestBody is the input, and the properties may be
+    inline or a $ref into the document's components.  Each property
+    becomes one entry with its type, its enum values if any, its
+    default, and a required marker, which is what --help sorts on.
+
+    >>> doc = {"paths": {"/x": {"post": {"requestBody": {"content": {
+    ...     "application/json": {"schema": {"type": "object",
+    ...         "required": ["a"],
+    ...         "properties": {"a": {"type": "string"},
+    ...                        "b": {"type": "integer", "default": 1}}}}}}}}}}
+    >>> extract_params(doc)
+    {'a': {'type': 'string', 'required': True}, 'b': {'type': 'integer', 'default': 1}}
+    """
+    components = (openapi.get("components") or {}).get("schemas") or {}
+    schema = request_schema(openapi)
+    if not schema:
+        return {}
+    return schema_params(schema, components)
+
+
+def request_schema(openapi):
+    """The requestBody schema of the document's first POST path.
+
+    >>> request_schema({"paths": {"/x": {"post": {"requestBody": {"content":
+    ...     {"application/json": {"schema": {"type": "object"}}}}}}}})
+    {'type': 'object'}
+    >>> request_schema({}) is None
+    True
+    """
+    for path in (openapi.get("paths") or {}).values():
+        for method in ("post", "put"):
+            operation = path.get(method)
+            if not operation:
+                continue
+            content = (operation.get("requestBody") or {}).get("content") or {}
+            for piece in content.values():
+                if piece.get("schema"):
+                    return piece["schema"]
+    return None
+
+
+def schema_params(schema, components):
+    """Flatten one schema and read its properties into dic's params shape.
+
+    >>> schema_params({"type": "object",
+    ...                "required": ["a"],
+    ...                "properties": {"a": {"type": "string"},
+    ...                               "b": {"enum": ["x", "y"], "default": "x"}}},
+    ...               {})
+    {'a': {'type': 'string', 'required': True}, 'b': {'type': 'enum', 'default': 'x', 'values': ['x', 'y']}}
+    """
+    schema = flatten(deref(schema, components), components)
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    out = {}
+    for name, prop in properties.items():
+        prop = flatten(deref(prop, components), components)
+        entry = {"type": type_name(prop)}
+        if name in required:
+            entry["required"] = True
+        if prop.get("default") is not None:
+            entry["default"] = prop["default"]
+        if prop.get("enum"):
+            entry["values"] = list(prop["enum"])
+        if prop.get("description"):
+            entry["description"] = prop["description"]
+        out[name] = entry
+    return out
+
+
+def deref(schema, components, seen=None):
+    """Resolve a chain of $refs; a cycle resolves to {}.
+
+    >>> deref({"$ref": "#/components/schemas/In"},
+    ...       {"In": {"type": "object"}})
+    {'type': 'object'}
+    >>> deref({"type": "string"}, {})
+    {'type': 'string'}
+    >>> deref({"$ref": "#/components/schemas/A"},
+    ...       {"A": {"$ref": "#/components/schemas/A"}})
+    {}
+    """
+    seen = seen if seen is not None else set()
+    while isinstance(schema, dict) and "$ref" in schema:
+        ref = schema["$ref"]
+        if ref in seen:
+            return {}
+        seen.add(ref)
+        schema = components.get(ref.rsplit("/", 1)[-1]) or {}
+    return schema
+
+
+def flatten(schema, components):
+    """One schema: allOf merged, anyOf/oneOf resolved to the first non-null.
+
+    >>> flatten({"allOf": [{"properties": {"a": {"type": "string"}}},
+    ...                    {"required": ["a"]}]}, {})
+    {'properties': {'a': {'type': 'string'}}, 'required': ['a']}
+    >>> flatten({"anyOf": [{"type": "null"}, {"type": "string"}]}, {})
+    {'type': 'string'}
+    """
+    schema = deref(schema, components)
+    if not isinstance(schema, dict):
+        return {}
+    if "allOf" in schema:
+        other, properties, required = {}, {}, set()
+        for piece in schema["allOf"]:
+            piece = flatten(piece, components)
+            properties.update(piece.get("properties") or {})
+            required.update(piece.get("required") or [])
+            for key, value in piece.items():
+                if key not in ("properties", "required"):
+                    other[key] = value
+        if properties:
+            other["properties"] = properties
+        if required:
+            other["required"] = sorted(required)
+        return other
+    for key in ("anyOf", "oneOf"):
+        if key in schema:
+            for variant in schema[key]:
+                flat = flatten(variant, components)
+                if flat.get("type") != "null":
+                    return flat
+    return schema
+
+
+def type_name(schema):
+    """One schema's type as dic prints it: 'enum' for a bare enum.
+
+    >>> type_name({"type": "integer"}), type_name({"enum": ["a"]})
+    ('integer', 'enum')
+    >>> type_name({})
+    'string'
+    """
+    kind = schema.get("type")
+    if kind in ("string", "integer", "number", "boolean", "array", "object"):
+        return "enum" if kind == "string" and schema.get("enum") else kind
+    if schema.get("enum"):
+        return "enum"
+    return "string"

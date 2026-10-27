@@ -17,6 +17,11 @@ from dic.tty import DicError
 
 PATH = "/v1/systemone"
 
+# typesafe's request shape comes from --schema; the flattening of that
+# schema into `questions` is the protocol's whole surface, and what a
+# caller passes with -o is whatever the questions dict accepts.
+PARAMS = {}
+
 # typesafe shapes its own answers, so a schema here is asked rather than
 # dictated, and the row records that it was.
 ENFORCES_SCHEMA = False

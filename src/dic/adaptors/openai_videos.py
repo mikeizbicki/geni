@@ -21,6 +21,12 @@ PATH = "/videos"
 POLL_MS = 1000
 POLL_S = 1800                          # sora queues can be half an hour deep
 
+PARAMS = {
+    "seconds": {"type": "integer", "values": [4, 8, 12]},
+    "size":    {"type": "string",
+                "values": ["720x1280", "1280x720", "1024x1792", "1792x1024"]},
+}
+
 
 def auth(key):
     """>>> auth("k")

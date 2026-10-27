@@ -999,6 +999,19 @@ the declared `options`, and every price rule with the `cost_input` and
 before `argparse` runs and reads the same sources a call would, so what
 a model's entry *is* and what a call would *send* are one command apart.
 
+The page also names the params the model can be asked with.  The wire
+protocol's own options -- `openai-chat`'s `temperature`, `max_tokens` --
+are static and come from the adaptor's `PARAMS` dict, so a page about a
+model whose protocol publishes nothing is still a page about its
+protocol.  A model's own properties -- fal's `num_images`, `aspect_ratio`
+for one endpoint and something else for the next -- come from the
+adaptor's `model_params` if it declares one, which is asked for on the
+first `--help` and cached in `$XDG_STATE_HOME/geni/details.db` under the
+resolved `model_id`.  The cache is disposable and single-versioned,
+exactly like `dic.db`: a file written by another build is deleted and
+rebuilt, not migrated.  This is the one place a readout may touch the
+network, and only once per model per machine.
+
 The fully resolved id is what is stored in the `model_id` column,
 so a conversation still says which entry produced each turn after the files are edited.
 
@@ -1028,8 +1041,10 @@ It is loaded by path, but it imports `dic`'s own modules by package name --
 `from dic.store import data_url` -- exactly as the built-in adapters do.
 This import happens only when a model that references it is actually selected,
 so it costs nothing at startup for everyone else.
-An adaptor may define `prepare(model, key, turns, params)` and
-`call(model, key, body, line, stamps)` on top of the five
+An adaptor may define `prepare(model, key, turns, params)`,
+`call(model, key, body, line, stamps)`, a `PARAMS` dict of the options
+a caller may pass with `-o`, and `model_params(model, key, env)` for
+the per-model properties a provider publishes, on top of the five
 names above.  `prepare` runs before `build` and may rewrite the turns --
 `fal` uploads the newest turn's attachments there, because its models read a
 URL and not a data: URL.  `call` replaces the transport and yields the

@@ -16,6 +16,27 @@ from dic.tty import DicError
 
 PATH = "/chat/completions"
 
+# What a caller may pass with -o.  Static: these are the protocol's own
+# options and the same on every openai-shaped endpoint, from the biggest
+# provider to a local llama.cpp, which is why no network is needed to
+# know them.  dic does not validate them -- it forwards them -- so the
+# list is a reading aid and not a schema.
+PARAMS = {
+    "temperature":       {"type": "number",
+                          "description": "sampling temperature"},
+    "top_p":             {"type": "number", "description": "nucleus sampling"},
+    "max_tokens":        {"type": "integer",
+                          "description": "cap on the answer's length"},
+    "stop":              {"type": "array",
+                          "description": "strings that end the answer"},
+    "seed":              {"type": "integer",
+                          "description": "deterministic sampling"},
+    "presence_penalty":  {"type": "number"},
+    "frequency_penalty": {"type": "number"},
+    "logprobs":          {"type": "boolean"},
+    "top_logprobs":      {"type": "integer"},
+}
+
 
 def auth(key):
     """>>> auth("k")

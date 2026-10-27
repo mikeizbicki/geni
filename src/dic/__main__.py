@@ -93,6 +93,96 @@ def rate_line(rule):
     return line + (f"  ({extras})" if extras else "")
 
 
+def params_text(table):
+    """One model's params as a table, required first then optional.
+
+    A required param is one a call cannot be made without, so it comes
+    before the ones that have defaults or simply do not apply; the two
+    groups are each sorted by name so a page reads the same way twice.
+
+    >>> print(params_text({"prompt": {"type": "string", "required": True},
+    ...                    "n": {"type": "integer", "default": 1},
+    ...                    "seed": {"type": "integer"}}))
+    params
+      required:
+        prompt  string
+      optional:
+        n       integer  default=1
+        seed    integer
+    """
+    if not table:
+        return ""
+    required = sorted(k for k, d in table.items() if d.get("required"))
+    optional = sorted(k for k, d in table.items() if not d.get("required"))
+    width = max(len(name) for name in table)
+
+    def row(name):
+        d = table[name]
+        text = f"    {name:<{width}}  {d.get('type') or 'string'}"
+        if "default" in d:
+            text += f"  default={d['default']}"
+        values = d.get("values") or []
+        if values:
+            text += "  [" + " ".join(str(v) for v in values) + "]"
+        return text
+
+    lines = ["params"]
+    if required:
+        lines.append("  required:")
+        lines.extend(row(name) for name in required)
+    if optional:
+        lines.append("  optional:")
+        lines.extend(row(name) for name in optional)
+    return "\n".join(lines)
+
+
+def params_for(model, env):
+    """The params a model can be asked with: its protocol's, and its own.
+
+    Two sources.  The wire protocol supplies its options from the adaptor
+    module's ``PARAMS`` dict -- ``openai-chat``'s temperature is the same
+    on every provider that speaks it -- which is static and offline.  A
+    model itself may publish properties the protocol does not, and only
+    its adaptor knows how to ask for them; they are fetched lazily on
+    the first ``--help`` and cached in a sidecar sqlite under the
+    resolved ``model_id``, so the network is touched once per model per
+    machine.
+
+    Returns (table, note).  ``table`` is the merged params, a model's
+    own entry winning over the protocol's of the same name.  ``note`` is
+    the line to print when the table would have been richer but was not:
+    the key was not exported, or the fetch failed.  Both are empty
+    together when there is nothing to say and no way to say more.
+    """
+    from dic import params as cache
+    from dic.client import load_adaptor
+    from dic.tty import DicError
+
+    api_type = model.get("api_type") or "openai-chat"
+    try:
+        adaptor = load_adaptor(api_type, env)
+    except DicError:
+        return {}, None
+
+    protocol = getattr(adaptor, "PARAMS", {}) or {}
+    if not hasattr(adaptor, "model_params"):
+        return dict(protocol), None
+
+    key_name = model.get("api_key_name")
+    key = env.get(key_name) if key_name else None
+    if not key:
+        return dict(protocol), (f"{key_name} is not set; export it"
+                                " to see model params")
+    try:
+        facts = cache.cached(env, model["model_id"])
+        if facts is None:
+            facts = adaptor.model_params(model, key, env)
+            cache.store(env, model["model_id"], facts)
+    except DicError as e:
+        return dict(protocol), f"unavailable: {e}"
+    return {**protocol, **facts}, None
+
+
 def model_help(argv, env):
     """``dic -m NAME --help``: the resolved entry of one named model.
 
@@ -102,7 +192,9 @@ def model_help(argv, env):
     would use: the model's API name, its base, the variable its key is
     read from (and whether it is exported), the wire protocol, the
     declared price rules with dic's cost_input and cost_output shorthand
-    already expanded, and the options ``-o`` would merge over.
+    already expanded, the options ``-o`` would merge over, and the
+    params the model can be asked with -- its protocol's own options
+    and, for a provider that publishes them, the model's own properties.
 
     An id that does not resolve is a DicError named here, not a page
     of nothing: the caller learns which id config.resolve refused.
@@ -153,6 +245,11 @@ def model_help(argv, env):
         width = max(len(rule) for rule in price)
         for rule in sorted(price):
             print(f"  {rule:<{width}}  {rate_line(price[rule])}")
+    table, note = params_for(model, env)
+    if table:
+        print(params_text(table))
+    elif note:
+        line("params", note)
     return True
 
 

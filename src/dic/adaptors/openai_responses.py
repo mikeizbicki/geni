@@ -10,6 +10,14 @@ from dic.store import data_url, openai_usage
 
 PATH = "/responses"
 
+PARAMS = {
+    "temperature":       {"type": "number"},
+    "top_p":             {"type": "number"},
+    "max_output_tokens": {"type": "integer"},
+    "reasoning":         {"type": "object",
+                          "description": "{effort: low|medium|high}"},
+}
+
 
 def auth(key):
     """>>> auth("k")

@@ -13,6 +13,20 @@ from dic.store import tokens
 
 PATH = "/messages"
 
+# What a caller may pass with -o.  Static: these are the protocol's own
+# options and the same on every endpoint that speaks it, which is why
+# no network is needed to know them.  dic does not validate them -- it
+# forwards them -- so the list is a reading aid and not a schema.
+PARAMS = {
+    "max_tokens":  {"type": "integer",
+                    "description": "required by the API; dic sends 4096"},
+    "temperature": {"type": "number"},
+    "top_p":       {"type": "number"},
+    "top_k":       {"type": "integer"},
+    "thinking":    {"type": "object",
+                    "description": "{type: enabled, budget_tokens: N}"},
+}
+
 
 def auth(key):
     """>>> auth("k")

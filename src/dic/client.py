@@ -607,6 +607,58 @@ def curl_command(model, adaptor, body, headers, api_key, api_type):
     return "\n".join(lines) + "\n"
 
 
+def include_identity(entry):
+    """The identity include.collect matches against, from one stored record.
+
+    A file's is (path, sha256), which include.collect normalizes to
+    ("file", path, sha256); a command's is ("cmd", key, sha256), which it
+    takes as-is.  An old row carries no origin and is a file's, which is
+    the shape every @@ path has always written.
+
+    >>> include_identity({"path": "a.py", "hash": "h"})
+    ('a.py', 'h')
+    >>> include_identity({"origin": "cmd", "key": "ls", "hash": "h"})
+    ('cmd', 'ls', 'h')
+    """
+    if entry.get("origin") == "cmd":
+        return (entry["origin"], entry["key"], entry["hash"])
+    return (entry["path"], entry["hash"])
+
+
+def known_includes(rows):
+    """Every identity an ancestor turn already included, from the rows.
+
+    >>> known_includes([{"includes": '[{"path": "a", "hash": "h"}]'}])
+    {('a', 'h')}
+    >>> known_includes([{"includes": None}])
+    set()
+    """
+    return {include_identity(entry) for row in rows
+            for entry in json.loads(row["includes"] or "[]")}
+
+
+def cmd_runner(env):
+    """A run(cmd) for include.collect: argv under the sandbox, stdout kept.
+
+    The command is a word list and never a shell line, so the runner is
+    dic.shell.command plus subprocess and no shell of the caller's.  The
+    child's stdout is the whole of the output, and include.collect owns
+    the refusal of a non-zero exit, so the returncode is passed through.
+    """
+    import subprocess
+    from dic import shell
+
+    def run(cmd):
+        argv = shell.command(cmd)
+        try:
+            proc = subprocess.run(  # noqa: S603
+                argv, capture_output=True, env=dict(env))
+        except FileNotFoundError as e:
+            raise DicError(f"%%: {cmd}: {e}") from None
+        return proc.returncode, proc.stdout
+    return run
+
+
 def dic(prompt,
         # ----- directly affect API call -----
         model:        flag(short="-m", help="which model") = None,
@@ -797,19 +849,20 @@ def dic(prompt,
     if prev_mid and not rows:
         raise DicError(f"no such mid: {prev_mid}")
 
-    # A @@path mention hoists that file into a header block at the head of
-    # the current user turn, and the prose keeps the name.  accio owns the
-    # scanner; the import is lazy so a call with no @@ pays nothing on the
-    # ttft path, exactly as dic.tool waits for --tools.  The known set is
-    # every (path, hash) an ancestor row already included, so a file an
-    # earlier turn hoisted is named in prose and not sent again.
+    # A @@path mention hoists that file and a %%command mention runs its
+    # argv under dic's sandbox and hoists the stdout, each as a header
+    # block at the head of the current user turn, and the prose keeps the
+    # mention.  accio owns the scanner and dic.shell owns the sandbox, so
+    # the import is lazy and pays nothing on a call with no mention.  The
+    # known set is every identity an ancestor row already included -- a
+    # file's (path, sha256), a command's ("cmd", key, sha256) -- so a file
+    # or command an earlier turn hoisted is named in prose and its bytes
+    # are not sent again.
     include_header, include_adds = "", []
-    if "@@" in prompt:
+    if "@@" in prompt or "%%" in prompt:
         from accio import include
-        known = {(entry["path"], entry["hash"])
-                 for row in rows
-                 for entry in json.loads(row["includes"] or "[]")}
-        prompt, include_header, include_adds = include.collect(prompt, known)
+        prompt, include_header, include_adds = include.collect(
+            prompt, known_includes(rows), cmd_runner(env))
 
     # -m > the model this conversation last used > $DIC_MODEL > the default, so
     # -c carries on with the same provider unless the caller names another one
@@ -1209,9 +1262,7 @@ def dic(prompt,
         mid = ulid()
         conn.execute(INSERT, (
             mid, index, prompt if index == 0 else "",
-            (json.dumps([{"path": a["path"], "hash": a["hash"]}
-                         for a in includes])
-             if index == 0 and includes else None),
+            json.dumps(includes) if index == 0 and includes else None,
             header if index == 0 and header else None,
             system, response,
             json.dumps(raw), prev, json.dumps(ids if index == 0 else []),

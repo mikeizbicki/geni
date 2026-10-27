@@ -12,6 +12,7 @@ dev = ["ruff>=0.6", "bandit[toml]>=1.7"]
 dic = "dic.__main__:main"
 accio = "accio.__main__:main"
 git-apply-fuzzy = "git_apply_fuzzy.__main__:main"
+dic-sync = "dic_sync.__main__:main"
 # see pyproject.toml for the package layout
 
 [build-system]
@@ -24,7 +25,8 @@ build-backend = "setuptools.build_meta"
 # `dic --init` names.  The list is explicit because packages.find cannot
 # discover a package whose directory is outside src/.
 [tool.setuptools]
-packages = ["accio", "dic", "dic.adaptors", "dic.tools", "dic.scripts", "git_apply_fuzzy"]
+packages = ["accio", "dic", "dic.adaptors", "dic.tools", "dic.scripts",
+            "dic_sync", "dic_sync.fetchers", "git_apply_fuzzy"]
 package-dir = {"" = "src", "dic.scripts" = "scripts"}
 include-package-data = true
 

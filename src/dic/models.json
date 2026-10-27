@@ -9,14 +9,16 @@
     "abstract": true,
     "api_base": "https://api.groq.com/openai/v1",
     "api_key_name": "GROQ_API_KEY",
-    "pricing_url": {"url": "https://groq.com/pricing/"}
+    "pricing_url": {"url": "https://groq.com/pricing/"},
+    "sync": {"fetcher": "openai"}
   },
 
   "cerebras": {
     "abstract": true,
     "api_base": "https://api.cerebras.ai/v1",
     "api_key_name": "CEREBRAS_API_KEY",
-    "pricing_url": {"url": "https://www.cerebras.ai/pricing"}
+    "pricing_url": {"url": "https://www.cerebras.ai/pricing"},
+    "sync": {"fetcher": "openai"}
   },
 
   "anthropic": {
@@ -24,7 +26,8 @@
     "api_type": "anthropic-messages",
     "api_base": "https://api.anthropic.com/v1",
     "api_key_name": "ANTHROPIC_API_KEY",
-    "pricing_url": {"url": "https://www.anthropic.com/pricing"}
+    "pricing_url": {"url": "https://www.anthropic.com/pricing"},
+    "sync": {"fetcher": "openai"}
   },
 
   "openai": {
@@ -32,11 +35,27 @@
     "api_type": "openai-responses",
     "api_base": "https://api.openai.com/v1",
     "api_key_name": "OPENAI_API_KEY",
-    "pricing_url": {"url": "https://openai.com/api/pricing/"}
+    "pricing_url": {"url": "https://openai.com/api/pricing/"},
+    "sync": {"fetcher": "openai"}
   },
 
   "openrouter": {
     "abstract": true,
+    "api_base": "https://openrouter.ai/api/v1",
+    "api_key_name": "OPENROUTER_API_KEY",
+    "sync": {"fetcher": "openrouter"}
+  },
+
+  "openrouter-image": {
+    "abstract": true,
+    "api_type": "openai-images",
+    "api_base": "https://openrouter.ai/api/v1",
+    "api_key_name": "OPENROUTER_API_KEY"
+  },
+
+  "openrouter-video": {
+    "abstract": true,
+    "api_type": "openai-videos",
     "api_base": "https://openrouter.ai/api/v1",
     "api_key_name": "OPENROUTER_API_KEY"
   },
@@ -212,7 +231,8 @@
     "abstract": true,
     "api_type": "fal",
     "api_base": "https://queue.fal.run",
-    "api_key_name": "FAL_KEY"
+    "api_key_name": "FAL_KEY",
+    "sync": {"fetcher": "fal", "catalog_base": "https://api.fal.ai/v1"}
   },
 
   "fal+nano-banana":     {"model_name": "fal-ai/nano-banana",     "output": "image/png", "price": {"out": {"rate": 0.04, "unit": "image"}}},

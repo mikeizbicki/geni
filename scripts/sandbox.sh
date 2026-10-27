@@ -14,6 +14,15 @@
 #     sandbox --envs=GH_TOKEN --share-net -- gh-mcp
 #     sandbox NO_COLOR=1 -- make -j
 #
+# A project can add arguments of its own to every sandbox run in it by
+# committing a file named `.sandbox-params` to its root.  The lines of
+# that file are appended after the defaults below and before the
+# caller's own arguments, so a project can widen the jail -- a
+# writable build directory, a network share -- and a caller can still
+# override with the arguments on the line.  The file is committed to
+# git or it is refused; see sandbox-params below for why that is the
+# rule and not a convenience.
+#
 # bwrap applies its arguments from left to right and the last one wins, so
 # the function lays down a strict default and you add back exactly the path
 # you need.  Every argument is a bwrap(1) argument but the leading --envs
@@ -101,6 +110,55 @@ sandbox-seccomp-blob() {
     fi
 
     printf '%s\n' "$blob"
+}
+
+# Read `.sandbox-params` in a directory.  Each line is one bwrap
+# argument, printed on a line of its own; a line whose first
+# non-space character is `#` is a comment, blank lines are dropped,
+# `\#` at the start is a literal `#`, and leading and trailing
+# whitespace is trimmed.  No quoting, no continuation, no shell: this
+# is the argv bwrap will read and not a command line, so a program
+# named `|` in it is a failure that does not say so.
+#
+# The file is the project's widening -- the one place a tree can add
+# a writable bind or a network share without a caller typing it --
+# and it is both policy and, once the jail is up, payload-visible.  A
+# file the payload could edit is a file the payload widens on the
+# next turn, which is privilege escalation with no kernel exploit
+# required, so the file is committed to git or the function refuses
+# the run: a tracked file that is dirty is refused too, because the
+# widening exists in the worktree but not yet in the history, and
+# the history is what a reviewer reads.  A missing file is not an
+# error; most repos need none.
+sandbox-params() {
+    local dir=$1 file=$2 line
+
+    file=$dir/.sandbox-params
+    if [[ ! -e $file ]]; then
+        return 0
+    fi
+    if ! git -C "$dir" ls-files --error-unmatch .sandbox-params \
+            >/dev/null 2>&1; then
+        dic-error "sandbox-error: $file: not tracked by git"
+        return 1
+    fi
+    if [[ -n $(git -C "$dir" status --porcelain -- .sandbox-params) ]]
+    then
+        dic-error "sandbox-error: $file: uncommitted changes"
+        return 1
+    fi
+
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        line=${line%"${line##*[![:space:]]}"}
+        case $line in
+            ''|\#*) continue ;;
+        esac
+        if [[ $line == '\#'* ]]; then
+            line=${line#'\'}
+        fi
+        printf '%s\n' "$line"
+    done <"$file"
 }
 
 # True when a word is a name a shell can export: a shell identifier, and
@@ -383,6 +441,27 @@ sandbox() {
     # here, after every bind, so a bind target's parents are made
     # while the root is still writable; --tmpfs and --bind make
     # sub-mounts, and a remount of a parent does not reach one.
+
+    # The project's own widening, from .sandbox-params in the directory
+    # the shell is in.  It sits before --remount-ro so a bind target's
+    # parents are made while the root is still writable, and before the
+    # caller's own arguments so a caller can still override anything
+    # the file says.  The file itself is re-bound read-only afterwards:
+    # a params line that opens its own directory writable opens the
+    # params file with it, and the next tool call could then edit the
+    # policy that governs it.
+    local raw
+    if ! raw=$(sandbox-params "$PWD"); then
+        return 1
+    fi
+    if [[ -n $raw ]]; then
+        local -a project=()
+        mapfile -t project <<<"$raw"
+        args+=("${project[@]}")
+        args+=(--ro-bind "$PWD/.sandbox-params"
+                         "$PWD/.sandbox-params")
+    fi
+
     args+=(--remount-ro /)
 
     # The variables peeled off the front go in through a file and not

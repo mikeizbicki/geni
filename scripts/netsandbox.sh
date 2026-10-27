@@ -501,13 +501,13 @@ bwrap \\
     --tmpfs /tmp \\
     --tmpfs /run \\
     --clearenv \\
-    --setenv PATH "\$PATH" \\
+    --setenv PATH "/usr/bin:/usr/sbin:/bin:/sbin:\$PATH" \\
     --setenv HOME /tmp \\
     --setenv NETSANDBOX_SCRIPTS_DIR "\$NETSANDBOX_SCRIPTS_DIR" \\
     --setenv NETSANDBOX_RUNDIR      "\$NETSANDBOX_RUNDIR" \\
     --setenv NETSANDBOX_DNSMASQ     "\$NETSANDBOX_DNSMASQ" \\
     --setenv NETSANDBOX_MITM        "\$NETSANDBOX_MITM" \\
-    -- /bin/bash "\$NETSANDBOX_RUNDIR/daemons.sh" "\$@"
+    -- bash "\$NETSANDBOX_RUNDIR/daemons.sh" "\$@"
 INNER
 }
 

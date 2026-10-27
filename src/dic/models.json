@@ -281,26 +281,13 @@
   "fal+pixverse-sfx":{"model_name": "fal-ai/pixverse/sound-effects", "output": "video/mp4", "price": {"out": {"rate": 0.02,   "unit": "second"}}},
   "fal+cassette-sfx":{"model_name": "fal-ai/cassetteai/video-sound-effects-generator", "output": "video/mp4", "price": {"out": {"rate": 0.0034, "unit": "second"}}},
 
-  "openai-images": {
-    "abstract": true,
-    "api_type": "openai-images",
-    "api_base": "https://api.openai.com/v1",
-    "api_key_name": "OPENAI_API_KEY"
-  },
-
-  "openai-images+gpt-image-1": {
+  "openai+gpt-image-1": {
     "model_name": "gpt-image-1",
+    "api_type": "openai-images",
     "output": "image/png",
     "price": {"in": {"rate": 5.00}, "in.image": {"rate": 10.00}, "out": {"rate": 40.00}}
   },
 
-  "openai-videos": {
-    "abstract": true,
-    "api_type": "openai-videos",
-    "api_base": "https://api.openai.com/v1",
-    "api_key_name": "OPENAI_API_KEY"
-  },
-
-  "openai-videos+sora-2":     {"model_name": "sora-2",     "output": "video/mp4", "price": {"out": {"rate": 0.10, "unit": "second"}}},
-  "openai-videos+sora-2-pro": {"model_name": "sora-2-pro", "output": "video/mp4", "price": {"out": {"rate": 0.50, "unit": "second"}}}
+  "openai+sora-2":     {"model_name": "sora-2",     "api_type": "openai-videos", "output": "video/mp4", "price": {"out": {"rate": 0.10, "unit": "second"}}},
+  "openai+sora-2-pro": {"model_name": "sora-2-pro", "api_type": "openai-videos", "output": "video/mp4", "price": {"out": {"rate": 0.50, "unit": "second"}}}
 }

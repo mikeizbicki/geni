@@ -547,6 +547,7 @@ netsandbox-run() {
     # and the -t/-u/-T/-U none close the four port forwards pasta
     # opens by default.
     NETSANDBOX_RUNDIR="$dir" \
+    NETSANDBOX_SCRIPTS_DIR="$NETSANDBOX_SCRIPTS_DIR" \
     NETSANDBOX_UPSTREAM="$NETSANDBOX_UPSTREAM" \
     NETSANDBOX_NFT="$NETSANDBOX_NFT" \
     NETSANDBOX_DNSMASQ="$NETSANDBOX_DNSMASQ" \

@@ -34,7 +34,7 @@ tool loop and the stored row need no MCP case.  `dic.mcp` (with its `shlex`,
 lazily, only when `--mcp` names a server, so a tool-less invocation pays for
 none of it either.
 """
-import contextlib, importlib, inspect, json, types
+import contextlib, importlib, inspect, json, shutil, subprocess, types
 from pathlib import Path
 from typing import (Annotated, Literal, Union, get_args, get_origin,
                     get_type_hints)
@@ -46,6 +46,53 @@ from dic.tty import DicError
 # and not a silently wrong "string".
 SCALARS = {str: "string", int: "integer", float: "number", bool: "boolean",
            Path: "string"}
+
+
+# The one program that knows where a shell statement ends, and the prompt
+# its output is shown under.  shfmt is a display filter and never a
+# dependency: it parses a command and prints it again, so a `;`-separated
+# list becomes one statement per line and a loop's body is indented, and
+# every word of the command is left alone.  An install without it, and a
+# command it will not parse -- a cut-off argument, an unbalanced quote --
+# both show the command exactly as the model wrote it.
+SHFMT = ("shfmt", "-ln", "bash", "-i", "2")
+PROMPT = "mcp-bash: "
+
+
+def shfmt_text(command):
+    """command as shfmt prints it, or command itself when that is not possible.
+
+    >>> shfmt_text("a; b")              # doctest: +SKIP
+    'a\\nb'
+    """
+    if not command.strip() or shutil.which(SHFMT[0]) is None:
+        return command
+    try:
+        done = subprocess.run(  # noqa: S603
+            SHFMT, input=command, capture_output=True, text=True)
+    except OSError:
+        return command
+    if done.returncode != 0 or not done.stdout.strip():
+        return command
+    return done.stdout.rstrip("\n")
+
+
+def reflow(command, prompt=PROMPT):
+    """command, reflowed, every line shown under prompt.
+
+    The command a model writes is one long line of `;`-separated
+    statements, and a trace of it is worth reading only one statement to a
+    line.  The prompt is a display convention and never something the shell
+    is given: these are the lines a reader is shown, and the one line the
+    model wrote is what runs.
+
+    >>> reflow("ls -la")
+    'mcp-bash: ls -la'
+    >>> reflow("")
+    ''
+    """
+    return "\n".join(f"{prompt}{line}" if line else line
+                     for line in shfmt_text(command).split("\n"))
 
 
 def schema_of(annotation):
@@ -248,13 +295,15 @@ def resolve(specs):
 
 
 def shell_show(parameters):
-    """A renderer that reproduces a lone command argument verbatim, or None.
+    """A renderer that shows a lone command argument as a shell trace, or None.
 
     A tool whose only meaningful argument is a command string is rendering
     a shell line into JSON, which escapes every quote and turns every real
     newline into a backslash-n.  Where that shape is recognized the argument
-    is shown as the text it is; where it is not, the JSON is the honest
-    rendering and the caller keeps it.
+    is shown as the shell trace it is -- reflowed, and under a prompt --
+    because one long line of `;`-separated statements is what the JSON was
+    hiding; where it is not, the JSON is the honest rendering and the caller
+    keeps it.
 
     The match is on the schema and never on the server's name: a tool is
     what its inputSchema says it takes, and a server named otherwise that
@@ -263,9 +312,9 @@ def shell_show(parameters):
     >>> show = shell_show({"type": "object", "properties": {
     ...     "command": {"type": "string"}}, "required": ["command"]})
     >>> show({"command": "ls -la"})
-    'ls -la'
+    'mcp-bash: ls -la'
     >>> show({"command": "ls", "timeout": 30}).splitlines()
-    ['ls', '{"timeout": 30}']
+    ['mcp-bash: ls', '{"timeout": 30}']
     >>> shell_show({"type": "object", "properties": {
     ...     "path": {"type": "string"}}}) is None
     True
@@ -284,7 +333,7 @@ def shell_show(parameters):
 
     def show(arguments):
         extra = {k: v for k, v in (arguments or {}).items() if k != "command"}
-        text = (arguments or {}).get("command", "")
+        text = reflow((arguments or {}).get("command", ""))
         return text + (f"\n{json.dumps(extra, default=str)}" if extra else "")
     return show
 
@@ -303,7 +352,7 @@ def describe_call(record, arguments):
     >>> bash = {"name": "bash", "parameters": {
     ...     "properties": {"command": {"type": "string"}}}}
     >>> describe_call(bash, {"command": "ls"}).splitlines()
-    ['bash', 'ls']
+    ['bash', 'mcp-bash: ls']
     """
     show = shell_show(record.get("parameters") or {})
     if show is not None:

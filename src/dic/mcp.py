@@ -655,8 +655,28 @@ class Server:
         `tool.call` passes a call's arguments as keywords and takes back a
         string, which is the shape of a tools/call exactly, so an MCP tool is
         a python tool whose body happens to be a pipe or a POST.
+
+        A fresh call opens every server it names before the loop begins,
+        because it must know what to offer; a continuation replays its own
+        row's records and opens nothing, so the first call to one of a
+        server's tools is what starts it.  That is the same promise
+        `resolve()` makes for a fresh call, kept for the one path that
+        cannot make it up front.
+
+        >>> s = Server("s", "shell", "mcp-bash", lambda *a: None)
+        >>> s.request = lambda method, params, limit: {"content": []}
+        >>> opened = []
+        >>> s.open = lambda: opened.append(s.name)
+        >>> bash = s.caller("bash")
+        >>> opened                      # building the closure opens nothing
+        []
+        >>> bash(command="hi")
+        '{"content": []}'
+        >>> opened
+        ['s']
         """
         def call(**arguments):
+            self.open()
             return content(self.request(
                 "tools/call", {"name": tool, "arguments": arguments}, CALL_S))
         return call

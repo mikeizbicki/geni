@@ -1473,12 +1473,17 @@ def dic(prompt,
                                f" {MAX_TOOL_ROUNDS} rounds running; giving up")
             results = []
             for want in asked:
-                report(verbosity, 1,
-                       f"tool: {want['name']}"
-                       f" {json.dumps(want['arguments'], default=str)}",
-                       err=err, env=env)
                 record = next((t for t in tools if t["name"] == want["name"]),
                               None)
+                # a shell command is a line and not a JSON string, so a
+                # tool whose arguments have that shape is shown as the
+                # text it is; every other tool's arguments are the JSON
+                # they were recorded as, byte for byte
+                shown = (tool.describe_call(record, want["arguments"])
+                         if record is not None else
+                         f"{want['name']} "
+                         f"{json.dumps(want['arguments'], default=str)}")
+                report(verbosity, 1, f"tool: {shown}", err=err, env=env)
                 started = time.time_ns()
                 if record is None:
                     ok, content = False, f"no such tool: {want['name']}"

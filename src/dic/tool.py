@@ -34,7 +34,7 @@ tool loop and the stored row need no MCP case.  `dic.mcp` (with its `shlex`,
 lazily, only when `--mcp` names a server, so a tool-less invocation pays for
 none of it either.
 """
-import importlib, inspect, json, types
+import contextlib, importlib, inspect, json, types
 from pathlib import Path
 from typing import (Annotated, Literal, Union, get_args, get_origin,
                     get_type_hints)
@@ -245,6 +245,71 @@ def resolve(specs):
             seen[record["name"]] = spec
             out.append(record)
     return out
+
+
+def shell_show(parameters):
+    """A renderer that reproduces a lone command argument verbatim, or None.
+
+    A tool whose only meaningful argument is a command string is rendering
+    a shell line into JSON, which escapes every quote and turns every real
+    newline into a backslash-n.  Where that shape is recognized the argument
+    is shown as the text it is; where it is not, the JSON is the honest
+    rendering and the caller keeps it.
+
+    The match is on the schema and never on the server's name: a tool is
+    what its inputSchema says it takes, and a server named otherwise that
+    advertises the same shape gets the same rendering.
+
+    >>> show = shell_show({"type": "object", "properties": {
+    ...     "command": {"type": "string"}}, "required": ["command"]})
+    >>> show({"command": "ls -la"})
+    'ls -la'
+    >>> show({"command": "ls", "timeout": 30}).splitlines()
+    ['ls', '{"timeout": 30}']
+    >>> shell_show({"type": "object", "properties": {
+    ...     "path": {"type": "string"}}}) is None
+    True
+    >>> shell_show({"type": "object", "properties": {
+    ...     "command": {"type": "string"},
+    ...     "cwd": {"type": "string"}}}) is None
+    True
+    """
+    props = (parameters or {}).get("properties")
+    if not isinstance(props, dict):
+        return None
+    if set(props) - {"command", "timeout"}:
+        return None
+    if (props.get("command") or {}).get("type") != "string":
+        return None
+
+    def show(arguments):
+        extra = {k: v for k, v in (arguments or {}).items() if k != "command"}
+        text = (arguments or {}).get("command", "")
+        return text + (f"\n{json.dumps(extra, default=str)}" if extra else "")
+    return show
+
+
+def describe_call(record, arguments):
+    """One tool call as a line for stderr: the name, then its arguments.
+
+    A recognized shape renders itself -- see shell_show -- and anything else
+    is the JSON of its arguments, which is what the wire carried.  The
+    renderer prints a line and nothing else, so a record whose renderer
+    raises falls back to that JSON rather than failing a call that has
+    nothing to do with the display.
+
+    >>> describe_call({"name": "ls", "parameters": {}}, {"path": "."})
+    'ls {"path": "."}'
+    >>> bash = {"name": "bash", "parameters": {
+    ...     "properties": {"command": {"type": "string"}}}}
+    >>> describe_call(bash, {"command": "ls"}).splitlines()
+    ['bash', 'ls']
+    """
+    show = shell_show(record.get("parameters") or {})
+    if show is not None:
+        with contextlib.suppress(Exception):  # a display bug is not a call
+            return f"{record['name']}\n{show(arguments)}"
+    return f"{record['name']} {json.dumps(arguments, default=str)}"
 
 
 def call(record, arguments):

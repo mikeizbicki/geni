@@ -444,6 +444,9 @@ def main():
                         help="report what would happen without writing")
     parser.add_argument("-f", "--force", action="store_true",
                         help="write the hunks that applied even if others did not")
+    parser.add_argument("--failed-files", action="store_true",
+                        help="print path<TAB>line on stdout for each file"
+                             " whose hunks did not all match")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="report every hunk's match ratio")
     parser.add_argument("-q", "--quiet", action="store_true",
@@ -463,6 +466,7 @@ def main():
         sys.exit(f"fuzzy-apply: {args.patch}: no diff found")
 
     failed = False
+    unmatched = []
     created, deleted, written = [], [], []  # planned changes, not yet made
     moved, chmods, submodules = [], [], []  # renames, modes and gitlinks too
     for entry in files:
@@ -531,6 +535,7 @@ def main():
         except OSError as err:
             error(f"{path}: {err}")
             failed = True
+            unmatched.append((path, 0))
             continue
 
         lines, matches, failures = apply_hunks(lines, hunks, args.threshold)
@@ -542,11 +547,22 @@ def main():
                   f" near line {line}")
         if failures:
             failed = True
+            unmatched.append((path, failures[0][1]))
             if not args.force:
                 error(f"{path}: {len(failures)}/{len(hunks)} hunks did not match")
                 continue
         written.append((path, lines, mode))
         note(f"{path}: {len(matches)}/{len(hunks)} hunks applied")
+
+    # The machine channel: one line per file whose patch did not match,
+    # so a caller can re-read the file and say so.  Everything above
+    # wrote to stderr -- the human lines and the trace both -- so what a
+    # `$(...)` captures is this list and nothing else.  --force and
+    # --dry-run still exit as they did; --failed-files is not a second
+    # mode, only a report the caller can read before the exit status.
+    if args.failed_files:
+        for path, line in unmatched:
+            sys.stdout.write(f"{path}\t{line}\n")
 
     # Only now is the tree touched: everything above just read it, so a
     # hunk that does not match anywhere leaves the repository untouched,

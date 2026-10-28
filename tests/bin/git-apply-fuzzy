@@ -9,6 +9,21 @@
 # the one under test.  --index stages what it applies, because that is
 # what committe's record step relies on: it commits without a `git add`
 # of its own.
+#
+# --failed-files is committe's own flag and not git apply's, so it is
+# stripped here.  The fixture patches are well formed and always apply,
+# so nothing is written to stdout and committe's accumulator stays
+# empty; a test that wants the accumulation path overrides this fake
+# with one that fails and reports the file, which is what the retry
+# test in committe.bats does.
 set -u
 
-exec git apply --index --recount "$@"
+args=()
+for a in "$@"; do
+    case $a in
+        --failed-files) ;;
+        *) args+=("$a") ;;
+    esac
+done
+
+exec git apply --index --recount "${args[@]}"

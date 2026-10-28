@@ -100,3 +100,40 @@ teardown() {
     committe 'add primes.py' >/dev/null 2>&1
     [ "$DIC_SESSION" = "caller" ]
 }
+
+@test "a retry carries the failed file and drops -c" {
+    # A fake git-apply-fuzzy that always fails and blames hello.txt,
+    # which exists.  The real one is exercised by every other committe
+    # test; this one is about the retry path and only the retry path,
+    # so it overrides the fake to make the failing case reachable.
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+    cat > "$fake_bin/git-apply-fuzzy" <<'FAKE'
+#!/bin/bash
+for a in "$@"; do
+    [[ $a == --failed-files ]] && failed=1
+done
+printf 'hello.txt\t1\n'
+printf 'error: hello.txt: hunk 1 no match\n' >&2
+exit 1
+FAKE
+    chmod +x "$fake_bin/git-apply-fuzzy"
+    export PATH="$fake_bin:$PATH"
+    export FAKE_DIC_LOG="$BATS_TEST_TMPDIR/dic-args"
+    : > "$FAKE_DIC_LOG"
+
+    run committe --retries 1 -c 'add primes.py'
+    [ "$status" -eq 1 ]
+
+    # two model calls: the first, and the one retry
+    [ "$(grep -c '^--prepend-prompt$' "$FAKE_DIC_LOG")" -eq 2 ]
+    # the retry prompt names the file the fake blamed and shows what
+    # the file says, which is the whole of what the accumulator is for
+    grep -q 'Earlier patch attempts were rejected' "$FAKE_DIC_LOG"
+    grep -q '^=== hello.txt (near line 1) ===$' "$FAKE_DIC_LOG"
+    grep -q '^hello$' "$FAKE_DIC_LOG"
+    # and -c reaches the first call only: the retry rebuilds its
+    # context from the block, so it does not also continue the failed
+    # turn
+    [ "$(grep -c '^-c$' "$FAKE_DIC_LOG")" -eq 1 ]
+}

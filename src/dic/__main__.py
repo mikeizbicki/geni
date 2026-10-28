@@ -176,53 +176,93 @@ def rate_line(rule):
     return line + (f"  ({extras})" if extras else "")
 
 
-def params_text(table):
-    """One model's params as a table, required first then optional.
+# The request fields dic fills itself, so a page never offers them: the
+# prompt -- an argument or stdin -- fills `prompt` on every provider that
+# names a prompt field.  A field dic writes is not one a caller passes, so
+# listing it as an option would be a page about a page.
+FILLED = frozenset({"prompt"})
 
-    A required param is one a call cannot be made without, so it comes
-    before the ones that have defaults or simply do not apply; the two
-    groups are each sorted by name so a page reads the same way twice.
-    Each row also carries what the provider published beside the type --
-    its default, its enum values, its item limit -- and the field's own
-    description, wrapped under it, so that a page says everything a
-    caller needs to use the model correctly and not only its type.
+# What -o is passed, one word per shape a schema names.  A type a provider
+# does not name is a string, which is what its own default is.
+METAVAR = {"string": "STR", "integer": "INT", "number": "NUM",
+           "boolean": "BOOL", "enum": "ENUM", "array": "ARRAY",
+           "object": "OBJ"}
+
+
+def file_field(name):
+    """Whether one field is filled by -a NAME=FILE and not by -o.
+
+    Every provider dic speaks names its URL fields `*_url` or `*_urls`, so
+    the rule is the field's own name and not its prose: no description has
+    to be parsed to know that `image_urls` is a file and `resolution` is
+    not.
+
+    >>> file_field("image_urls"), file_field("first_frame_url")
+    (True, True)
+    >>> file_field("resolution"), file_field("end_user_id")
+    (False, False)
+    """
+    return name.endswith(("_url", "_urls", "_file", "_files"))
+
+
+def params_text(table):
+    """One model's options as a page reads them: required first, -a and -o.
+
+    Every field is written the way it is passed -- a file is `-a NAME=FILE`
+    and a value is `-o NAME=TYPE` -- and the fields dic fills itself (the
+    prompt) are left out, so the list is only what a caller types.  The
+    required ones come before the optional ones, each sorted by name, and a
+    field's own description is wrapped under it.
 
     >>> print(params_text({"prompt": {"type": "string", "required": True},
+    ...                    "image_urls": {"type": "array", "required": True,
+    ...                                   "max": 9},
     ...                    "n": {"type": "integer", "default": 1},
     ...                    "seed": {"type": "integer"}}))
-    params
+    options
       required:
-        prompt  string
+        -a image_urls=FILE  max=9
       optional:
-        n       integer  default=1
-        seed    integer
-    >>> print(params_text({"image_urls": {
-    ...     "type": "array", "max": 9,
-    ...     "description": "Reference images. Refer to them as @Image1."}}))
-    params
+        -o n=INT            default=1
+        -o seed=INT
+    >>> print(params_text({"resolution": {
+    ...     "type": "enum", "default": "720p", "values": ["480p", "720p"],
+    ...     "description": "Video resolution."}}))
+    options
       optional:
-        image_urls  array  max=9
-          Reference images. Refer to them as @Image1.
+        -o resolution=ENUM  default=720p  [480p 720p]
+          Video resolution.
     """
     if not table:
         return ""
     import textwrap
 
-    required = sorted(k for k, d in table.items() if d.get("required"))
-    optional = sorted(k for k, d in table.items() if not d.get("required"))
-    width = max(len(name) for name in table)
+    asked = {name: spec for name, spec in table.items() if name not in FILLED}
+    if not asked:
+        return ""
+
+    def token(name):
+        """What this field is passed as: -a NAME=FILE or -o NAME=TYPE."""
+        if file_field(name):
+            return f"-a {name}=FILE"
+        return f"-o {name}={METAVAR.get(asked[name].get('type'), 'STR')}"
+
+    width = max(len(token(name)) for name in asked)
 
     def row(name):
-        d = table[name]
-        text = f"    {name:<{width}}  {d.get('type') or 'string'}"
-        if "default" in d:
-            text += f"  default={d['default']}"
-        values = d.get("values") or []
+        spec = asked[name]
+        text = f"    {token(name):<{width}}"
+        suffix = []
+        if spec.get("default") is not None:
+            suffix.append(f"default={spec['default']}")
+        values = spec.get("values") or []
         if values:
-            text += "  [" + " ".join(str(v) for v in values) + "]"
-        if d.get("max") is not None:
-            text += f"  max={d['max']}"
-        return text
+            suffix.append("[" + " ".join(str(v) for v in values) + "]")
+        if spec.get("max") is not None:
+            suffix.append(f"max={spec['max']}")
+        if suffix:
+            text += "  " + "  ".join(suffix)
+        return text.rstrip()
 
     def described(name):
         """The row, then its description wrapped and indented under it.
@@ -233,12 +273,16 @@ def params_text(table):
         no description prints its row and nothing else.
         """
         lines = [row(name)]
-        text = (table[name].get("description") or "").strip()
+        text = (asked[name].get("description") or "").strip()
         if text:
             lines.extend("      " + line for line in textwrap.wrap(text, 72))
         return lines
 
-    lines = ["params"]
+    lines = ["options"]
+    required = sorted(name for name, spec in asked.items()
+                      if spec.get("required"))
+    optional = sorted(name for name, spec in asked.items()
+                      if not spec.get("required"))
     if required:
         lines.append("  required:")
         for name in required:
@@ -369,10 +413,24 @@ def model_help(argv, env):
                 or env.get("DIC_MODELS_FILE"))
     model = config.resolve(conn, name)
 
+    model_id = model["model_id"]
+    print(f"usage: dic -m {model_id} [OPTIONS] [PROMPT]")
+    print()
+    print(f"{model.get('model_name') or model_id}"
+          f"  ({model.get('api_type') or 'openai-chat'})")
+    print()
+    print("  The prompt -- an argument or stdin -- fills the request's own"
+          " prompt field;")
+    print("  -a NAME=FILE attaches a file to the request field NAME, and"
+          " repeating a")
+    print("  name collects the files into a list; every other field is"
+          " -o KEY=VALUE.")
+    print()
+
     def line(label, value):
         print(f"{label:<14}{value}")
 
-    line("model_id", model["model_id"])
+    line("model_id", model_id)
     line("model_name", model.get("model_name") or "")
     line("api_type", model.get("api_type") or "openai-chat")
     line("api_base", model.get("api_base") or "")
@@ -404,6 +462,7 @@ def model_help(argv, env):
     finally:
         progress.close()
     if table:
+        print()
         print(params_text(table))
     return True
 

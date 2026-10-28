@@ -232,12 +232,19 @@ def params_text(table):
       optional:
         -o resolution=ENUM  default=720p  [480p 720p]
           Video resolution.
+
+    A reserved key -- a provider's own prose, under a name no field may
+    take -- is not an option and is left out of the list:
+
+    >>> print(params_text({"#description": "about the model"}))
+    <BLANKLINE>
     """
     if not table:
         return ""
     import textwrap
 
-    asked = {name: spec for name, spec in table.items() if name not in FILLED}
+    asked = {name: spec for name, spec in table.items()
+             if name not in FILLED and not name.startswith("#")}
     if not asked:
         return ""
 
@@ -365,7 +372,9 @@ def params_for(model, env, *, refresh=False, verbose=0, progress=None):
     finally:
         if row is not None:
             row.arrived()
-    report(verbose, 1, f"params: {len(facts)} param(s)", env=env)
+    report(verbose, 1,
+           f"params: {sum(1 for k in facts if not k.startswith('#'))}"
+           " param(s)", env=env)
     # a cache write is not the answer: a read-only state directory or a
     # lock held elsewhere must not stop a page that already has its data
     with contextlib.suppress(Exception):
@@ -413,11 +422,28 @@ def model_help(argv, env):
                 or env.get("DIC_MODELS_FILE"))
     model = config.resolve(conn, name)
 
+    # The fetch runs first, because the page's own title and description
+    # come from it: fal publishes both, an OpenAI-shaped catalog publishes
+    # neither, and a model with neither falls back to its own name.  The
+    # fetch paints its clock on stderr, so the page below is one write.
+    progress = Line(err=sys.stderr, env=env)
+    try:
+        table = params_for(model, env, refresh=refresh,
+                           verbose=verbose, progress=progress)
+    finally:
+        progress.close()
+
     model_id = model["model_id"]
+    title = table.get("#display_name") or model.get("model_name") or model_id
+    category = table.get("#category")
     print(f"usage: dic -m {model_id} [OPTIONS] [PROMPT]")
     print()
-    print(f"{model.get('model_name') or model_id}"
-          f"  ({model.get('api_type') or 'openai-chat'})")
+    print(title + (f"  ({category})" if category else ""))
+    description = table.get("#description")
+    if description:
+        import textwrap
+        print()
+        print("\n".join(textwrap.wrap(description, 76)))
     print()
     print("  The prompt -- an argument or stdin -- fills the request's own"
           " prompt field;")
@@ -455,18 +481,11 @@ def model_help(argv, env):
         for rule in sorted(price):
             print(f"  {rule:<{width}}  {rate_line(price[rule])}")
     sys.stdout.flush()
-    progress = Line(err=sys.stderr, env=env)
-    try:
-        table = params_for(model, env, refresh=refresh,
-                           verbose=verbose, progress=progress)
-    finally:
-        progress.close()
-    if table:
+    text = params_text(table)
+    if text:
         print()
-        print(params_text(table))
+        print(text)
     return True
-
-
 def main():
     # --init names a file and nothing else, so it is answered before the
     # client, its sqlite and its json config are imported: a .bashrc pays

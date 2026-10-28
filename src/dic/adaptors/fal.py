@@ -426,6 +426,33 @@ def catalog(model, key, env=None):  # noqa: ARG001
     raise failure
 
 
+def metadata(entry):
+    """The catalog's prose about this model, under reserved `#` keys.
+
+    A page is about a model and not only about its options, and fal
+    publishes a display name, a category and a paragraph about what the
+    endpoint does.  They are not request fields, so they travel under names
+    no field may take -- `#` is what models.json already uses for a key
+    that is not an entry -- and the page reads them out while params_text
+    skips them.
+
+    >>> metadata({"metadata": {"display_name": "Nano Banana",
+    ...                        "category": "image",
+    ...                        "description": "edits a picture"}})
+    {'#display_name': 'Nano Banana', '#category': 'image', '#description': 'edits a picture'}
+    >>> metadata({})
+    {}
+    """
+    meta = entry.get("metadata") or {}
+    out = {}
+    for key, name in (("display_name", "#display_name"),
+                      ("category", "#category"),
+                      ("description", "#description")):
+        if meta.get(key):
+            out[name] = meta[key]
+    return out
+
+
 def model_params(model, key, env):
     """Fetch this fal endpoint's OpenAPI schema and extract its inputs.
 
@@ -465,7 +492,7 @@ def model_params(model, key, env):
     if not params:
         raise DicError(f"fal: {model['model_name']}: the openapi document"
                        " names no input properties")
-    return params
+    return {**metadata(entry), **params}
 
 
 def extract_params(openapi):

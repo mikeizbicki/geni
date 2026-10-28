@@ -25,6 +25,21 @@ UPLOAD = "https://rest.alpha.fal.ai"   # attachments are stored here first
 POLL_MS = 500
 POLL_S = 900                           # ten minutes is a long video
 
+# The catalog is served through a CDN that rate-limits, and a rate-limited
+# expansion is answered with a 200 whose `openapi` value is an error object
+# rather than with a 429: the request arrived and was refused further
+# upstream.  That failure is transient and not dic's, so the expansion
+# request this adaptor makes is tried again, and the last answer is what the
+# caller reports.
+EXPANSION_FAILED = "expansion_failed"
+CATALOG_TRIES = 4
+CATALOG_BACKOFF_S = 1.5
+
+# What a request to the catalog names itself: the default
+# `Python-urllib/3.x` is what an edge bans, and every other request dic
+# makes names dic.
+USER_AGENT = "dic/1"
+
 # fal's endpoints are all different, so there is no protocol-level set
 # of options to list: everything a caller can pass comes from the
 # endpoint's own schema, which model_params fetches.
@@ -65,7 +80,12 @@ def fetch(request, decode=True):
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace").strip()[:300]
         parts = (str(e.code), request.full_url, detail)
-        raise DicError("fal: " + " ".join(p for p in parts if p)) from None
+        error = DicError("fal: " + " ".join(p for p in parts if p))
+        # the status travels with the error: a caller that retries needs to
+        # tell a 429, which is the CDN asking for the request again, from a
+        # 404, which is the endpoint not being there at all
+        error.code = e.code
+        raise error from None
     except urllib.error.URLError as e:
         raise DicError(f"fal: {request.full_url}: {e}") from None
 
@@ -284,6 +304,45 @@ def model_params_url(model):
             "&expand=openapi-3.0")
 
 
+def catalog(model, key):
+    """This model's catalog entry, with the transient refusal retried.
+
+    The CDN in front of the catalog answers a rate-limited expansion with a
+    200 whose `openapi` value is `expansion_failed` rather than with a 429,
+    so both are the same answer: the request arrived and was refused further
+    upstream.  Neither is permanent and neither is dic's, so the request is
+    tried again; anything else is raised at once, because a wrong id is
+    wrong however many times it is asked.
+
+    Returns the model's own entry, or None when the catalog names no such
+    model, and raises the last failure seen when the retries run out.
+    """
+    url = model_params_url(model)
+    headers = {**auth(key), "accept": "application/json",
+               "user-agent": USER_AGENT}
+    failure = None
+    for attempt in range(CATALOG_TRIES):
+        if attempt:
+            time.sleep(CATALOG_BACKOFF_S * 2 ** (attempt - 1))
+        try:
+            body = fetch(urllib.request.Request(url, headers=headers))  # noqa: S310
+        except DicError as e:
+            # no code is a connection that never opened, which is the same
+            # kind of answer as a 429; a 404 is not, and is raised here
+            code = getattr(e, "code", None)
+            failure = e
+            if code and code != 429 and not 500 <= code < 600:
+                raise
+            continue
+        models = body.get("models") or []
+        doc = (models[0] if models else {}).get("openapi")
+        if not isinstance(doc, dict) or doc.get("code") != EXPANSION_FAILED:
+            return models[0] if models else None
+        failure = DicError(f"fal: {model['model_name']}:"
+                           f" {doc.get('code')}: {doc.get('message') or ''}")
+    raise failure
+
+
 def model_params(model, key, env):  # noqa: ARG001
     """Fetch this fal endpoint's OpenAPI schema and extract its inputs.
 
@@ -297,22 +356,23 @@ def model_params(model, key, env):  # noqa: ARG001
     input properties are each a DicError naming what was seen.  The
     previous version returned an empty table for all three, so a --help
     that printed no params could not tell a model with none from a
-    request that had failed.
+    request that had failed.  The request itself is made by catalog(),
+    which retries the refusal the CDN serves as a 200.
     """
-    body = fetch(urllib.request.Request(  # noqa: S310
-        model_params_url(model),
-        headers={**auth(key), "accept": "application/json"}))
-    models = body.get("models") or []
-    if not models:
+    entry = catalog(model, key)
+    if not entry:
         raise DicError(f"fal: no entry for {model['model_name']}")
-    doc = models[0].get("openapi")
+    doc = entry.get("openapi")
     if not doc:
         raise DicError(f"fal: {model['model_name']}: no openapi field"
                        " in the catalog response")
     if "paths" not in doc:
         # fal says the field may be an error object rather than a
-        # specification, and a document without paths is not one
-        raise DicError(f"fal: {model['model_name']}: {doc.get('error') or doc}")
+        # specification, and a document without paths is not one; its own
+        # words are what a reader needs, and dic adds nothing to them
+        reason = ": ".join(str(part) for part in (doc.get("code"),
+                                                  doc.get("message")) if part)
+        raise DicError(f"fal: {model['model_name']}: {reason or doc}")
     params = extract_params(doc)
     if not params:
         raise DicError(f"fal: {model['model_name']}: the openapi document"

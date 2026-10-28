@@ -49,6 +49,7 @@
     "abstract": true,
     "api_base": "https://openrouter.ai/api/v1",
     "api_key_name": "OPENROUTER_API_KEY",
+    "pricing_url": {"url": "https://openrouter.ai/models"},
     "sync": {"fetcher": "openrouter", "catalogs": [
       {"path": "/models",        "pricing": "chat"},
       {"path": "/images/models", "api_type": "openai-images", "output": "image/png"},
@@ -228,6 +229,7 @@
     "api_type": "fal",
     "api_base": "https://queue.fal.run",
     "api_key_name": "FAL_KEY",
+    "pricing_url": {"url": "https://fal.ai/pricing"},
     "sync": {"fetcher": "fal", "catalog_base": "https://api.fal.ai/v1"}
   },
 

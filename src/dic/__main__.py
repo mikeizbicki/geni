@@ -281,7 +281,12 @@ def params_for(model, env, *, refresh=False, verbose=0, progress=None):
         row.begin("checking-param-api", host or "")
     report(verbose, 1, f"params: GET {url or model['model_id']}", env=env)
     try:
-        facts = adaptor.model_params(model, key, env)
+        # the adaptor's own reporting is graded by the same number: -v is
+        # the CLI's and DIC_VERBOSITY is what anything else reads, so the
+        # resolved grade is put where the adaptor can see it, and -v then
+        # reaches the requests a page makes and not only the page itself
+        facts = adaptor.model_params(model, key,
+                                     dict(env, DIC_VERBOSITY=str(verbose)))
     finally:
         if row is not None:
             row.arrived()

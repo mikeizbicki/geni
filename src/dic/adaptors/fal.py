@@ -18,22 +18,29 @@ adaptors/openai_chat.py for the contract.
 import json, os, time, urllib.error, urllib.request
 
 from dic.store import http_url
-from dic.tty import DicError
+from dic.tty import DicError, report
 
 PATH = ""                              # the model name is the path; see call()
 UPLOAD = "https://rest.alpha.fal.ai"   # attachments are stored here first
 POLL_MS = 500
 POLL_S = 900                           # ten minutes is a long video
 
-# The catalog is served through a CDN that rate-limits, and a rate-limited
-# expansion is answered with a 200 whose `openapi` value is an error object
-# rather than with a 429: the request arrived and was refused further
-# upstream.  That failure is transient and not dic's, so the expansion
-# request this adaptor makes is tried again, and the last answer is what the
-# caller reports.
+# The catalog is served through a CDN in front of fal's own api, and a
+# refusal to expand the schema arrives in two shapes with one cause: a 429,
+# and a 200 whose `openapi` value is an error object instead of a document.
+# Both mean the request arrived and was refused further upstream, so the
+# request is tried again, and the last refusal is what the caller sees.
+#
+# No credential is sent to the catalog.  It needs none, and sending one is
+# not merely useless: the CDN marks a request carrying an Authorization
+# header uncacheable, bypasses its cache, and forwards to fal's origin,
+# which is where the expansion fails -- the same request without the header
+# is served from the edge and carries the document.  dic's key belongs to
+# queue.fal.run, where the call goes, and to nowhere else.
 EXPANSION_FAILED = "expansion_failed"
 CATALOG_TRIES = 4
 CATALOG_BACKOFF_S = 1.5
+BODY_SHOWN = 300
 
 # What a request to the catalog names itself: the default
 # `Python-urllib/3.x` is what an edge bans, and every other request dic
@@ -304,46 +311,122 @@ def model_params_url(model):
             "&expand=openapi-3.0")
 
 
-def catalog(model, key):
-    """This model's catalog entry, with the transient refusal retried.
+def catalog_once(url, headers):
+    """One GET of the catalog: (status, headers, body) and nothing raised.
 
-    The CDN in front of the catalog answers a rate-limited expansion with a
-    200 whose `openapi` value is `expansion_failed` rather than with a 429,
-    so both are the same answer: the request arrived and was refused further
-    upstream.  Neither is permanent and neither is dic's, so the request is
-    tried again; anything else is raised at once, because a wrong id is
-    wrong however many times it is asked.
+    Everything the wire said comes back rather than being parsed away,
+    because a reader debugging this call needs the status, the CDN's own
+    cache header and the bytes; a response whose body is not the JSON dic
+    expected is exactly the one where a parsed form says nothing.  Only a
+    connection that never opened raises here, because a 429 and a 404 are
+    the same kind of fact to this function and two different ones to a
+    retry.
+    """
+    request = urllib.request.Request(http_url(url), headers=headers)  # noqa: S310
+    try:
+        with urllib.request.urlopen(request) as response:  # noqa: S310
+            return response.status, response.headers, response.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers or {}, e.read()
+    except urllib.error.URLError as e:
+        raise DicError(f"fal: {url}: {e}") from None
 
-    Returns the model's own entry, or None when the catalog names no such
-    model, and raises the last failure seen when the retries run out.
+
+def brief(body):
+    """A response body as one short line: the text a message may quote.
+
+    Decoded for a terminal and truncated, because a refusal's body is
+    evidence and not something dic interprets: an HTML error page, an empty
+    string and a JSON envelope dic did not anticipate each say what happened
+    once they are read, and none of them says anything after being replaced
+    by its parse.
+
+    >>> brief(b'{"error": "no"}')
+    '{"error": "no"}'
+    >>> brief(b"")
+    '<empty body>'
+    """
+    text = body.decode("utf-8", "replace").strip()
+    return text[:BODY_SHOWN] if text else "<empty body>"
+
+
+def refusal(url, status, headers, body):
+    """One failed catalog request as a DicError carrying what was seen.
+
+    A message built from parsed fields alone leaves a reader with nothing
+    to go on: the status, the CDN's own cache header and the bytes are what
+    say whether the answer was a refusal, a wrong id, or a document of
+    another shape, and parsing has already thrown all three away by the
+    time a message is written.
+
+    >>> refusal("u", 429, {"x-vercel-cache": "BYPASS"}, b"{}").args[0]
+    'fal: GET u -> 429 BYPASS\\n  {}'
+    """
+    cache = headers.get("x-vercel-cache") or headers.get("server") or ""
+    return DicError(f"fal: GET {url} -> {status}"
+                    f"{' ' + cache if cache else ''}"
+                    f"\n  {brief(body)}")
+
+
+def catalog(model, key, env=None):  # noqa: ARG001
+    """This model's catalog entry, the transient refusal retried.
+
+    Two shapes have one cause.  A refused expansion arrives as a 429, and
+    it also arrives as a 200 whose `openapi` value holds the marker
+    `expansion_failed` -- nested under `error` in one response and at the
+    top level in the next.  So the marker is searched for in the whole
+    document rather than read off one field path, because fal reshapes its
+    own envelope and a path that stops matching silently stops retrying.
+
+    No credential is sent: see the note beside EXPANSION_FAILED.  Every
+    attempt is reported at -v with the status and how much of the budget it
+    used, and every failure carries the status, the CDN's own cache header
+    and the body, so a reader has the wire's evidence and not a slice of
+    parsed JSON.
+
+    Anything that is not the refusal is raised at once, because asking
+    again cannot change it: a 404 is not a rate limit, and a body that is
+    not JSON at all is a different problem with a different fix.  The last
+    refusal is what a caller sees when the retries run out.
+
+    Returns the model's own entry, or None when the catalog lists no such
+    model.
     """
     url = model_params_url(model)
-    headers = {**auth(key), "accept": "application/json",
-               "user-agent": USER_AGENT}
+    headers = {"accept": "application/json", "user-agent": USER_AGENT}
+    verbose = int((env or {}).get("DIC_VERBOSITY") or 0)
     failure = None
-    for attempt in range(CATALOG_TRIES):
-        if attempt:
-            time.sleep(CATALOG_BACKOFF_S * 2 ** (attempt - 1))
-        try:
-            body = fetch(urllib.request.Request(url, headers=headers))  # noqa: S310
-        except DicError as e:
-            # no code is a connection that never opened, which is the same
-            # kind of answer as a 429; a 404 is not, and is raised here
-            code = getattr(e, "code", None)
-            failure = e
-            if code and code != 429 and not 500 <= code < 600:
-                raise
-            continue
-        models = body.get("models") or []
-        doc = (models[0] if models else {}).get("openapi")
-        if not isinstance(doc, dict) or doc.get("code") != EXPANSION_FAILED:
-            return models[0] if models else None
-        failure = DicError(f"fal: {model['model_name']}:"
-                           f" {doc.get('code')}: {doc.get('message') or ''}")
+    for attempt in range(1, CATALOG_TRIES + 1):
+        if attempt > 1:
+            time.sleep(CATALOG_BACKOFF_S * 2 ** (attempt - 2))
+        status, reply, body = catalog_once(url, headers)
+        cache = reply.get("x-vercel-cache") or reply.get("server") or ""
+        report(verbose, 1,
+               f"params: GET {url} -> {status}"
+               f" (attempt {attempt}/{CATALOG_TRIES}"
+               f"{', ' + cache if cache else ''})", env=env)
+        if status == 200:
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                raise refusal(url, status, reply, body) from None
+            models = parsed.get("models") if isinstance(parsed, dict) else None
+            if models is None:
+                raise refusal(url, status, reply, body)
+            if not models:
+                raise DicError(f"fal: no entry for {model['model_name']}")
+            doc = models[0].get("openapi")
+            if (not isinstance(doc, dict)
+                    or EXPANSION_FAILED not in json.dumps(doc)):
+                return models[0]
+            # the refusal fal serves as a 200: as transient as a 429
+        elif status != 429 and not 500 <= status < 600:
+            raise refusal(url, status, reply, body)
+        failure = refusal(url, status, reply, body)
     raise failure
 
 
-def model_params(model, key, env):  # noqa: ARG001
+def model_params(model, key, env):
     """Fetch this fal endpoint's OpenAPI schema and extract its inputs.
 
     One GET on the catalog API, filtered to one endpoint, with
@@ -357,9 +440,11 @@ def model_params(model, key, env):  # noqa: ARG001
     previous version returned an empty table for all three, so a --help
     that printed no params could not tell a model with none from a
     request that had failed.  The request itself is made by catalog(),
-    which retries the refusal the CDN serves as a 200.
+    which sends no credential, retries the refusal the CDN serves as a
+    200, and reports each attempt -- its status, its number and the CDN's
+    own cache header -- at -v.
     """
-    entry = catalog(model, key)
+    entry = catalog(model, key, env)
     if not entry:
         raise DicError(f"fal: no entry for {model['model_name']}")
     doc = entry.get("openapi")
@@ -367,12 +452,15 @@ def model_params(model, key, env):  # noqa: ARG001
         raise DicError(f"fal: {model['model_name']}: no openapi field"
                        " in the catalog response")
     if "paths" not in doc:
-        # fal says the field may be an error object rather than a
-        # specification, and a document without paths is not one; its own
-        # words are what a reader needs, and dic adds nothing to them
-        reason = ": ".join(str(part) for part in (doc.get("code"),
-                                                  doc.get("message")) if part)
-        raise DicError(f"fal: {model['model_name']}: {reason or doc}")
+        # a document without paths is not a specification, and fal says the
+        # field may hold an error object instead: its own code and message
+        # when it has them, and the document itself when it does not
+        error = doc.get("error") if isinstance(doc.get("error"), dict) else {}
+        said = ": ".join(part for part in (
+            doc.get("code") or error.get("code"),
+            doc.get("message") or error.get("message")) if part)
+        raise DicError(f"fal: {model['model_name']}:"
+                       f" {said or json.dumps(doc)[:BODY_SHOWN]}")
     params = extract_params(doc)
     if not params:
         raise DicError(f"fal: {model['model_name']}: the openapi document"

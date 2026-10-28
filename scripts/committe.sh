@@ -66,6 +66,8 @@ function committe() {
     local COMMITTE_DRY_RUN=$dry_run
     local -a COMMITTE_ARGS=("${llm_args[@]}")
     local COMMITTE_PARENT COMMITTE_CHILD
+    local COMMITTE_ATTEMPT=0
+    local -A COMMITTE_STALE=()
 
     committe-validate || return $?
     committe-prepare || return 1
@@ -77,6 +79,7 @@ function committe() {
     # repeated.
     local attempt=0
     while :; do
+        COMMITTE_ATTEMPT=$attempt
         if ! committe-run; then
             committe-fail "the model call failed"
             return 1
@@ -205,6 +208,33 @@ function committe-run() {
 
     mkdir -p "$(dirname "$(committe-patchfile)")"
 
+    # On a retry the accumulator below carries the failed state, so the
+    # conversation must not carry it too: -c would put the previous
+    # sample's bad patch into the history beside the file it was
+    # supposed to be patching, and the point of a second sample is
+    # that it is not the first one.  --mid and --from name the same
+    # turn and are dropped with it; the ref that travels beside one of
+    # them in a word of its own is dropped with it too.  Round 1 keeps
+    # whatever the caller gave -- they asked to continue, and this is
+    # about the retry and not about their request.
+    local -a run_args=("${COMMITTE_ARGS[@]}")
+    if (( COMMITTE_ATTEMPT > 0 )); then
+        local a skip=0
+        run_args=()
+        for a in "${COMMITTE_ARGS[@]}"; do
+            if (( skip )); then
+                skip=0
+                continue
+            fi
+            case $a in
+                -c|--continue)     ;;
+                --mid|--from)      skip=1 ;;
+                --mid=*|--from=*)  ;;
+                *)                 run_args+=("$a") ;;
+            esac
+        done
+    fi
+
     # The user's request is the prompt, and the instructions that say what
     # to do with it are prepended above it, so the two are named apart and
     # neither can be read as the other's arguments.  Those instructions
@@ -231,12 +261,12 @@ function committe-run() {
     local stdinfile; stdinfile=$(committe-stdinfile)
     if [[ -f $stdinfile ]]; then
         DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" -x --prepend-prompt \
-            "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
+            "$(committe-prompt)" "${run_args[@]}" \
             < "$stdinfile" \
             > "$(committe-patchfile)"
     else
         DIC_SESSION="$COMMITTE_CHILD" dic-run "$llm_command" -x --prepend-prompt \
-            "$(committe-prompt)" "${COMMITTE_ARGS[@]}" \
+            "$(committe-prompt)" "${run_args[@]}" \
             > "$(committe-patchfile)"
     fi
 }
@@ -263,13 +293,15 @@ function committe-record() {
     # applier escalation for --retry-mode patch lives here and not in
     # committe(), because it repeats the apply and never the call.
     local applier=$COMMITTE_APPLIER
-    local attempt=0
+    local attempt=0 stale=
     while :; do
-        if dic-run git apply-fuzzy -q "$(committe-patchfile)"; then
+        if stale=$(dic-run git apply-fuzzy -q --failed-files \
+                       "$(committe-patchfile)"); then
             break
         fi
         if [[ $COMMITTE_RETRY_MODE != patch ]] \
                 || (( attempt >= COMMITTE_RETRIES )); then
+            committe-remember-stale "$stale"
             return 1
         fi
         attempt=$((attempt + 1))
@@ -349,6 +381,67 @@ function committe-fail() {
 
 # ------------------------------------------------------------------ prompt
 
+# The prompt's stale block, built from the accumulator committe-record
+# fills in on an apply that could not be completed.  The two functions
+# belong beside the prompt that reads them, and they are side effect
+# free like everything else the prompt runs.
+
+function committe-remember-stale() {
+    # Fold one apply's --failed-files output into the accumulator.  The
+    # second failure of one path overwrites the first, because what the
+    # next attempt needs is that file's *current* contents and there is
+    # only one of those.
+    local path line
+    while IFS=$'\t' read -r path line; do
+        [[ -n $path ]] || continue
+        COMMITTE_STALE[$path]=$line
+    done <<<"$1"
+}
+
+function committe-stale-block() {
+    # Print the current contents of every file an earlier apply could
+    # not patch, so the next round writes against the file as it is
+    # rather than against the model's memory of it.  Empty until an
+    # apply has failed -- which is the whole of round 1, because
+    # nothing has.
+    #
+    # Sorted, and not the array's own order, which is a hash order and
+    # therefore not stable: the prompt is a prefix `dic --cache` may
+    # already have paid for, and two runs that differ cannot be diffed.
+    #
+    # A whole file and not a window: the whole thing fits in the
+    # context and a window risks cutting off the very line the next
+    # patch needs to anchor on.  `accio` is the reader when it is
+    # there, because it brings the file's ancestor READMEs with it and
+    # they are what the file is written to obey; `cat` is the
+    # fallback, so the block still renders if accio is not installed.
+    (( ${#COMMITTE_STALE[@]} )) || return 0
+    printf '\nEarlier patch attempts were rejected on these files.\n'
+    printf 'Their current contents follow; write against these, not\n'
+    printf 'from memory.\n'
+    local path block
+    printf '%s\n' "${!COMMITTE_STALE[@]}" | LC_ALL=C sort |
+    while IFS= read -r path; do
+        printf '\n=== %s (near line %s) ===\n' \
+            "$path" "${COMMITTE_STALE[$path]}"
+        # accio is preferred because it brings the file's ancestor
+        # READMEs with it, but an accio that is installed yet broken --
+        # imported from a tree that moved, or run from a shell whose
+        # PATH has slipped -- must not leave the block with a header
+        # and no file under it.  The output is captured and fallen
+        # back on when it is empty, whatever the reason.
+        block=
+        command -v accio >/dev/null 2>&1 &&
+            block=$(accio --format prompt "$path" 2>/dev/null)
+        if [[ -n $block ]]; then
+            printf '%s\n' "$block"
+        else
+            printf '%s\n---\n' "$path"
+            cat -- "$path"
+            printf '\n---\n'
+        fi
+    done
+}
 
 function committe-prompt() {
     # Print the instructions committe puts in front of the request, in the
@@ -421,6 +514,7 @@ Rules:
   has not made -- write no patch and reply with your question alone.
     - It is printed and nothing is committed.
 
+$(committe-stale-block)
 Use the following information to help you write the code:
 
 $ git ls-files

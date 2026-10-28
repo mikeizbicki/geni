@@ -538,6 +538,8 @@ def schema_params(schema, components):
             entry["values"] = list(prop["enum"])
         if prop.get("description"):
             entry["description"] = prop["description"]
+        if prop.get("maxItems") is not None:
+            entry["max"] = prop["maxItems"]
         out[name] = entry
     return out
 

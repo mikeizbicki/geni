@@ -428,12 +428,20 @@ def options(model, overrides):
     {'max_tokens': 20, 'stop': 'x'}
     >>> options({}, ['tools=[]'])
     {'tools': []}
+    >>> options({}, ['video_urls=@a.mp4'])
+    Traceback (most recent call last):
+    ...
+    dic.tty.DicError: -o video_urls=@...: a file is an attachment, not an option (use -a NAME=FILE); @ names a slot in the prompt
     """
     opts = dict(model.get("options") or {})
     for override in overrides:
         if "=" not in override:
             raise DicError(f"bad option (expected key=value): {override}")
         key, raw = override.split("=", 1)
+        if raw.startswith("@"):
+            raise DicError(
+                f"-o {key}=@...: a file is an attachment, not an option"
+                " (use -a NAME=FILE); @ names a slot in the prompt")
         try:
             value = json.loads(raw)
         except ValueError:

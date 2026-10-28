@@ -182,6 +182,10 @@ def params_text(table):
     A required param is one a call cannot be made without, so it comes
     before the ones that have defaults or simply do not apply; the two
     groups are each sorted by name so a page reads the same way twice.
+    Each row also carries what the provider published beside the type --
+    its default, its enum values, its item limit -- and the field's own
+    description, wrapped under it, so that a page says everything a
+    caller needs to use the model correctly and not only its type.
 
     >>> print(params_text({"prompt": {"type": "string", "required": True},
     ...                    "n": {"type": "integer", "default": 1},
@@ -192,9 +196,18 @@ def params_text(table):
       optional:
         n       integer  default=1
         seed    integer
+    >>> print(params_text({"image_urls": {
+    ...     "type": "array", "max": 9,
+    ...     "description": "Reference images. Refer to them as @Image1."}}))
+    params
+      optional:
+        image_urls  array  max=9
+          Reference images. Refer to them as @Image1.
     """
     if not table:
         return ""
+    import textwrap
+
     required = sorted(k for k, d in table.items() if d.get("required"))
     optional = sorted(k for k, d in table.items() if not d.get("required"))
     width = max(len(name) for name in table)
@@ -207,15 +220,33 @@ def params_text(table):
         values = d.get("values") or []
         if values:
             text += "  [" + " ".join(str(v) for v in values) + "]"
+        if d.get("max") is not None:
+            text += f"  max={d['max']}"
         return text
+
+    def described(name):
+        """The row, then its description wrapped and indented under it.
+
+        A provider's description is a paragraph -- what a field takes, how
+        to cite it in a prompt, what a limit is -- and one unwrapped line
+        of it is unreadable, so it is wrapped and indented.  A field with
+        no description prints its row and nothing else.
+        """
+        lines = [row(name)]
+        text = (table[name].get("description") or "").strip()
+        if text:
+            lines.extend("      " + line for line in textwrap.wrap(text, 72))
+        return lines
 
     lines = ["params"]
     if required:
         lines.append("  required:")
-        lines.extend(row(name) for name in required)
+        for name in required:
+            lines.extend(described(name))
     if optional:
         lines.append("  optional:")
-        lines.extend(row(name) for name in optional)
+        for name in optional:
+            lines.extend(described(name))
     return "\n".join(lines)
 
 

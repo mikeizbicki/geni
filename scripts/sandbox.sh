@@ -20,7 +20,7 @@
 # caller's own arguments, so a project can widen the jail -- a
 # writable build directory, a network share -- and a caller can still
 # override with the arguments on the line.  The file is committed to
-# git or it is refused; see sandbox-params below for why that is the
+# git or it is refused; see sandbox-params-check below for why that is the
 # rule and not a convenience.
 #
 # bwrap applies its arguments from left to right and the last one wins, so

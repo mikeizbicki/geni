@@ -53,6 +53,14 @@
 # The round budget when the caller names none.
 ITERA_MAX=${ITERA_MAX:-5}
 
+# Whether a failed or interrupted run leaves its loop worktree and
+# branch behind so the failing round can be inspected where it stopped.
+# Off by default: the loop worktree is scratch, and removing it makes a
+# failed itera indistinguishable from one that never ran except for the
+# warning it prints.  Read from the environment at rollback time, so a
+# one-shot `ITERA_KEEP_WORKTREE=1 itera ...` works without exporting
+# anything.
+
 # Where a finished run leaves its elapsed seconds, one per line, so the next
 # run can print an estimate.  Per-repo and untracked, because a test time
 # belongs to this checkout and not to the project.  A single printf to an
@@ -280,8 +288,7 @@ itera-record() {
     # roll it back.
     ITERA_LIVE=0
 
-    dic-run git worktree remove --force "$ITERA_WORKTREE" || true
-    git branch -D "$ITERA_BRANCH" >/dev/null 2>&1 || true
+    itera-cleanup-worktree
     rm -rf "$ITERA_RUNDIR" 2>/dev/null || true
     return 0
 }
@@ -295,19 +302,39 @@ itera-record() {
 # landed run.
 ITERA_LIVE=0
 
-# Not a step: an itera's loop runs in its own worktree, so the original
-# worktree is never modified until itera-record's fast-forward lands.
-# Rollback is therefore a print and nothing else -- nothing to undo -- and
-# the interrupted work is in the loop worktree, where --continue resumes
-# from it and where the user can look.
+# Remove the loop worktree and its branch, and prune the worktree
+# metadata git keeps beside them.  Idempotent, so it is safe to call
+# twice and safe to call after one of its steps has already been done:
+# a worktree-add interrupted mid-creation leaves nothing for worktree
+# remove to remove, and a branch a previous cleanup deleted has nothing
+# to delete.  Called from itera-record after a successful landing and
+# from itera-rollback after a failed one.
+itera-cleanup-worktree() {
+    [[ -n ${ITERA_WORKTREE:-} ]] || return 0
+    dic-run git worktree remove --force "$ITERA_WORKTREE" || true
+    git branch -D "$ITERA_BRANCH" >/dev/null 2>&1 || true
+    git worktree prune >/dev/null 2>&1 || true
+}
+
+# Not a step: the loop ran in its own worktree, so the original worktree
+# is never modified until itera-record's fast-forward lands and a
+# failure has nothing to undo there.  Rollback removes the loop worktree
+# and its branch anyway, so a failed itera is indistinguishable from one
+# that never ran except for the warning it prints.  ITERA_KEEP_WORKTREE=1
+# keeps the worktree behind so the failing round can be inspected where
+# it stopped, and the hint then names it.
 itera-rollback() {
     local status=$?
     (( ITERA_LIVE )) || return "$status"
     ITERA_LIVE=0
 
     dic-warn "itera-warning: aborted; $ITERA_ORIGINAL_WORKTREE was not modified"
-    dic-hint "itera-hint: the loop worktree is $ITERA_WORKTREE"
-    dic-hint "itera-hint: 'itera --continue' to keep going, 'itera --abort' to discard"
+    if [[ ${ITERA_KEEP_WORKTREE:-0} != 0 ]]; then
+        dic-hint "itera-hint: the loop worktree is $ITERA_WORKTREE"
+        dic-hint "itera-hint: cd there to inspect the failing round"
+    else
+        itera-cleanup-worktree
+    fi
     return "$status"
 }
 

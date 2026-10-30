@@ -5,7 +5,12 @@
 # budget caps the asking.  committe is what talks to the model, so this file
 # never reaches a provider itself.
 #
-#     itera [--max N] [--test CMD] [--allow-red] 'request'
+#     itera [--max N] [--test CMD] [--allow-red] [--skip-tests] 'request'
+#
+# --allow-red runs the pre-flight test and, when it fails, carries the
+# failing output into round 1's request so the model reads what is broken
+# before writing the patch.  --skip-tests is the older escape hatch and
+# does not run the pre-flight test at all.
 #
 # itera is a four-step harness (see scripts/AGENTS.md):
 #
@@ -123,10 +128,13 @@ itera-worktree-path() {
 
 # Pure: no model call, no ref moved.  Detects the test command, refuses a
 # tree with untracked or uncommitted changes, and runs the pre-flight
-# unless --allow-red.  Untracked files are refused because a round's
-# committe can commit them.  The clean-tree check is here and not in
-# committe because itera commits every round, and a dirty tree would make
-# the round's commit something other than the round's patch.
+# test.  --skip-tests skips that run entirely (the old --allow-red).
+# --allow-red runs it and, on failure, keeps the output so round 1 can
+# carry it into the request alongside the caller's words.  Untracked
+# files are refused because a round's committe can commit them.  The
+# clean-tree check is here and not in committe because itera commits
+# every round, and a dirty tree would make the round's commit something
+# other than the round's patch.
 itera-validate() {
     test_cmd=$(itera-detect-test) || return 1
     if [[ -n $(git status --porcelain) ]]; then
@@ -137,14 +145,24 @@ itera-validate() {
         dic-error 'itera-error: staging area is non-empty'
         return 1
     fi
-    if (( ! ITERA_ALLOW_RED )); then
-        if ! itera-run-tests; then
-            dic-error 'itera-error: tests do not pass before starting'
-            dic-hint 'itera-hint: pass --allow-red to start anyway'
-            return 1
-        fi
+    if (( ITERA_SKIP_TESTS )); then
+        return 0
     fi
-    return 0
+    if itera-run-tests; then
+        return 0
+    fi
+    if (( ITERA_ALLOW_RED )); then
+        # The failing output must survive round 1's own test run, which
+        # overwrites itera_test_output: it is what round 2+ would send,
+        # and the pre-flight output only matters for the first request.
+        ITERA_PREFLIGHT_FAILED=1
+        ITERA_PREFLIGHT_OUTPUT=$itera_test_output
+        return 0
+    fi
+    dic-error 'itera-error: tests do not pass before starting'
+    dic-hint 'itera-hint: --allow-red carries the failing output into the request'
+    dic-hint 'itera-hint: --skip-tests skips the pre-flight test entirely'
+    return 1
 }
 
 # --------------------------------------------------------------- prepare
@@ -201,12 +219,35 @@ itera-run() {
     local status
     while (( round <= ITERA_MAX )); do
         if (( round == 1 )); then
+            # The round-1 request is whatever the caller gave: args in
+            # ITERA_ARGS, stdin buffered to ITERA_STDINFILE, or both.
+            # When the pre-flight test failed and --allow-red kept the
+            # run alive, the failing output is appended after the
+            # request, so the model reads the caller's words first and
+            # the tree's current state second -- the shape round 2+
+            # already use, where dic appends a non-tty stdin after a
+            # blank line.
+            local preflight_file=
+            if (( ITERA_PREFLIGHT_FAILED )); then
+                preflight_file="$ITERA_TMP/preflight"
+                {
+                    if [[ -f ${ITERA_STDINFILE:-} ]]; then
+                        cat "$ITERA_STDINFILE"
+                        printf '\n'
+                    fi
+                    printf '\nThe tests already fail in this tree.\n'
+                    printf 'Their output follows.\n\n'
+                    printf '%s\n' "$ITERA_PREFLIGHT_OUTPUT"
+                } > "$preflight_file" || return 1
+            fi
             # Read the request from the buffer itera() wrote at entry,
             # not from fd 0: the pre-flight test that ran between has
             # already seen fd 0, and a test that read it would leave
             # committe at EOF.  With no buffer -- a tty-run, or a
             # direct call to itera-run -- fd 0 is left alone.
-            if [[ -f ${ITERA_STDINFILE:-} ]]; then
+            if [[ -n $preflight_file ]]; then
+                committe "${ITERA_ARGS[@]}" < "$preflight_file"
+            elif [[ -f ${ITERA_STDINFILE:-} ]]; then
                 committe "${ITERA_ARGS[@]}" < "$ITERA_STDINFILE"
             else
                 committe "${ITERA_ARGS[@]}"
@@ -450,17 +491,20 @@ itera-run-tests() {
 # everything after is passed to committe, which passes it on to dic.
 itera() {
     ITERA_ALLOW_RED=0
-    ITERA_LIVE=0
+    ITERA_SKIP_TESTS=0
+    ITERA_PREFLIGHT_FAILED=0
+    ITERA_PREFLIGHT_OUTPUT=
     ITERA_LIVE=0
     local mode=run
     local -a llm_args=()
     while (( $# )); do
         case $1 in
-            --max)       ITERA_MAX=$2; shift 2 ;;
-            --test)      ITERA_TEST=$2; shift 2 ;;
-            --allow-red) ITERA_ALLOW_RED=1; shift ;;
-            --)          shift; llm_args+=("$@"); break ;;
-            *)           llm_args+=("$1"); shift ;;
+            --max)        ITERA_MAX=$2; shift 2 ;;
+            --test)       ITERA_TEST=$2; shift 2 ;;
+            --allow-red)  ITERA_ALLOW_RED=1; shift ;;
+            --skip-tests) ITERA_SKIP_TESTS=1; shift ;;
+            --)           shift; llm_args+=("$@"); break ;;
+            *)            llm_args+=("$1"); shift ;;
         esac
     done
     ITERA_ARGS=("${llm_args[@]}")
